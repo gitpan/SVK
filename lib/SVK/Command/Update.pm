@@ -8,7 +8,7 @@ use SVK::I18N;
 
 sub options {
     ('r|revision=i'   => 'rev',
-     'N|nonrecursive' => 'nonrecursive');
+     'N|non-recursive' => 'nonrecursive');
 }
 
 sub parse_arg {
@@ -44,7 +44,7 @@ sub do_update {
     my ($xdroot, $newroot) = map { $_->root ($self->{xd}) } ($cotarget, $update_target);
     # unanchorified
     my ($path, $copath) = @{$cotarget}{qw/path copath/};
-    my $report = $update_target->{report};
+    my $report = $cotarget->{report};
     my $kind = $newroot->check_path ($update_target->{path});
     die loc("path %1 does not exist.\n", $update_target->{path})
 	if $kind == $SVN::Node::none;
@@ -56,19 +56,23 @@ sub do_update {
 	$update_target->anchorify;
 	# can't use $cotarget->{path} directly since the (rev0, /) hack
 	($path, $copath) = @{$cotarget}{qw/path copath/};
+	$cotarget->{targets}[0] = $cotarget->{copath_target};
     }
-    $cotarget = $cotarget->new (path => '/')
-	if $xdroot->check_path ($cotarget->path) == $SVN::Node::none;
+    my $base = $cotarget;
+    $base = $base->new (path => '/')
+	if $xdroot->check_path ($base->path) == $SVN::Node::none;
     mkdir ($cotarget->{copath}) or die $!
 	unless $self->{check_only} || -e $cotarget->{copath};
 
     my $notify = SVK::Notify->new_with_report
-	($report, $update_target->{targets}[0], 1);
+	($report, $cotarget->{targets}[0], 1);
     my $merge = SVK::Merge->new
-	(repos => $cotarget->{repos}, base => $cotarget, base_root => $xdroot,
+	(repos => $cotarget->{repos}, base => $base, base_root => $xdroot,
 	 no_recurse => $self->{nonrecursive}, notify => $notify, nodelay => 1,
-	 src => $update_target, xd => $self->{xd}, check_only => $self->{check_only});
+	 src => $update_target, dst => $cotarget,
+	 xd => $self->{xd}, check_only => $self->{check_only});
     $merge->run ($self->{xd}->get_editor (copath => $copath, path => $path,
+					  ignore_checksum => 1,
 					  oldroot => $xdroot, newroot => $newroot,
 					  revision => $update_target->{revision},
 					  anchor => $cotarget->{path},
@@ -82,7 +86,7 @@ __DATA__
 
 =head1 NAME
 
-SVK::Command::Update - Bring changes from the repository into checkout copies
+SVK::Command::Update - Bring changes from repository to checkout copies
 
 =head1 SYNOPSIS
 
@@ -90,13 +94,13 @@ SVK::Command::Update - Bring changes from the repository into checkout copies
 
 =head1 OPTIONS
 
- -r [--revision]:        revision
- -N [--nonrecursive]:    update non-recursively
+ -r [--revision] arg    : act on revision ARG instead of the head revision
+ -N [--non-recursive]   : do not descend recursively
 
 =head1 DESCRIPTION
 
 Synchronize checkout copies to revision given by -r or to HEAD
-revision by deafult.
+revision by default.
 
 For each updated item a line will start with a character reporting the
 action taken. These characters have the following meaning:

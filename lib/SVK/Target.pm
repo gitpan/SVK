@@ -2,7 +2,7 @@ package SVK::Target;
 use strict;
 our $VERSION = $SVK::VERSION;
 use SVK::XD;
-use SVK::Util qw( get_anchor );
+use SVK::Util qw( get_anchor catfile abs2rel IS_WIN32 );
 use SVK::Target::Universal;
 use Clone;
 
@@ -81,10 +81,13 @@ sub anchorify {
     my ($self) = @_;
     die "anchorify $self->{depotpath} already with targets: ".join(',', @{$self->{targets}})
 	if exists $self->{targets}[0];
-    ($self->{path}, $self->{targets}[0], $self->{depotpath}, undef, $self->{report}) =
-	get_anchor (1, $self->{path}, $self->{depotpath}, $self->{report});
+    ($self->{path}, $self->{targets}[0], $self->{depotpath}) =
+	get_anchor (1, $self->{path}, $self->{depotpath});
     ($self->{copath}, $self->{copath_target}) = get_anchor (1, $self->{copath})
 	if $self->{copath};
+    # XXX: prepend .. if exceeded report?
+    ($self->{report}) = get_anchor (0, $self->{report})
+	if $self->{report}
 }
 
 =head2 normalize
@@ -126,8 +129,7 @@ path component.
 
 =cut
 
-my $_copath_catsplit = $^O eq 'MSWin32' ?
-sub { File::Spec->catfile (defined $_[0] && length $_[0] ? ($_[0]) : (), File::Spec::Unix->splitdir ($_[1])) } :
+my $_copath_catsplit = $^O eq 'MSWin32' ? \&catfile :
 sub { defined $_[0] && length $_[0] ? "$_[0]/$_[1]" : $_[1] };
 
 sub copath {
@@ -148,8 +150,8 @@ sub descend {
     my ($self, $entry) = @_;
     $self->{depotpath} .= "/$entry";
     $self->{path} .= "/$entry";
-    $self->{report} = File::Spec->catfile ($self->{report}, $entry);
-    $self->{copath} = File::Spec->catfile ($self->{copath}, $entry);
+    $self->{report} = catfile ($self->{report}, $entry);
+    $self->{copath} = catfile ($self->{copath}, $entry);
 }
 
 =head2 universal
@@ -161,6 +163,17 @@ Returns corresponding L<SVK::Target::Universal> object.
 sub universal {
     SVK::Target::Universal->new ($_[0]);
 }
+
+sub contains_copath {
+    my ($self, $copath) = @_;
+    foreach my $base (@{$self->{targets}}) {
+	if ($copath ne abs2rel ($copath, $self->copath ($base))) {
+	    return 1;
+	}
+    }
+    return 0;
+}
+
 
 =head1 AUTHORS
 

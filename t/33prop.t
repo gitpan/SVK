@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 37;
+use Test::More tests => 45;
 use strict;
 use File::Temp;
 require 't/tree.pl';
@@ -15,6 +15,7 @@ overwrite_file ("$copath/A/bar", "foobarbazz");
 is_output_like ($svk, 'ps', [], qr'SYNOPSIS', 'ps - help');
 is_output_like ($svk, 'pe', [], qr'SYNOPSIS', 'ps - help');
 is_output_like ($svk, 'propdel', [], qr'SYNOPSIS', 'propdel - help');
+is_output_like ($svk, 'pg', [], qr'SYNOPSIS', 'pg - help');
 
 is_output_like ($svk, 'pl', ["$copath/A"], qr'not found');
 
@@ -37,6 +38,10 @@ is_output ($svk, 'pl', ["$copath/A"],
 is_output ($svk, 'pl', ['-v', "$copath/A"],
 	   ["Properties on $copath/A:",
 	    '  myprop: myvalue']);
+
+is_output ($svk, 'pg', ['myprop', "$copath/A"],
+	   ['myvalue']);
+
 $svk->commit ('-m', 'commit', $copath);
 
 is_output ($svk, 'ps', ['myprop', 'myvalue2', "$copath/A"],
@@ -44,9 +49,18 @@ is_output ($svk, 'ps', ['myprop', 'myvalue2', "$copath/A"],
 is_output ($svk, 'pl', ['-v', "$copath/A"],
 	   ["Properties on $copath/A:",
 	    '  myprop: myvalue2']);
+is_output ($svk, 'pg', ['myprop', "$copath/A"],
+	   ['myvalue2']);
 is_output ($svk, 'pl', ['-v', "//A"],
 	   ["Properties on //A:",
 	    '  myprop: myvalue']);
+is_output ($svk, 'pg', ['myprop', "//A"],
+	   ['myvalue']);
+is_output ($svk, 'pg', ['myprop', "$copath/A", "//A"],
+	   ['/A - myvalue2',
+            '/A - myvalue']);
+is_output ($svk, 'pg', ['--strict', 'myprop', "$copath/A", "//A"],
+	   ['myvalue2myvalue']);
 $svk->revert ("$copath/A");
 is_output ($svk, 'ps', ['myprop2', 'myvalue2', "$copath/A"],
 	   [" M  $copath/A"]);
@@ -98,21 +112,28 @@ is_output ($svk, 'pl', ['-v', '-r2', "$copath/A"],
 	   ["Properties on $copath/A:",
 	    '  myprop: myvalue']);
 
-my $tmp = File::Temp->new;
+my $tmp = File::Temp->new( SUFFIX => '.pl' );
 
 print $tmp (<< 'TMP');
-#!/bin/sh
-sleep 1
-mv $2 $2.tmp
-echo $1 > $2
-cat $2.tmp >> $2
-rm -f $2.tmp
-
+$_ = shift;
+open _ or die $!;
+@_ = ("prepended_prop\n", <_>);
+close _;
+unlink $_;
+sleep 2;
+open _, '>', $_ or die $!;
+print _ @_;
+close _;
 TMP
 $tmp->close;
 chmod 0755, $tmp->filename;
 
-$ENV{SVN_EDITOR} = "$tmp prepended_prop";
+my ($perl, $tmpfile) = ($^X, $tmp->filename);
+if (defined &Win32::GetShortPathName) {
+    $perl = Win32::GetShortPathName($perl);
+    $tmpfile = Win32::GetShortPathName($tmpfile);
+}
+$ENV{SVN_EDITOR} = "$perl $tmp";
 
 is_output ($svk, 'pe', ['newprop', "$copath/A"],
 	   ['Waiting for editor...',
@@ -159,3 +180,7 @@ is_output ($svk, 'pl', ['-v'],
 	    'myvalue2',
 	    '  newprop: prepended_prop', '',
 	    '  pedirect: prepended_prop']);
+
+is_output ($svk, 'pg', ['myprop2'], ['prepended_prop', 'myvalue2']);
+is_output ($svk, 'pg', ['nosuchprop'], []);
+

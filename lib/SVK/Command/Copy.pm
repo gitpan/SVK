@@ -115,6 +115,7 @@ sub run {
     return "Different sources.\n"
 	if $m && !$dst->same_source (@src);
     $self->check_src (@src);
+    # XXX: check dst to see if the copy is obstructured or missing parent
     my $fs = $dst->{repos}->fs;
     if ($dst->{copath}) {
 	# XXX: check if dst is versioned
@@ -155,15 +156,14 @@ SVK::Command::Copy - Make a versioned copy
 =head1 SYNOPSIS
 
  copy DEPOTPATH1 DEPOTPATH2
- copy DEPOTPATH1 PATH
+ copy DEPOTPATH PATH
 
 =head1 OPTIONS
 
- -m [--message] arg:     Needs description
- -C [--check-only]:      Needs description
- -s [--sign]:            Needs description
- -r [--revision] arg:    Needs description
- --force:                Needs description
+ -r [--revision] arg    : act on revision ARG instead of the head revision
+ -m [--message] arg     : specify commit message ARG
+ -C [--check-only]      : try operation but make no changes
+ -s [--sign]            : sign this change
 
 =head1 AUTHORS
 

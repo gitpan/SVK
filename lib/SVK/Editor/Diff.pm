@@ -5,7 +5,7 @@ our $VERSION = $SVK::VERSION;
 our @ISA = qw(SVN::Delta::Editor);
 
 use SVK::I18N;
-use SVK::Util qw( slurp_fh tmpfile );
+use SVK::Util qw( slurp_fh tmpfile mimetype_is_text catfile );
 use Text::Diff;
 
 sub set_target_revision {
@@ -30,24 +30,40 @@ sub open_file {
 
 sub apply_textdelta {
     my ($self, $path, $checksum, $pool) = @_;
-    $self->{info}{$path}{new} = '';
-    $self->{info}{$path}{base} = $self->{cb_basecontent} ($path)
-	unless $self->{info}{$path}{added};
+    my $info = $self->{info}{$path} ||= {};
+    $info->{new} = '';
+    $info->{base} = $self->{cb_basecontent} ($path)
+	unless $info->{added};
+
+    unless ($self->{external}) {
+	my $newtype = $info->{prop} && $info->{prop}{'svn:mime-type'};
+	my $is_text = !$newtype || mimetype_is_text ($newtype);
+	if ($is_text) {
+	    my $basetype = $self->{cb_baseprop}->($path, 'svn:mime-type');
+	    $is_text = !$basetype || mimetype_is_text ($basetype);
+	}
+	unless ($is_text) {
+	    print "=== $path\n";
+	    print '=' x 66,"\n";
+	    print loc("Cannot display: file marked as a binary type.\n");
+	    return undef;
+	}
+    }
 
     my $new;
     if ($self->{external}) {
 	my $tmp = tmpfile ('diff');
-	slurp_fh ($self->{info}{$path}{base}, $tmp)
-	    if $self->{info}{$path}{base};
+	slurp_fh ($info->{base}, $tmp)
+	    if $info->{base};
 	seek $tmp, 0, 0;
-	$self->{info}{$path}{base} = $tmp;
-	$self->{info}{$path}{new} = $new = tmpfile ('diff');
+	$info->{base} = $tmp;
+	$info->{new} = $new = tmpfile ('diff');
     }
     else {
-	open $new, '>', \$self->{info}{$path}{new};
+	open $new, '>', \$info->{new};
     }
 
-    return [SVN::TxDelta::apply ($self->{info}{$path}{base}, $new,
+    return [SVN::TxDelta::apply ($info->{base}, $new,
 				 undef, undef, $pool)];
 }
 
@@ -55,7 +71,7 @@ sub close_file {
     my ($self, $path, $checksum, $pool) = @_;
     if ($self->{info}{$path}{new}) {
 	no warnings 'uninitialized';
-	my $rpath = $self->{report} ? "$self->{report}/$path" : $path;
+	my $rpath = $self->{report} ? catfile($self->{report}, $path) : $path;
 	my $base = $self->{info}{$path}{added} ?
 	    \'' : $self->{cb_basecontent} ($path);
 	my @label = map { $self->{$_} || $self->{"cb_$_"}->($path) } qw/llabel rlabel/;
@@ -63,11 +79,13 @@ sub close_file {
 	my @showpath = map { $showpath ? $self->{$_} : undef } qw/lpath rpath/;
 	if ($self->{external}) {
 	    # XXX: the 2nd file could be - and save some disk IO
+	    my @content = map { ($self->{info}{$path}{$_}->filename) } qw/base new/;
+	    @content = reverse @content if $self->{reverse};
 	    system (split (' ', $self->{external}),
 		    '-L', _full_label ($rpath, $showpath[0], $label[0]),
-		    $self->{info}{$path}{base}->filename,
+		    $content[0],
 		    '-L', _full_label ($rpath, $showpath[1], $label[1]),
-		    $self->{info}{$path}{new}->filename);
+		    $content[1]);
 	}
 	else {
 	    my @content = ($base, \$self->{info}{$path}{new});
@@ -103,18 +121,22 @@ sub output_diff {
 sub output_prop_diff {
     my ($self, $path, $pool) = @_;
     if ($self->{info}{$path}{prop}) {
-	my $rpath = $self->{report} ? "$self->{report}/$path" : $path;
+	my $rpath = $self->{report} ? catfile($self->{report}, $path) : $path;
 	print "\n", loc("Property changes on: %1\n", $rpath), ('_' x 67), "\n";
 	for (sort keys %{$self->{info}{$path}{prop}}) {
 	    print loc("Name: %1\n", $_);
 	    my $baseprop;
 	    $baseprop = $self->{cb_baseprop}->($path, $_)
 		unless $self->{info}{$path}{added};
-	    print Text::Diff::diff (\ ($baseprop || ''),
-				    \$self->{info}{$path}{prop}{$_},
-				    { STYLE => 'SVK::Editor::Diff::NoHeader' });
+            my @args =
+                map \$_,
+                map { (length || /\n$/) ? "$_\n" : $_ }
+                    ($baseprop||''), ($self->{info}{$path}{prop}{$_}||'');
+            @args = reverse @args if $self->{reverse};
+	    print Text::Diff::diff (@args,
+				    { STYLE => 'SVK::Editor::Diff::PropDiff' });
 	}
-	print "\n\n";
+	print "\n";
     }
 }
 
@@ -161,12 +183,20 @@ sub close_edit {
     my ($self, @arg) = @_;
 }
 
-package SVK::Editor::Diff::NoHeader;
+package SVK::Editor::Diff::PropDiff;
 
 our @ISA = qw(Text::Diff::Unified);
 
 sub hunk_header {
     return '';
+}
+
+sub hunk {
+    my $self = shift;
+
+    my $s = $self->SUPER::hunk (@_);
+    $s =~ s/^/ /gm;
+    $s;
 }
 
 =head1 AUTHORS

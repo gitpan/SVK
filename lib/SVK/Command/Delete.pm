@@ -4,6 +4,7 @@ our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command::Commit );
 use SVK::XD;
 use SVK::I18N;
+use SVK::Util qw( HAS_SVN_MIRROR );
 
 sub options {
     ($_[0]->SUPER::options,
@@ -32,9 +33,9 @@ sub do_delete_direct {
     my $root = $fs->revision_root ($fs->youngest_rev);
     my $kind = $root->check_path ($arg{path});
 
-    die loc("path %1 does not exist", $arg{path}) if $kind == $SVN::Node::none;
+    die loc("path %1 does not exist.\n", $arg{path}) if $kind == $SVN::Node::none;
 
-    if ($self->svn_mirror &&
+    if (HAS_SVN_MIRROR and
 	(my ($m, $mpath) = SVN::Mirror::is_mirrored ($arg{repos},
 						     $arg{path}))) {
 	die "Can't delete something inside mirrored path"
@@ -83,8 +84,8 @@ SVK::Command::Delete - Remove versioned item
 
 =head1 OPTIONS
 
- -m [--message] message:    commit message
- -K [--keep-local]:         Do not remove the local file
+ -m [--message] arg     : specify commit message ARG
+ -K [--keep-local]      : do not remove the local file
 
 =head1 AUTHORS
 

@@ -23,7 +23,7 @@ sub do_propset_direct {
     my $root = $fs->revision_root ($fs->youngest_rev);
     my $kind = $root->check_path ($arg{path});
 
-    die loc("path %1 does not exist", $arg{path}) if $kind == $SVN::Node::none;
+    die loc("path %1 does not exist.\n", $arg{path}) if $kind == $SVN::Node::none;
 
     my $edit = $self->get_commit_editor
 	($root, sub { print loc("Committed revision %1.\n", $_[0]) }, '/', %arg);
@@ -81,10 +81,9 @@ SVK::Command::Propset - Set a property on path
 
 =head1 OPTIONS
 
- -m [--message] message:    Commit message
- -C [--check-only]:         Needs description
- -s [--sign]:               Needs description
- --force:                   Needs description
+ -m [--message] arg     : specify commit message ARG
+ -C [--check-only]      : try operation but make no changes
+ -s [--sign]            : sign this change
 
 =head1 AUTHORS
 

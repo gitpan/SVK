@@ -38,6 +38,7 @@ lib/SVK/Command/Move.pm
 lib/SVK/Command/Patch.pm
 lib/SVK/Command/Propdel.pm
 lib/SVK/Command/Propedit.pm
+lib/SVK/Command/Propget.pm
 lib/SVK/Command/Proplist.pm
 lib/SVK/Command/Propset.pm
 lib/SVK/Command/Resolved.pm
@@ -74,11 +75,10 @@ MANIFEST
 META.yml			Module meta-data (added by MakeMaker)
 README
 SIGNATURE
-TODO
 t/00use.t
 t/01depotmap.t
-t/01help.t
 t/01editor.t
+t/01help.t
 t/02basic.t
 t/03import.t
 t/04merge.t
@@ -107,16 +107,20 @@ t/22status.t
 t/23commit.t
 t/24diff.t
 t/25log.t
+t/26revert.t
 t/30annotate.t
 t/31cat.t
 t/32list.t
 t/33prop.t
 t/70symlink.t
 t/tree.pl
+TODO
 utils/extract-docs
 utils/extract-message-catalog
 utils/svk-ediff.el
 utils/svk-merge
-utils/svk-merge-filemerge
 utils/svk-merge-emacs
+utils/svk-merge-filemerge
+utils/svk-merge-guiffy.bat
 utils/svk-merge-meld
+utils/svk-merge-p4winmrg.bat

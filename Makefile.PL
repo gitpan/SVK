@@ -18,14 +18,16 @@ requires(
         'Algorithm::Diff'       => '0',
         'YAML'                  => '0',
         'Regexp::Shellish'      => '0',
-        'Data::Hierarchy'       => '0.18',
+        'Data::Hierarchy'       => '0.19',
         'File::Temp'            => '0.14',
         'Clone'	                => '0',
         'Pod::Escapes'          => '0',
         'Pod::Simple'           => '0',
-        'PerlIO::via::dynamic'  => '0.02',
+        'PerlIO::via::dynamic'  => '0.11',
         'PerlIO::via::symlink'  => '0.01',
+        'IO::Digest'		=> '0',
         'SVN::Simple::Edit'     => '0.21',
+        'Date::Parse'           => '0',
 );
 features(
     'Localized messages' => [
@@ -36,11 +38,11 @@ features(
 );
 
 if( eval{ require SVN::Mirror } ) {
-    requires( 'SVN::Mirror' => '0.43' );
+    requires( 'SVN::Mirror' => '0.45' );
 } else {
     features( 'SVN::Mirror support' => [
                -default => 1,
-               'SVN::Mirror'    => '0.43',
+               'SVN::Mirror'    => '0.45',
            ],
 	    );
 }

@@ -1,6 +1,6 @@
 package SVK::Merge;
 use strict;
-use SVK::Util qw (find_svm_source find_local_mirror svn_mirror);
+use SVK::Util qw(HAS_SVN_MIRROR find_svm_source find_local_mirror is_executable);
 use SVK::I18N;
 use SVK::Editor::Merge;
 use SVK::Editor::Rename;
@@ -105,15 +105,14 @@ sub find_merge_base {
 	    if !$basepath || $rev > $baserev;
     }
 
-    if (!$basepath) {
-	die loc("Can't find merge base for %1 and %2\n", $src->path, $dst->path)
-	    unless $self->{baseless} or $self->{base};
+    return ($src->new (revision => $self->{baserev}), $self->{baserev})
+        if $self->{baserev};
 
-	return ($src->new (revision => $self->{baserev}), $self->{baserev})
-	    if $self->{baserev};
+    return ($src->new (path => '/', revision => 0), 0)
+        if $self->{baseless};
 
-	return ($src->new (path => '/', revision => 0), 0);
-    }
+    die loc("Can't find merge base for %1 and %2\n", $src->path, $dst->path)
+        unless $basepath;
 
     # XXX: document this, cf t/07smerge-foreign.t
     if ($basepath ne $src->path && $basepath ne $dst->path) {
@@ -144,7 +143,7 @@ sub find_merge_sources {
     my $minfo = $root->node_prop ($path, 'svk:merge');
     my $myuuid = $fs->get_uuid ();
     if ($minfo) {
-	$minfo = { map {my ($uuid, $path, $rev) = split ':', $_;
+	$minfo = { map {my ($uuid, $path, $rev) = m/(.*?):(.*):(\d+$)/;
                         ($uuid, $path, $rev) =
 			    ($myuuid, find_local_mirror ($repos, $uuid, $path, $rev))
 				unless $verbatim || $uuid eq $myuuid;
@@ -198,7 +197,7 @@ sub copy_ancestors {
 	    ($uuid, $hpath, $hrev) = split ':', $source;
 	    if ($uuid ne $myuuid) {
 		my ($m, $mpath);
-		if (svn_mirror &&
+		if (HAS_SVN_MIRROR &&
 		    (($m, $mpath) = SVN::Mirror::has_local ($repos, "$uuid:$path"))) {
 		    ($hpath, $hrev) = ($m->{target_path}, $m->find_local_rev ($hrev));
 		    # XXX: WTF? need test suite for this
@@ -248,7 +247,7 @@ sub get_new_ticket {
 
 sub log {
     my ($self, $verbatim) = @_;
-    open my $buf, '>', \ (my $tmp);
+    open my $buf, '>', \ (my $tmp = '');
     no warnings 'uninitialized';
     use Sys::Hostname;
     my $print_rev = SVK::Command::Log::_log_remote_rev
@@ -351,8 +350,9 @@ sub run {
 	unless $self->{nodelay};
     $storage = $self->track_rename ($storage, \%cb)
 	if $self->{track_rename};
+    my $is_copath = defined($self->{dst}{copath});
     my $notify = $self->{notify} || SVK::Notify->new_with_report
-	($report, defined $self->{target} ? $self->{target} : $target);
+	($report, (defined $self->{target} ? $self->{target} : $target), $is_copath);
     if ($storage->can ('rename_check')) {
 	my $flush = $notify->{cb_flush};
 	$notify->{cb_flush} = sub {
@@ -368,7 +368,7 @@ sub run {
 	  send_fulltext => $cb{mirror} ? 0 : 1,
 	  storage => $storage,
 	  notify => $notify,
-	  allow_conflicts => defined $self->{dst}{copath},
+	  allow_conflicts => $is_copath,
 	  open_nonexist => $self->{track_rename},
 	  cb_merged => $self->{ticket} ?
 	  sub { my ($editor, $baton, $pool) = @_;
@@ -380,7 +380,7 @@ sub run {
 	  %cb,
 	);
     $editor->{external} = $ENV{SVKMERGE}
-	if !$self->{check_only} && $ENV{SVKMERGE} && -x (split (' ', $ENV{SVKMERGE}))[0];
+	if !$self->{check_only} && $ENV{SVKMERGE} && is_executable ((split (' ', $ENV{SVKMERGE}))[0]);
     SVK::XD->depot_delta
 	    ( oldroot => $base_root, newroot => $src->root,
 	      oldpath => [$base->{path}, $base->{targets}[0] || ''],
@@ -401,7 +401,7 @@ package SVK::Merge::Info;
 sub new {
     my ($class, $merge) = @_;
 
-    my $minfo = { map {my ($uuid, $path, $rev) = split ':', $_;
+    my $minfo = { map {my ($uuid, $path, $rev) = m/(.*?):(.*):(\d+$)/;
 		       ("$uuid:$path" => $rev)
 		   } split ("\n", $merge) };
     bless $minfo, $class;

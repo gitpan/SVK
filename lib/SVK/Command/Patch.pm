@@ -46,7 +46,7 @@ sub create {
 				 $src, $dst);
     my $ret = $self->regen ($patch);
     unless ($ret) {
-	print loc ("Patch $name created.\n");
+	print loc ("Patch %1 created.\n", $name);
     }
     return $ret;
 }
@@ -99,11 +99,11 @@ sub update {
 sub list {
     my ($self) = @_;
     my (undef, undef, $repos) = $self->{xd}->find_repos ('//', 1);
-    opendir DIR, "$self->{xd}{svkpath}/patch";
-    for (readdir (DIR)) {
-	next if m/^\./;
-	s/\.svkpatch$//;
-	my $patch = $self->_load ($_);
+    opendir my $dir, "$self->{xd}{svkpath}/patch";
+    foreach my $file (readdir ($dir)) {
+	next if $file =~ /^\./;
+	$file =~ s/\.svkpatch$//;
+	my $patch = $self->_load ($file);
 	print "$patch->{name}\@$patch->{level}: \n";
     }
     return;
@@ -136,14 +136,14 @@ SVK::Command::Patch - Manage patches
 
 =head1 SYNOPSIS
 
- patch create NAME DEPOTPATH DEPOTPATH
+ patch create PATCHNAME DEPOTPATH1 DEPOTPATH2
  patch list
- patch view NAME
- patch regen NAME
- patch update NAME
- patch apply NAME
- patch send NAME
- patch delete NAME
+ patch view PATCHNAME
+ patch regen PATCHNAME
+ patch update PATCHNAME
+ patch apply PATCHNAME
+ patch send PATCHNAME
+ patch delete PATCHNAME
 
 =head1 OPTIONS
 

@@ -4,6 +4,7 @@ our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Propset );
 use SVK::XD;
+use SVK::I18N;
 use SVK::Util qw(get_buffer_from_editor);
 
 sub parse_arg {
@@ -21,7 +22,7 @@ sub run {
     my ($self, $pname, $target) = @_;
 
     my $pvalue = $self->{xd}->do_proplist ($target)->{$pname};
-    $pvalue = get_buffer_from_editor ("property $pname", undef, $pvalue || '',
+    $pvalue = get_buffer_from_editor (loc("property %1", $pname), undef, $pvalue || '',
 				      'prop');
 
     $self->do_propset ($pname, $pvalue, $target);
@@ -43,10 +44,9 @@ SVK::Command::Propedit - Edit a property on path
 
 =head1 OPTIONS
 
- -m [--message] message:    Commit message
- -C [--check-only]:         Needs description
- -s [--sign]:               Needs description
- --force:                   Needs description
+ -m [--message] arg     : specify commit message ARG
+ -C [--check-only]      : try operation but make no changes
+ -s [--sign]            : sign this change
 
 =head1 AUTHORS
 

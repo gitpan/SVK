@@ -5,7 +5,7 @@ our @ISA = qw(SVN::Delta::Editor);
 use SVK::I18N;
 use SVN::Delta;
 use File::Path;
-use SVK::Util qw( get_anchor md5 );
+use SVK::Util qw( get_anchor md5_fh );
 
 =head1 NAME
 
@@ -14,7 +14,7 @@ SVK::Editor::XD - An editor for modifying checkout copies
 =head1 SYNOPSIS
 
 $editor = SVK::Editor::XD->new
-    ( anchor => $anchor,
+    ( path => $path,
       target => $target,
       oldroot => $fs->revision_root ($fromrev),
       newroot => $fs->revision_root ($torev),
@@ -37,13 +37,13 @@ which is used for bringing changes from depot to checkout copies.
 
 =over
 
-=item anchor
+=item path
 
 The anchor of the editor calls.
 
 =item target
 
-The target path of the editor calls.
+The target path of the editor calls.  Used only for path reporting translation.
 
 =item xd
 
@@ -68,6 +68,10 @@ A callback to translate paths in editor calls to copath.
 =item report
 
 Path for reporting modifications.
+
+=item ignore_checksum
+
+Don't do checksum verification.
 
 =back
 
@@ -112,16 +116,21 @@ sub apply_textdelta {
     unless ($self->{added}{$path}) {
 	my ($dir,$file) = get_anchor (1, $copath);
 	my $basename = "$dir.svk.$file.base";
-	$base = SVK::XD::get_fh ($self->{oldroot}, '<', $dpath, $copath);
-	if ($checksum) {
-	    my $md5 = md5($base);
+
+	rename ($copath, $basename)
+	  or die loc("rename %1 to %2 failed: %3", $copath, $basename, $!);
+
+	$base = SVK::XD::get_fh ($self->{oldroot}, '<', $dpath, $basename);
+	if (!$self->{ignore_checksum} && $checksum) {
+	    my $md5 = md5_fh ($base);
 	    die loc("source checksum mismatch") if $md5 ne $checksum;
 	    seek $base, 0, 0;
 	}
-	rename ($copath, $basename);
+
 	$self->{base}{$path} = [$base, $basename,
 				-l $basename ? () : [stat($base)]];
     }
+    # XXX: should test merge to co with keywords
     delete $self->{props}{$path}{'svn:keywords'} unless $self->{update};
     my $fh = SVK::XD::get_fh ($self->{newroot}, '>', $dpath, $copath, 0, undef, undef,
 			      $self->{added}{$path} ? $self->{props}{$path} || {}: undef)
@@ -143,19 +152,16 @@ sub close_file {
 	delete $self->{base}{$path};
     }
     elsif (!$self->{update} && !$self->{check_only}) {
-	my $report = $copath;
-	$report =~ s/^\Q$self->{copath}\E/$self->{report}/ if $self->{report};
-	$self->{xd}->do_add (report => $report, no_autoprop => 1,
-			     copath => $copath, quiet => $self->{quiet});
+	$self->{xd}{checkout}->store_fast ($copath, { '.schedule' => 'add' });
     }
     if ($self->{update}) {
-	$self->{xd}{checkout}->store ($copath, {revision => $self->{revision}});
+	# XXX: use store_fast with new data::hierarchy release.
+	$self->{xd}{checkout}->store_fast ($copath, {revision => $self->{revision}});
 	$self->{xd}->fix_permission ($copath, $self->{exe}{$path})
 	    if exists $self->{exe}{$path};
     }
     delete $self->{props}{$path};
     delete $self->{added}{$path};
-
 }
 
 sub add_directory {
@@ -164,10 +170,7 @@ sub add_directory {
     $self->{get_copath}($copath);
     die loc("path %1 already exists", $copath) if !$self->{added}{$pdir} && -e $copath;
     mkdir ($copath) unless $self->{check_only};
-    my $report = $path;
-    $report =~ s/^\Q$self->{target}\E/$self->{report}/ if $self->{report};
-    $self->{xd}->do_add (report => $report, no_autoprop => 1,
-			 copath => $copath, quiet => $self->{quiet})
+    $self->{xd}{checkout}->store_fast ($copath, { '.schedule' => 'add' })
 	if !$self->{update} && !$self->{check_only};
     $self->{added}{$path} = 1;
     return $path;

@@ -28,7 +28,7 @@ sub _do_list {
     printf $fmt, 'Depot', 'Path';
     print '=' x 60;
     printf $fmt, "/$_/", $map->{$_} for keys %$map;
-    print '=' x 60;
+    return;
 }
 
 sub _do_edit {
@@ -39,7 +39,7 @@ sub _do_edit {
     if ( !$self->{'init'} ) {
         do {
             $map =
-              get_buffer_from_editor( 'depot map', $sep, "$map\n$sep\n",
+              get_buffer_from_editor( loc('depot map'), $sep, "$map\n$sep\n",
                 'depotmap' );
             $new = eval { YAML::Load($map) };
             print "$@\n" if $@;
@@ -54,8 +54,9 @@ sub _do_edit {
 	    qr/^[yn]/i,
 	);
 	next if $ans =~ /^n/i;
+        $ENV{SVNFSTYPE} ||= (($SVN::Core::VERSION =~ /^1\.0/) ? 'bdb' : 'fsfs');
 	SVN::Repos::create($path, undef, undef, undef,
-			   {'fs-type' => $ENV{SVNFSTYPE} || 'bdb',
+			   {'fs-type' => $ENV{SVNFSTYPE},
 			    'bdb-txn-nosync' => '1',
 			    'bdb-log-autoremove' => '1'});
     }
@@ -76,8 +77,8 @@ SVK::Command::Depotmap - Create or edit the depot mapping configuration
 
 =head1 OPTIONS
 
- -l [--list]:    List current depot mapping
- -i [--init]:    Initialize a default deopt
+ -l [--list]            : list current depot mappings
+ -i [--init]            : initialize a default deopt
 
 =head1 DESCRIPTION
 
@@ -86,11 +87,11 @@ and let you edit your depot-directory mapping.
 
 Each line contains a map entry, the format is:
 
- depotname: 'path/to/repos'
+ depotname: '/path/to/repos'
 
-The depotname could be used to refer to a DEPOTPATH as
+The depotname may then be used as part of a DEPOTPATH:
 
- /depotname/path/in/repos
+ /depotname/path/inside/repos
 
 =head1 AUTHORS
 

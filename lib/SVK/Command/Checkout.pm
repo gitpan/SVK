@@ -5,13 +5,13 @@ our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command::Update );
 use SVK::XD;
 use SVK::I18N;
-use Cwd;
+use SVK::Util 'abs_path';
 use File::Spec;
 
 sub parse_arg {
     my ($self, @arg) = @_;
     my $depotpath = $self->arg_depotpath ($arg[0]);
-    die loc("don't know where to checkout $arg[0]\n") unless $arg[1] || $depotpath->{path} ne '/';
+    die loc("don't know where to checkout %1\n", $arg[0]) unless $arg[1] || $depotpath->{path} ne '/';
 
     $arg[1] =~ s|/$|| if $arg[1];
     $arg[1] ||= (File::Spec->splitdir($depotpath->{path}))[-1];
@@ -19,11 +19,11 @@ sub parse_arg {
     return ($depotpath, $arg[1]);
 }
 
-sub lock { $_[0]->{xd}->lock (Cwd::abs_path ($_[2])) }
+sub lock { $_[0]->{xd}->lock (abs_path ($_[2])) }
 
 sub run {
     my ($self, $target, $report) = @_;
-    my $copath = Cwd::abs_path ($report);
+    my $copath = abs_path ($report);
 
     die loc("checkout path %1 already exists\n", $copath) if -e $copath;
 
@@ -59,7 +59,7 @@ SVK::Command::Checkout - Checkout the depotpath
 
 =head1 OPTIONS
 
- -r [--revision] rev:      revision
+ -r [--revision] arg    : act on revision ARG instead of the head revision
 
 =head1 AUTHORS
 

@@ -1,23 +1,28 @@
 #!/usr/bin/perl -w
 use strict;
-require 't/tree.pl';
 use Test::More;
+use File::Copy qw( copy );
+BEGIN { require 't/tree.pl' };
 our $output;
 
 eval "require SVN::Mirror"
 or plan skip_all => "SVN::Mirror not installed";
-plan tests => 21;
+plan tests => 24;
 
 # build another tree to be mirrored ourself
 my ($xd, $svk) = build_test();
 my ($xd2, $svk2) = build_test();
 
+is_output_like ($svk, 'patch', [], qr'SYNOPSIS');
+is_output_like ($svk, 'patch', ['blah'], qr'SYNOPSIS');
+is_output ($svk, 'patch', ['view'], ['Filename required.']);
+
 $svk->mkdir ('-m', 'init', '//trunk');
 my $tree = create_basic_tree ($xd, '//trunk');
 my ($repospath, $path, $repos) = $xd->find_repos ('//trunk', 1);
 my ($repospath2, undef, $repos2) = $xd2->find_repos ('//trunk', 1);
-
-$svk2->mirror ('//trunk', "file://${repospath}".($path eq '/' ? '' : $path));
+my $uri = uri($repospath);
+$svk2->mirror ('//trunk', $uri.($path eq '/' ? '' : $path));
 $svk2->sync ('//trunk');
 $svk2->copy ('-m', 'local branch', '//trunk', '//local');
 
@@ -59,7 +64,7 @@ is_output ($svk2, 'patch', ['view', 'test-1'],
 
 ok (-e "$xd2->{svkpath}/patch/test-1.svkpatch");
 mkdir ("$xd->{svkpath}/patch");
-link ("$xd2->{svkpath}/patch/test-1.svkpatch", "$xd->{svkpath}/patch/test-1.svkpatch");
+copy ("$xd2->{svkpath}/patch/test-1.svkpatch" => "$xd->{svkpath}/patch/test-1.svkpatch");
 is_output ($svk, 'patch', ['list'], ['test-1@1: ']);
 
 my ($scopath, $scorpath) = get_copath ('patch1');
@@ -80,7 +85,7 @@ is_output ($svk, 'patch', ['view', 'test-1'],
 $svk2->sync ('-a');
 
 is_output ($svk2, 'patch', [qw/test test-1/],
-	   ["Merging back to SVN::Mirror source file://$repospath/trunk.",
+	   ["Merging back to SVN::Mirror source $uri/trunk.",
 	    'Checking against mirrored directory locally.',
 	    'G   B/fe',
 	    'Empty merge.'],
@@ -114,11 +119,13 @@ is_output ($svk2, 'patch', ['view', 'test-1'],
 	    "Target: $uuid:/trunk:4 [mirrored]",
 	    @$log1, @$patch2]);
 
+copy ("$xd2->{svkpath}/patch/test-1.svkpatch" => "$xd->{svkpath}/patch/test-1.svkpatch");
+
 is_output ($svk, 'patch', [qw/test test-1/], ['U   B/fe', 'Empty merge.'],
 	   'patch applies cleanly on server.');
 
 is_output ($svk2, 'patch', [qw/test test-1/],
-	   ["Merging back to SVN::Mirror source file://$repospath/trunk.",
+	   ["Merging back to SVN::Mirror source $uri/trunk.",
 	    'Checking against mirrored directory locally.',
 	    'U   B/fe',
 	    'Empty merge.'],

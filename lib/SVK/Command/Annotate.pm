@@ -4,6 +4,7 @@ our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command );
 use SVK::XD;
 use SVK::I18N;
+use SVK::Util qw( $EOL );
 use Algorithm::Annotate;
 
 sub options {
@@ -43,7 +44,7 @@ sub run {
 	local $/;
 	my ($path, $rev) = @$_;
 	my $content = $fs->revision_root ($rev)->file_contents ($path);
-	$content = [split "[\n\r]", <$content>];
+	$content = [split /$EOL/o, <$content>];
 	no warnings 'uninitialized';
 	$ann->add ( sprintf("%6s\t(%8s %10s):\t\t", $rev,
 			    $fs->revision_prop ($rev, 'svn:author'),
@@ -54,7 +55,8 @@ sub run {
     my $final;
     if ($target->{copath}) {
 	$final = SVK::XD::get_fh ($target->root ($self->{xd}), '<', $target->{path}, $target->{copath});
-	$ann->add ( "\t(working copy): \t\t", [map {chomp;$_}<$final>]);
+	local $/;
+	$ann->add ( "\t(working copy): \t\t", [split /$EOL/o, <$final>]);
 	seek $final, 0, 0;
     }
     else {
@@ -73,7 +75,7 @@ __DATA__
 
 =head1 NAME
 
-SVK::Command::Annotate - Print files with per-line revision and author info
+SVK::Command::Annotate - Display per-line revision and author info
 
 =head1 SYNOPSIS
 
@@ -81,7 +83,7 @@ SVK::Command::Annotate - Print files with per-line revision and author info
 
 =head1 OPTIONS
 
- -x [--cross]:      trace cross copied revisions
+ -x [--cross]           : track revisions copied from elsewhere
 
 =head1 AUTHORS
 

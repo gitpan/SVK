@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
-use Test::More tests => 16;
+use Test::More tests => 18;
 use strict;
-require 't/tree.pl';
+BEGIN { require 't/tree.pl' };
 our $output;
 my ($xd, $svk) = build_test();
 my ($copath, $corpath) = get_copath ('commit');
@@ -35,16 +35,30 @@ $svk->update ('-r', 1);
 overwrite_file ("A/barnew", "fnord");
 $svk->add ('A/barnew');
 $svk->commit ('-m', 'nonconflict new file', 'A/barnew');
+overwrite_file ("A/deep/baz", "foobar\nmodified");
+is_output ($svk, 'commit', ['-m', 'conflicted new file'],
+	   [qr'Transaction is out of date: .*',
+	    "Please update checkout first."],
+	  'commit - need update');
+$svk->revert ('A/deep/baz');
+overwrite_file ("A/deep/new", "this is bad");
+$svk->add ('A/deep/new');
+is_output ($svk, 'commit', ['-m', 'conflicted new file'],
+	   [qr'Item already exists.*',
+	    "Please update checkout first."],
+	  'commit - need update');
+$svk->revert ('A/deep/new');
+unlink ('A/deep/new');
+is_output ($svk, 'status', [], [__('M   A/bar'),
+				__('?   A/deep/X')]);
 
-is_output ($svk, 'status', [], ['M   A/bar',
-				'?   A/deep/X']);
 is_deeply ([$xd->{checkout}->find ($corpath, {revision => qr/.*/})],
-	   [$corpath, "$corpath/A/barnew"]);
+	   [$corpath, __"$corpath/A/barnew"]);
 
 $svk->rm ('A/foo');
 $svk->commit ('-m', 'rm something', 'A/foo');
 is_deeply ([$xd->{checkout}->find ($corpath, {revision => qr/.*/})],
-	   [$corpath, "$corpath/A/barnew", "$corpath/A/foo"]);
+	   [$corpath, __("$corpath/A/barnew"), __("$corpath/A/foo")]);
 $svk->update ($corpath);
 $svk->commit ('-m', 'the rest');
 
@@ -55,7 +69,7 @@ is_deeply ([$xd->{checkout}->find ($corpath, {revision => qr/.*/})], [$corpath])
 
 
 is_output ($svk, 'status', [],
-	   ['?   A/deep/X']);
+	   [__('?   A/deep/X')]);
 
 unlink ('A/barnew');
 mkdir ('A/forimport');
@@ -69,7 +83,7 @@ is_output ($svk, 'commit', ['--import', '-m', 'commit --import',
 	   ['Committed revision 7.']);
 
 is_output ($svk, 'status', [],
-	   ['?   A/deep/X']);
+	   [__('?   A/deep/X')]);
 
 is_output ($svk, 'commit', ['--import', '-m', 'commit --import', 'A/deep/X'],
 	   ['Committed revision 8.']);
@@ -83,9 +97,5 @@ mkdir ('A/newdir');
 overwrite_file ("A/newdir/bar", "fnord");
 is_output ($svk, 'commit', ['--import', '-m', 'commit --import', 'A/newdir/bar'],
 	   ['Committed revision 10.']);
-TODO: {
-local $TODO = 'commit --import unknown descendents ';
-
-
-is_output ($svk, 'status', [], []);
-}
+is_output ($svk, 'status', [], [], 'import finds anchor');
+$svk->update ('-r9');

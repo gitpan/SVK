@@ -1,8 +1,8 @@
 #!/usr/bin/perl -w
-use Test::More tests => 41;
+use Test::More tests => 42;
 use strict;
 our $output;
-require 't/tree.pl';
+BEGIN { require 't/tree.pl' };
 my ($xd, $svk) = build_test('foo');
 $svk->mkdir ('-m', 'init', '//V');
 my $tree = create_basic_tree ($xd, '//V');
@@ -13,18 +13,19 @@ is_output_like ($svk, 'copy', [], qr'SYNOPSIS', 'copy - help');
 $svk->checkout ('//new', $copath);
 
 is_output ($svk, 'copy', ['//V/me', '//V/D/de', $copath],
-	   ["A   $copath/me",
-	    "A   $copath/de"]);
+	   [__"A   $copath/me",
+	    __"A   $copath/de"]);
 is_output ($svk, 'cp', ['//V/me', $copath],
-	   ["Path $corpath/me already exists."]);
+	   [__"Path $corpath/me already exists."]);
 is_output ($svk, 'copy', ['//V/me', '//V/D/de', "$copath/me"],
-	   ["$corpath/me is not a directory."], 'multi to nondir');
+	   [__"$corpath/me is not a directory."], 'multi to nondir');
 is_output ($svk, 'copy', ['//V/me', "$copath/me-copy"],
-	   ["A   $copath/me-copy"]);
-$svk->copy ('//V/D/de', "$copath/de-copy");
+	   [__"A   $copath/me-copy"]);
+is_output ($svk, 'copy', ['//V/D/de', "$copath/de-copy"],
+	   [__"A   $copath/de-copy"]);
 is_output ($svk, 'copy', ['//V/D', "$copath/D-copy"],
-	   ["A   $copath/D-copy",
-	    "A   $copath/D-copy/de"]);
+	   [__"A   $copath/D-copy",
+	    __"A   $copath/D-copy/de"]);
 $svk->copy ('//V', "$copath/V-copy");
 
 is_output ($svk, 'copy', ['//V', '/foo/bar', "$copath/V-copy"],
@@ -33,14 +34,14 @@ append_file ("$copath/me-copy", "foobar");
 append_file ("$copath/V-copy/D/de", "foobar");
 $svk->rm ("$copath/V-copy/B/fe");
 is_output ($svk, 'status', [$copath],
-	   ['A + t/checkout/copy/D-copy',
-	    'A + t/checkout/copy/V-copy',
-	    'D   t/checkout/copy/V-copy/B/fe',
-	    'M   t/checkout/copy/V-copy/D/de',
-	    'A + t/checkout/copy/de',
-	    'A + t/checkout/copy/de-copy',
-	    'A + t/checkout/copy/me',
-	    'M + t/checkout/copy/me-copy']);
+	   [__('A + t/checkout/copy/D-copy'),
+	    __('A + t/checkout/copy/V-copy'),
+	    __('D   t/checkout/copy/V-copy/B/fe'),
+	    __('M   t/checkout/copy/V-copy/D/de'),
+	    __('A + t/checkout/copy/de'),
+	    __('A + t/checkout/copy/de-copy'),
+	    __('A + t/checkout/copy/me'),
+	    __('M + t/checkout/copy/me-copy')]);
 $svk->commit ('-m', 'commit depot -> checkout copies', $copath);
 is_copied_from ("$copath/me", '/V/me', 3);
 is_copied_from ("$copath/me-copy", '/V/me', 3);
@@ -64,9 +65,9 @@ is_output ($svk, 'copy', ["//V/D/de", "$copath/de-revive"],
 	   ['Path /V/D/de does not exist.']);
 
 is_output ($svk, 'copy', ['-r7', "//V/D/de", "$copath/de-revive"],
-	   ['A   t/checkout/copy/de-revive']);
+	   [__('A   t/checkout/copy/de-revive')]);
 is_output ($svk, 'status', [$copath],
-	   ["A + $copath/de-revive"]
+	   [__("A + $copath/de-revive")]
 	  );
 is_output ($svk, 'commit', ['-m', 'commit file copied from entry removed later', $copath],
 	   ['Committed revision 9.']);
@@ -108,8 +109,9 @@ is_output ($svk, 'status', [$copath], []);
 }
 # copy on mirrored paths
 my ($srepospath, $spath, $srepos) = $xd->find_repos ('/foo/', 1);
+my $uri = uri($srepospath);
 create_basic_tree ($xd, '/foo/');
-$svk->mirror ('//foo-remote', "file://$srepospath");
+$svk->mirror ('//foo-remote', $uri);
 $svk->sync ('//foo-remote');
 $svk->update ($copath);
 
@@ -122,9 +124,9 @@ is_copied_from ("//V/me-dcopied", '/V/me', 3);
 
 is_output ($svk, 'cp', ['-m', 'copy for remote', '//foo-remote/me', '//foo-remote/me-rcopied'],
 	   [
-	    "Merging back to SVN::Mirror source file://$srepospath.",
+	    "Merging back to SVN::Mirror source $uri.",
 	    'Merge back committed as revision 3.',
-	    "Syncing file://$srepospath",
+	    "Syncing $uri",
 	    'Retrieving log information from 3 to 3',
 	    'Committed revision 14 from revision 3.']);
 
@@ -147,7 +149,7 @@ is_output_like ($svk, 'copy', ['-m', 'from co, modified', "$copath/me", '//foo-r
 $svk->revert ('-R', $copath);
 $svk->copy ("$copath/me", "$copath/me-cocopied");
 is_output ($svk, 'status', [$copath],
-	   ["A + $copath/me-cocopied"]
+	   [__("A + $copath/me-cocopied")]
 	  );
 
 $svk->commit ('-m', 'commit copied file in mirrored path', $copath);
@@ -160,6 +162,6 @@ is_copied_from ("//V/A/Q/me", '/V/me', 3);
 sub is_copied_from {
     my ($path, @expected) = @_;
     $svk->info ($path);
-    my ($rsource, $rrev) = $output =~ m/Copied from (.*?), Rev. (\d+)/;
+    my ($rsource, $rrev) = $output =~ m/Copied From: (.*?), Rev. (\d+)/;
     is_deeply ([$rsource, $rrev], \@expected);
 }

@@ -9,7 +9,7 @@ use SVK::Command::Log;
 
 sub parse_arg {
     my ($self, @arg) = @_;
-    $self->usage if $#arg != 0;
+    return if $#arg != 0;
     return ($self->arg_depotpath ($arg[0]));
 }
 
@@ -53,10 +53,9 @@ SVK::Command::Mkdir - Create a versioned directory
 
 =head1 OPTIONS
 
- -m [--message] message:    Commit message
- -C [--check-only]:         Needs description
- -s [--sign]:               Needs description
- --force:                   Needs description
+ -m [--message] arg     : specify commit message ARG
+ -C [--check-only]      : try operation but make no changes
+ -s [--sign]            : sign this change
 
 =head1 AUTHORS
 

@@ -6,7 +6,7 @@ use SVK::XD;
 use SVK::I18N;
 use SVK::Editor::Status;
 use SVK::Editor::Sign;
-use SVK::Util qw(get_buffer_from_editor slurp_fh find_svm_source svn_mirror tmpfile);
+use SVK::Util qw( HAS_SVN_MIRROR get_buffer_from_editor slurp_fh find_svm_source tmpfile abs2rel );
 use SVN::Simple::Edit;
 
 my $target_prompt = '=== below are targets to be committed ===';
@@ -15,7 +15,6 @@ sub options {
     ('m|message=s'  => 'message',
      'C|check-only' => 'check_only',
      's|sign'	  => 'sign',
-     'force',	  => 'force',
      'import',	  => 'import',
      'direct',	  => 'direct',
     );
@@ -32,17 +31,9 @@ sub lock { $_[0]->lock_target ($_[1]) }
 
 sub target_prompt { $target_prompt }
 
-sub auth {
-    eval 'require SVN::Client' or die $@;
-    return SVN::Core::auth_open
-	([SVN::Client::get_simple_provider (),
-	  SVN::Client::get_ssl_server_trust_file_provider (),
-	  SVN::Client::get_username_provider ()]);
-}
-
 sub under_mirror {
     my ($self, $target) = @_;
-    svn_mirror && SVN::Mirror::is_mirrored ($target->{repos}, $target->{path});
+    HAS_SVN_MIRROR and SVN::Mirror::is_mirrored ($target->{repos}, $target->{path});
 }
 
 sub check_mirrored_path {
@@ -76,7 +67,7 @@ sub get_commit_message {
     my ($self, $msg) = @_;
     return if defined $self->{message};
     $self->{message} = get_buffer_from_editor
-	('log message', $target_prompt, join ("\n", $msg || '', $target_prompt, ''), 'commit');
+	(loc('log message'), $target_prompt, join ("\n", $msg || '', $target_prompt, ''), 'commit');
 }
 
 # Return the editor according to copath, path, and is_mirror (path)
@@ -90,25 +81,25 @@ sub get_editor {
 	my $xdroot = $target->root ($self->{xd});
 	($editor, %cb) = $self->{xd}->get_editor
 	    ( %$target,
+	      # assuming the editor returned here are used with Editor::Merge
+	      ignore_checksum => 1,
+	      targets => undef,
 	      quiet => 1,
 	      oldroot => $xdroot,
 	      newroot => $xdroot,
-	      anchor => $target->{path},
 	      target => '',
 	      check_only => $self->{check_only});
 	return ($editor, %cb);
     }
 
     my ($base_rev, $m, $mpath);
-
-    if (!$self->{direct} && svn_mirror &&
+    if (!$self->{direct} and HAS_SVN_MIRROR and
 	(($m, $mpath) = SVN::Mirror::is_mirrored ($target->{repos}, $target->{path}))) {
 	print loc("Merging back to SVN::Mirror source %1.\n", $m->{source});
 	if ($self->{check_only}) {
 	    print loc("Checking against mirrored directory locally.\n");
 	}
 	else {
-	    $m->{auth} = $self->auth;
 	    $m->{config} = $self->{svnconfig};
 	    $m->{revprop} = ['svk:signature'];
 	    ($base_rev, $editor) = $m->get_merge_back_editor
@@ -151,6 +142,15 @@ sub get_editor {
     %cb = SVK::Editor::Merge::cb_for_root
 	($root, $target->{path}, defined $base_rev ? $base_rev : $yrev);
 
+    unless ($self->{check_only}) {
+	for ($SVN::Error::FS_TXN_OUT_OF_DATE, $SVN::Error::FS_ALREADY_EXISTS) {
+	    # XXX: there's no copath info here
+	    $self->msg_handler ($_, $m ? "Please sync mirrored path $target->{path} first."
+				       : "Please update checkout first.");
+	    $self->add_handler ($_, sub { $editor->abort_edit });
+	}
+    }
+
     return ($editor, %cb, mirror => $m, callback => \$callback);
 }
 
@@ -159,7 +159,7 @@ sub get_committable {
     my ($self, $target, $root) = @_;
     my ($fh, $file);
     unless (defined $self->{message}) {
-	($fh, $file) = tmpfile ('commit', UNLINK => 0);
+	($fh, $file) = tmpfile ('commit', TEXT => 1, UNLINK => 0);
     }
 
     print $fh "\n$target_prompt\n" if $fh;
@@ -185,33 +185,26 @@ sub get_committable {
 	  cb_conflict => \&SVK::Editor::Status::conflict,
 	);
 
-    die loc("No targets to commit.\n") if $#{$targets} < 0;
-
     my $conflicts = grep {$_->[0] eq 'C'} @$targets;
-    if ($conflicts) {
+
+    if ($#{$targets} < 0 || $conflicts) {
 	if ($fh) {
 	    close $fh;
 	    unlink $file;
 	}
+	die loc("No targets to commit.\n") if $#{$targets} < 0;
 	die loc("%*(%1,conflict) detected. Use 'svk resolved' after resolving them.\n", $conflicts);
     }
 
     if ($fh) {
 	close $fh;
 	($self->{message}, $targets) =
-	    get_buffer_from_editor ('log message', $target_prompt,
+	    get_buffer_from_editor (loc('log message'), $target_prompt,
 				    undef, $file, $target->{copath}, $target->{targets});
+	unlink $file;
     }
 
     return [sort {$a->[1] cmp $b->[1]} @$targets];
-}
-
-sub _schedule_empty {
-    ('.schedule' => undef,
-     '.copyfrom' => undef,
-     '.copyfrom_rev' => undef,
-     '.newprop' => undef,
-     scheduleanchor => undef);
 }
 
 sub committed_commit {
@@ -243,11 +236,9 @@ sub committed_commit {
 	for (@$targets) {
 	    my ($action, $copath) = @$_;
 	    next if $action eq 'D' || -d $copath;
-	    my $dpath = $copath;
 	    my $path = $target->{path};
 	    $path = '' if $path eq '/';
-	    # XXX: translate SEP to /
-	    $dpath =~ s|^\Q$target->{copath}\E|$path|;
+	    my $dpath = abs2rel($copath, $target->{copath} => $path, '/');
 	    my $prop = $root->node_proplist ($dpath);
 	    # XXX: some mode in get_fh for modification only
 	    my $layer = SVK::XD::get_keyword_layer ($root, $dpath, $prop);
@@ -298,7 +289,6 @@ sub run {
 	if $is_mirrored && !$self->{direct} && !$cb{mirror};
 
     $self->run_delta ($target, $xdroot, $editor, %cb);
-    return;
 }
 
 sub run_delta {
@@ -307,6 +297,7 @@ sub run_delta {
     my %revcache;
     $self->{xd}->checkout_delta
 	( %$target,
+	  error => $self->{error},
 	  xdroot => $xdroot,
 	  editor => $editor,
 	  $self->{import} ?
@@ -346,12 +337,11 @@ SVK::Command::Commit - Commit changes to depot
 
 =head1 OPTIONS
 
- -m [--message] ARG:    specify commit message ARG
- -s [--sign]:           sign the commit
- -C [--check-only]:     Needs description
- --force:               Needs description
- --import:              Import mode, nodes are automatically added and deleted
- --direct:              Commit directly even if the path is mirrored
+ -m [--message] arg     : specify commit message ARG
+ -C [--check-only]      : try operation but make no changes
+ -s [--sign]            : sign this change
+ --import               : import mode; automatically add and delete nodes
+ --direct               : commit directly even if the path is mirrored
 
 =head1 AUTHORS
 
