@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
 BEGIN { require 't/tree.pl' };
-plan_svm tests => 50;
+plan_svm tests => 52;
 
 our ($output, $answer);
 my ($xd, $svk) = build_test('foo');
@@ -20,7 +20,7 @@ is_output ($svk, 'cp', ['//V/me', $copath],
 	   [__"Path $copath/me already exists."]);
 
 is_output ($svk, 'copy', ['//V/me', '//V/D/de', "$copath/me"],
-	   [__"$corpath/me is not a directory."], 'multi to nondir');
+	   [__"$copath/me is not a directory."], 'multi to nondir');
 is_output ($svk, 'copy', ['//V/me', "$copath/me-copy"],
 	   [__"A   $copath/me-copy"]);
 is_output ($svk, 'copy', ['//V/D/de', "$copath/de-copy"],
@@ -162,8 +162,7 @@ is_output ($svk, 'cp', ['-m', 'copy directly', '//V/me', '//V/A/Q/'],
 is_copied_from ("//V/A/Q/me", '/V/me', 3);
 
 is_output ($svk, 'cp', ['-m', 'copy directly', '//V/me', '//V/newdir-with-p/me-dcopied'],
-	   [qr'Transaction is out of date',
-	    'Please update checkout first.']);
+	   ["Parent directory //V/newdir-with-p doesn't exist, use -p."]);
 is_output ($svk, 'cp', ['-p', '-m', 'copy directly', '//V/me', '//V/newdir-with-p/me-dcopied'],
 	   ['Committed revision 18.']);
 
@@ -196,6 +195,13 @@ is_output ($svk, 'commit', ['-m', 'commit copied file in mirrored path', $copath
 	    "Syncing $uri",
 	    'Retrieving log information from 6 to 6',
 	    'Committed revision 20 from revision 6.']);
+
+mkdir "$copath/foo";
+is_output ($svk, 'cp', ['//foo-remote', "$copath/foo"],
+	   [__"$copath/foo is not a versioned directory."]);
+is_output ($svk, 'cp', ['//foo-remote/A/be', "$copath/me"],
+	   [__"Path $copath/me already exists."]);
+$svk->st ($copath);
 
 sub is_copied_from {
     unshift @_, $svk;

@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 44;
+use Test::More tests => 50;
 use strict;
 BEGIN { require 't/tree.pl' };
 our $output;
@@ -11,6 +11,7 @@ my $tree2 = create_basic_tree ($xd, '//V-3.1');
 my ($copath, $corpath) = get_copath ('checkout');
 mkdir ($copath);
 is_output_like ($svk, 'checkout', [], qr'SYNOPSIS', 'checkout - help');
+is_output_like ($svk, 'checkout', ['A', 'B', 'C'], qr'SYNOPSIS', 'checkout - help');
 
 my $cofile = __"$copath/co-root/V-3.1/A/Q/qz";
 is_output_like ($svk, 'checkout', ['//', "$copath/co-root"],
@@ -111,6 +112,13 @@ is_output ($svk, 'checkout', ['--list'], [
 	    "//V/A               \t".__("$corpath/co-root-deep/there"),
             ]);
 
+is_output ($svk, 'checkout', ['//V-3.1/A/Q', "."],
+	   ["Syncing //V-3.1/A/Q(/V-3.1/A/Q) in ".__"$corpath/Q to 6.",
+	    __('A   Q/qu'),
+	    __('A   Q/qz'),
+	    __(' U  Q'),
+	   ], 'checkout report');
+
 is_output ($svk, 'checkout', ['--detach', '//V-3.1'], [
             __("Checkout path '$corpath/V-3.1' detached."),
             __("Checkout path '$corpath/V-3.1-nr' detached."),
@@ -154,8 +162,8 @@ is_output ($svk, 'update', ['co-root-a'],
 	    "Checkout directory gone. Use 'checkout //V/A co-root-a' instead."]);
 
 SKIP: {
-skip 'no chmod', 1
-    unless chmod (0555, '.');
+chmod (0555, '.');
+skip 'no working chmod', 1 if -w '.';
 is_output ($svk, 'checkout', ['//V/A', 'co-root-a'],
 	   ["Syncing //V/A(/V/A) in ".__"$corpath/co-root-a to 6.",
 	    "Can't create directory co-root-a for checkout: Permission denied."]);
@@ -186,3 +194,43 @@ is_output ($svk, 'checkout', ['--relocate', __("$corpath/baz/boo"), __("$corpath
             __("Cannot rename $corpath/baz/boo to $corpath/baz; please move it manually."),
             __("Checkout '$corpath/baz/boo' relocated to '$corpath/baz'."),
             ]);
+
+$svk->checkout (-r5 => '//V-3.1', "3.1");
+SKIP: {
+chmod 0500, "3.1/B";
+skip 'no working chmod', 4 if -w "3.1/B";
+
+is_output ($svk, 'up', ["3.1"],
+	   ["Syncing //V-3.1(/V-3.1) in ".__"$corpath/3.1 to 6.",
+	    __('D   3.1/A/P'),
+	    __('    3.1/B/S - skipped'),
+	    __('    3.1/B/fe - skipped'),
+	    __('U   3.1/me'),
+	    __('A   3.1/D'),
+	    __('A   3.1/D/de')]);
+TODO: {
+local $TODO = 'unwritable subdirectory should remain old state';
+
+is_output ($svk, 'st', ['3.1'],
+	   []);
+}
+
+chmod 0700, "3.1/B";
+
+append_file ('3.1/D/de', "foo\n\n");
+$svk->ci (-m => 'change', '3.1');
+append_file ('3.1/D/de', "bar\n");
+chmod 0500, "3.1/D";
+is_output ($svk, 'up', [-r6 => "3.1"],
+	   ["Syncing //V-3.1(/V-3.1) in ".__"$corpath/3.1 to 6.",
+	    __('    3.1/D/de - skipped')]);
+TODO: {
+local $TODO = 'unwritable subdirectory should remain old state';
+is_output_like ($svk, 'diff', ['3.1'], qr'revision 7');
+}
+
+#$svk->up (-r5 => '3.1');
+#warn $output;
+#$svk->up (-r3 => '3.1');
+#warn $output;
+}

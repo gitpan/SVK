@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests => 24;
+use Test::More tests => 27;
 BEGIN { require 't/tree.pl' };
 
 my ($xd, $svk) = build_test();
@@ -14,12 +14,13 @@ is_file_content ("$copath/A/be",
 		 "\$Rev: 1 \$ \$Revision: 1 \$\n\$FileRev: #1 \$\nfirst line in be\n2nd line in be\n",
 		 'basic Id');
 append_file ("$copath/A/be", "some more\n");
+append_file ("$copath/A/be", "my \$Rev = \$Revision ? \$Revision : \$VERSION;\n");
 $svk->ps ('svn:executable', 'on', "$copath/A/be");
 ok (_x "$copath/A/be", 'svn:excutable effective after ps');
 $svk->commit ('-m', 'some modifications', $copath);
 ok (_x "$copath/A/be", 'take care of svn:executable after commit');
 
-my $newcontent = "\$Rev: 3 \$ \$Revision: 3 \$\n\$FileRev: #2 \$\nfirst line in be\n2nd line in be\nsome more\n";
+my $newcontent = "\$Rev: 3 \$ \$Revision: 3 \$\n\$FileRev: #2 \$\nfirst line in be\n2nd line in be\nsome more\nmy \$Rev = \$Revision ? \$Revision : \$VERSION;\n";
 
 is_file_content ("$copath/A/be", $newcontent, 'commit Id');
 
@@ -32,7 +33,7 @@ append_file ("$copath/A/be", "some more\n");
 $svk->commit ('-m', 'some more modifications', $copath);
 
 is_file_content ("$copath/A/be",
-		 "\$Rev: 4 \$ \$Revision: 4 \$\n\$FileRev: #3 \$\nfirst line in be\n2nd line in be\nsome more\nsome more\n");
+		 "\$Rev: 4 \$ \$Revision: 4 \$\n\$FileRev: #3 \$\nfirst line in be\n2nd line in be\nsome more\nmy \$Rev = \$Revision ? \$Revision : \$VERSION;\nsome more\n");
 $svk->update ('-r', 3, $copath);
 ok (_x "$copath/A/be", 'take care of svn:executable after update');
 is_file_content ("$copath/A/be", $newcontent, 'commit Id');
@@ -110,3 +111,32 @@ SKIP: {
 skip 'fix inconsistent eol-style after commit', 1;
 is_file_content_raw ("$copath/le/mixed", "mixed$Native...endings$Native...");
 }
+
+overwrite_file_raw ("$copath/le/mixed2", '');
+$svk->add ("$copath/le");
+$svk->ci (-m => 'some mixed le in repository', $copath );
+$svk->cp (-m => 'tmp', '//le' => '//le2');
+overwrite_file_raw ("$copath/le/mixed2", "mixed$CRLF...endings$CR...");
+$svk->ci (-m => 'some mixed le in repository', $copath );
+$svk->up ($copath);
+$svk->ps ('svn:eol-style', 'native', "$copath/le2/mixed2");
+$svk->ci (-m => 'some mixed le in repository', $copath );
+
+$svk->sm (-m => 'move eol prop around', -f => '//le2');
+
+$svk->up ($copath);
+# XXX: need to do rmcache here to make the file properly modified
+$svk->admin ('rmcache');
+is_output ($svk, 'st', [$copath],
+	   [__"M   $copath/le/mixed2"]);
+
+rmtree [$copath];
+
+$svk->checkout ('//', $copath);
+$svk->admin ('rmcache');
+is_output ($svk, 'st', [$copath],
+	   [__"M   $copath/le/mixed2"]);
+
+$svk->commit (-m => 'fix eol', $copath);
+$svk->admin ('rmcache');
+is_output ($svk, 'st', [$copath], []);

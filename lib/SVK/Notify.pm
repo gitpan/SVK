@@ -80,6 +80,19 @@ sub new_with_report {
 		  cb_flush => print_report (\&flush_print, $is_copath, $report, $target));
 }
 
+sub notify_translate {
+    my ($self, $translate) = @_;
+
+    for (qw/cb_skip cb_flush/) {
+	my $sub = $self->{$_} or next;
+	$self->{$_} = sub { my $path = shift;
+			    $translate->($path);
+			    $sub->($path, @_);
+#			    unshift @_, $path; goto &$sub
+			};
+    }
+}
+
 sub node_status {
     my ($self, $path, $s) = @_;
     $self->{status}{$path}[0] = $s if defined $s;
@@ -96,7 +109,7 @@ sub prop_status {
 	&& !($st->[0] && ($st->[0] eq 'A' || $st->[0] eq 'R'))
 	    # not overriding things more informative
 	    && (!$st->[1] || $prop{$s} > $prop{$st->[1]});
-    return $self->{status}{$path}[1];
+    return defined $st ? $st->[1] : undef;
 }
 
 sub hist_status {

@@ -4,7 +4,7 @@ use SVK::Version;  our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command );
 use SVK::I18N;
-use SVK::Util qw( get_encoding );
+use SVK::Util qw( get_encoder );
 use autouse 'File::Find' => qw(find);
 
 sub parse_arg { shift; @_ ? @_ : 'index'; }
@@ -14,6 +14,11 @@ sub parse_arg { shift; @_ ? @_ : 'index'; }
 
 sub run {
     my $self = shift;
+
+    if(defined($ENV{SVKPAGER})){
+        eval '$ENV{PAGER}=$ENV{SVKPAGER};use IO::Pager;IO::Pager->new(*STDOUT)';
+    }
+
     foreach my $topic (@_) {
         if ($topic eq 'commands') {
             my @cmd;
@@ -37,10 +42,7 @@ sub run {
 
             $buf =~ s/^NAME\s+SVK::Help::\S+ - (.+)\s+DESCRIPTION/    $1:/;
 
-            require Encode;
-            my $encoder = Encode::find_encoding(get_encoding())
-                       || Encode::find_encoding('utf8');
-            print $encoder->encode($buf);
+            print get_encoder->encode($buf);
         }
         else {
             die loc("Cannot find help topic '%1'.\n", $topic);
@@ -91,7 +93,16 @@ SVK::Command::Help - Show help
 
 =head1 OPTIONS
 
- None
+Optionally svk helps can pipe through a pager, for it is easier to
+read if the output is too long. For using this feature, please
+set environment variable SVKPAGER to some pager program.
+For example:
+
+    # bash, zsh users
+    export SVKPAGER='/usr/bin/less'
+
+    # tcsh users
+    setenv SVKPAGER '/usr/bin/less'
 
 =head1 AUTHORS
 

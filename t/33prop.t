@@ -1,12 +1,12 @@
 #!/usr/bin/perl -w
-use Test::More tests => 47;
+use Test::More tests => 52;
 use strict;
 use File::Temp;
 require 't/tree.pl';
 
 my ($xd, $svk) = build_test();
 our $output;
-my ($copath, $corpath) = get_copath ('basic');
+my ($copath, $corpath) = get_copath ('prop');
 my ($repospath, undef, $repos) = $xd->find_repos ('//', 1);
 $svk->checkout ('//', $copath);
 mkdir "$copath/A";
@@ -14,6 +14,7 @@ overwrite_file ("$copath/A/foo", "foobar");
 overwrite_file ("$copath/A/bar", "foobarbazz");
 is_output_like ($svk, 'ps', [], qr'SYNOPSIS', 'ps - help');
 is_output_like ($svk, 'pe', [], qr'SYNOPSIS', 'ps - help');
+is_output_like ($svk, 'pe', ['foo','bar','baz'], qr'SYNOPSIS', 'ps - help');
 is_output_like ($svk, 'propdel', [], qr'SYNOPSIS', 'propdel - help');
 is_output_like ($svk, 'pg', [], qr'SYNOPSIS', 'pg - help');
 
@@ -27,6 +28,19 @@ is_output ($svk, 'pl', ["$copath/A/foo"],
 $svk->commit ('-m', 'commit', $copath);
 is_output ($svk, 'pl', ["$copath/A"],
 	   []);
+
+is_output ($svk, 'ps', ['myprop', 'myvalue', "$copath/A/unknown"],
+	   [__("$copath/A/unknown is not under version control.")]);
+
+overwrite_file ("$copath/A/unknown", 'foo');
+is_output ($svk, 'ps', ['myprop', 'myvalue', "$copath/A/unknown"],
+	   [__("$copath/A/unknown is not under version control.")]);
+
+$svk->rm ("$copath/A/foo");
+is_output ($svk, 'ps', ['myprop', 'myvalue', "$copath/A/foo"],
+	   [__("$copath/A/foo is already scheduled for delete.")]);
+
+$svk->revert (-R => $copath);
 
 is_output ($svk, 'ps', ['myprop', 'myvalue', "$copath/A"],
 	   [__(" M  $copath/A")]);
@@ -43,6 +57,12 @@ is_output ($svk, 'pg', ['myprop', "$copath/A"],
 	   ['myvalue']);
 
 $svk->commit ('-m', 'commit', $copath);
+
+is_output ($svk, 'ps', ['thisprop', 'thisvalue', "$copath/A", "$copath/A/foo"],
+	   [__(" M  $copath/A"),
+	    __(" M  $copath/A/foo")]);
+
+$svk->revert (-R => $copath);
 
 is_output ($svk, 'ps', ['myprop', 'myvalue2', "$copath/A"],
 	   [__(" M  $copath/A")]);

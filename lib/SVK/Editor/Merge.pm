@@ -173,11 +173,11 @@ sub cb_for_root {
 # translate the path before passing to cb_*
 sub cb_translate {
     my ($cb, $translate) = @_;
-    for (qw/cb_exist cb_rev cb_conflict cb_localmod cb_dirdelta/) {
+    for (qw/cb_exist cb_rev cb_conflict cb_localmod cb_localprop cb_dirdelta/) {
 	my $sub = $cb->{$_};
 	next unless $sub;
 	$cb->{$_} = sub { my $path = shift; $translate->($path);
-			  $sub->($path, @_)};
+			  unshift @_, $path; goto &$sub };
     }
 }
 
@@ -266,8 +266,11 @@ sub ensure_close {
     $self->{notify}->flush ($path, 1);
     $self->{cb_closed}->($path, $checksum, $pool)
         if $self->{cb_closed};
-    $self->{cb_merged}->($self->{storage}, $self->{storage_baton}{$path}, 'file', $pool)
-	if $path eq $self->{target} && $self->{changes} && $self->{cb_merged};
+
+    if ($path eq $self->{target} && $self->{changes} && $self->{cb_merged}) {
+	$self->ensure_open ($path);
+	$self->{cb_merged}->($self->{storage}, $self->{storage_baton}{$path}, 'file', $pool);
+    }
 
     if (my $baton = $self->{storage_baton}{$path}) {
 	$self->{storage}->close_file ($baton, $checksum, $pool);
@@ -293,13 +296,19 @@ sub cleanup_fh {
 }
 
 sub prepare_fh {
-    my ($self, $fh) = @_;
-    # XXX: need to respect eol-style here?
+    my ($self, $fh, $eol) = @_;
     for my $name (qw/base new local/) {
 	my $entry = $fh->{$name};
 	next unless $entry->[FH];
-	next if $entry->[FILENAME];
+	# if there's eol translation required, we can't use the
+	# prepared tmp files.
+	if ($entry->[FILENAME]) {
+	    next unless $eol;
+	    # reopen the tmp file, since apply_textdelta closes it
+	    open $entry->[FH], $entry->[FILENAME];
+	}
 	my $tmp = [tmpfile("$name-"), $entry->[CHECKSUM]];
+	binmode $tmp->[FH], $eol if $eol;
 	slurp_fh ($entry->[FH], $tmp->[FH]);
 	close $entry->[FH];
 	$entry = $fh->{$name} = $tmp;
@@ -337,8 +346,13 @@ sub apply_textdelta {
 	unless $self->{notify}->node_status ($path);
 
     $self->ensure_open ($path);
-    return $self->{storage}->apply_textdelta ($self->{storage_baton}{$path},
-					      $checksum, $pool);
+    my $handle = $self->{storage}->apply_textdelta ($self->{storage_baton}{$path},
+						    $checksum, $pool);
+    if ($self->{storage_has_unwritable} && !$handle) {
+	delete $self->{notify}{status}{$path};
+	$self->{notify}->flush ($path);
+    }
+    return $handle;
 }
 
 sub _merge_text_change {
@@ -380,8 +394,8 @@ sub _overwrite_local_file {
     my ($self, $fh, $path, $nfh, $pool) = @_;
     my $handle = $self->{storage}->
 	apply_textdelta ($self->{storage_baton}{$path}, $fh->{local}[CHECKSUM],
-		$pool);
-    
+			 $pool);
+
     if ($handle && $#{$handle} >= 0) {
 	if ($self->{send_fulltext}) {
 	    SVN::TxDelta::send_stream ($nfh, @$handle, $pool);
@@ -391,7 +405,23 @@ sub _overwrite_local_file {
 	    my $txstream = SVN::TxDelta::new($fh->{local}[FH], $nfh, $pool);
 	    SVN::TxDelta::send_txstream ($txstream, @$handle, $pool);
 	}
+	return 1;
     }
+
+    if ($self->{storage_has_unwritable}) {
+	delete $self->{notify}{status}{$path};
+	$self->{notify}->flush ($path);
+	return 0;
+    }
+    return 1;
+}
+
+sub _merge_file_unchanged {
+    my ($self, $path, $checksum, $pool) = @_;
+    ++$self->{changes};
+    $self->{notify}->node_status ($path, 'g');
+    $self->ensure_close ($path, $checksum, $pool);
+    return;
 }
 
 sub close_file {
@@ -404,15 +434,18 @@ sub close_file {
     no warnings 'uninitialized';
     # let close_directory reports about its children
     if ($info->{fh}{new}) {
-	$self->prepare_fh ($fh);
 
-	if ($checksum eq $fh->{local}[CHECKSUM] ||
-	    File::Compare::compare ($fh->{new}[FILENAME], $fh->{local}[FILENAME]) == 0) {
-	    ++$self->{changes};
-	    $self->{notify}->node_status ($path, 'g');
-	    $self->ensure_close ($path, $checksum, $pool);
-	    return;
-	}
+	$self->_merge_file_unchanged ($path, $checksum, $pool), return
+	    if $checksum eq $fh->{local}[CHECKSUM];
+
+	my $eol = $self->{cb_localprop}->($path, 'svn:eol-style', $pool);
+	my $eol_layer = SVK::XD::get_eol_layer({'svn:eol-style' => $eol}, '>');
+	$eol_layer = '' if $eol_layer eq ':raw';
+	$self->prepare_fh ($fh, $eol_layer);
+	# XXX: There used be a case that this explicit comparison is
+	# needed, but i'm not sure anymore.
+	$self->_merge_file_unchanged ($path, $checksum, $pool), return
+	    if File::Compare::compare ($fh->{new}[FILENAME], $fh->{local}[FILENAME]) == 0;
 
 	$self->ensure_open ($path);
         if ($info->{addmerge}) {
@@ -421,14 +454,17 @@ sub close_file {
         }
 	my ($conflict, $mfh) = $self->_merge_text_change ($fh, $path, $pool);
 	$self->{notify}->node_status ($path, $conflict ? 'C' : 'G');
+
+	$eol_layer = SVK::XD::get_eol_layer({'svn:eol-style' => $eol}, '<');
+	binmode $mfh, $eol_layer or die $! if $eol_layer;
+
 	$iod = IO::Digest->new ($mfh, 'MD5');
 
-	$self->_overwrite_local_file ($fh, $path, $mfh, $pool);
-
-	undef $fh->{base}[FILENAME] if $info->{addmerge};
+	if ($self->_overwrite_local_file ($fh, $path, $mfh, $pool)) {
+	    undef $fh->{base}[FILENAME] if $info->{addmerge};
+	    $self->node_conflict ($path) if $conflict;
+	}
 	$self->cleanup_fh ($fh);
-
-	$self->node_conflict ($path) if $conflict;
     }
     elsif ($info->{fpool} && !$self->{notify}->node_status ($path)) {
 	# open but prop edit only, load local checksum
@@ -458,10 +494,15 @@ sub add_directory {
 	$self->{notify}->node_status ($path, 'G');
     }
     else {
-	$self->{added}{$path} = 1;
-	$self->{storage_baton}{$path} =
+	my $baton =
 	    $self->{storage}->add_directory ($path, $self->{storage_baton}{$pdir},
 					     @arg);
+	unless (defined $baton) {
+	    $self->{notify}->flush ($path);
+	    return undef;
+	}
+	$self->{storage_baton}{$path} = $baton;
+	$self->{added}{$path} = 1;
 	$self->{notify}->node_status ($path, 'A');
 	$self->{notify}->flush ($path, 1);
     }

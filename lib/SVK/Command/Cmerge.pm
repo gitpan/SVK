@@ -24,6 +24,13 @@ sub lock {
 sub run {
     my ($self, $src, $dst) = @_;
     # XXX: support checkonly
+   
+    if ($0 =~ /svk$/) { 
+        # Only warn about deprecation if the user is running svk. 
+        # (Don't warn when running tests)                 
+        print loc("%1 cmerge is deprecated, pending improvements to the Subversion API",$0) ."\n";
+        print loc("'Use %1 merge -c' to obtain similar functionality.",$0)."\n\n";
+    }
     my @revlist = $self->parse_revlist;
 
     my $repos = $src->{repos};
@@ -103,18 +110,22 @@ SVK::Command::Cmerge - Merge specific changes
 
 =head1 SYNOPSIS
 
+ This command is currently deprecated, pending improvements to the
+ Subversion API. In the meantime, use C<svk merge -c> to obtain
+ similar functionality.
+
  cmerge -c CHGSPEC DEPOTPATH [PATH]
  cmerge -c CHGSPEC DEPOTPATH1 DEPOTPATH2
 
 =head1 OPTIONS
 
- -m [--message] arg     : specify commit message ARG
- -c [--change] arg      : act on comma-separated revisions ARG
+ -m [--message] MESSAGE	: specify commit message MESSAGE
+ -c [--change] REV	: act on comma-separated revisions REV 
  -C [--check-only]      : try operation but make no changes
  -l [--log]             : use logs of merged revisions as commit message
  -r [--revision] N:M    : act on revisions between N and M
  -a [--auto]            : merge from the previous merge point
- -P [--patch] arg       : instead of commit, save this change as a patch
+ -P [--patch] NAME	: instead of commit, save this change as a patch
  -S [--sign]            : sign this change
  --verbatim             : verbatim merge log without indents and header
  --no-ticket            : do not record this merge point

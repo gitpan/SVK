@@ -7,6 +7,7 @@ use SVK::XD;
 use SVK::I18N;
 use SVK::Editor::Status;
 use SVK::Editor::Sign;
+use SVK::Command::Sync;
 use SVK::Util qw( HAS_SVN_MIRROR get_buffer_from_editor slurp_fh read_file
 		  find_svm_source tmpfile abs2rel find_prev_copy from_native to_native
 		  get_encoder );
@@ -44,15 +45,6 @@ sub under_mirror {
     my ($self, $target) = @_;
     return if $self->{direct};
     HAS_SVN_MIRROR and SVN::Mirror::is_mirrored ($target->{repos}, $target->{path});
-}
-
-sub check_mirrored_path {
-    my ($self, $target) = @_;
-    if ($self->under_mirror ($target)) {
-	print loc ("%1 is under mirrored path.\n", $target->{depotpath});
-	return;
-    }
-    return 1;
 }
 
 sub fill_commit_message {
@@ -138,6 +130,7 @@ sub get_editor {
 	}
 	else {
 	    print loc("Merging back to mirror source %1.\n", $m->{source});
+	    $m->{lock_message} = SVK::Command::Sync::lock_message ();
 	    $m->{config} = $self->{svnconfig};
 	    $m->{revprop} = ['svk:signature'];
 	    ($base_rev, $editor) = $m->get_merge_back_editor
@@ -201,7 +194,9 @@ sub get_editor {
     }
 
     unless ($self->{check_only}) {
-	for ($SVN::Error::FS_TXN_OUT_OF_DATE, $SVN::Error::FS_ALREADY_EXISTS) {
+	for ($SVN::Error::FS_TXN_OUT_OF_DATE,
+	     $SVN::Error::FS_ALREADY_EXISTS,
+	     $SVN::Error::FS_NOT_DIRECTORY) {
 	    # XXX: there's no copath info here
 	    $self->msg_handler ($_, $m ? "Please sync mirrored path $target->{path} first."
 				       : "Please update checkout first.");
@@ -332,7 +327,7 @@ sub committed_commit {
 	    from_native ($dpath, 'path', $encoder);
 	    my $prop = $root->node_proplist ($dpath);
 	    my $layer = SVK::XD::get_keyword_layer ($root, $dpath, $prop);
-	    my $eol = SVK::XD::get_eol_layer ($root, $dpath, $prop, '>');
+	    my $eol = SVK::XD::get_eol_layer ($prop, '>');
 	    # XXX: can't bypass eol translation when normalization needed
 	    next unless $layer || ($eol ne ':raw' && $eol ne ' ');
 
@@ -436,10 +431,11 @@ SVK::Command::Commit - Commit changes to depot
 
 =head1 OPTIONS
 
- -m [--message] arg     : specify commit message ARG
+ -m [--message] MESSAGE	: specify commit message MESSAGE
  -C [--check-only]      : try operation but make no changes
- -P [--patch] arg       : instead of commit, save this change as a patch
+ -P [--patch] NAME	: instead of commit, save this change as a patch
  -S [--sign]            : sign this change
+ -N [--non-recursive]   : operate on single directory only
  --encoding ENC         : treat value as being in charset encoding ENC
  --import               : import mode; automatically add and delete nodes
  --direct               : commit directly even if the path is mirrored

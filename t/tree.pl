@@ -27,7 +27,7 @@ BEGIN {
         ref($answer) ? shift(@$answer) : $answer
     } unless $ENV{DEBUG_INTERACTIVE};
 
-    chdir catdir( dirname(__FILE__), '..' );
+    chdir catdir(abs_path(dirname(__FILE__)), '..' );
 }
 
 sub plan_svm {
@@ -131,6 +131,7 @@ sub cleanup_test {
     use YAML;
     print Dump($xd);
     for my $depot (sort keys %{$xd->{depotmap}}) {
+	my $pool = SVN::Pool->new_default;
 	my (undef, undef, $repos) = $xd->find_repos ("/$depot/", 1);
 	print "===> depot $depot (".$repos->fs->get_uuid."):\n";
 	$svk->log ('-v', "/$depot/");
@@ -224,6 +225,13 @@ sub is_output_like {
     $svk->$cmd (@$arg);
     @_ = ($output, $expected, $test || join(' ', $cmd, @$arg));
     goto &like;
+}
+
+sub is_output_unlike {
+    my ($svk, $cmd, $arg, $expected, $test) = @_;
+    $svk->$cmd (@$arg);
+    @_ = ($output, $expected, $test || join(' ', $cmd, @$arg));
+    goto &unlike;
 }
 
 sub is_ancestor {

@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 my $required_svn = '1.0.7';
-my $required_svm = '0.56';
+my $required_svm = '0.57';
 
 use strict;
 use inc::Module::Install;
@@ -38,6 +38,10 @@ features(
 	-default => 1,
         'Locale::Maketext::Lexicon' => '0.42',
         'Locale::Maketext::Simple'  => '0.12',
+    ],
+    'Message display through a pager' => [
+        -default => 1,
+        'IO::Pager'             => '0',
     ],
 );
 

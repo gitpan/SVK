@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests => 45;
+use Test::More tests => 47;
 BEGIN { require 't/tree.pl' };
 
 use SVK::Util qw( HAS_SYMLINK is_symlink);
@@ -47,6 +47,10 @@ is_output ($svk, 'add', ["$copath/A"],
 _symlink ('/non-exists', "$copath/A/non.lnk");
 is_output ($svk, 'add', ["$copath/A/non.lnk"],
 	   [__("A   $copath/A/non.lnk")], 'dangling symlink');
+is_output ($svk, 'rm', ["$copath/A/non.lnk"],
+	   [__("$copath/A/non.lnk is scheduled, use 'svk revert'.")]);
+is_output ($svk, 'rm', ["$copath/A/bar.lnk"],
+	   [__("$copath/A/bar.lnk is scheduled, use 'svk revert'.")]);
 is_output ($svk, 'status', ["$copath/A"],
 	   [__"A   $copath/A",
 	    __"A   $copath/A/bar",
@@ -112,8 +116,10 @@ $svk->commit ('-m', 'change something', "$copath/B");
 is_output ($svk, 'status', [$copath], [], 'committed');
 
 $svk->smerge ('-C', '//B', "$copath/A");
+# Symlink correction adds a revision
+my $baserev = (HAS_SYMLINK ? 1 : 2);
 is_output ($svk, 'smerge', ['--no-ticket', '//B', "$copath/A"],
-	   ['Auto-merging (0, 4) /B to /A (base /A:1).',
+	   ["Auto-merging (0, 4) /B to /A (base /A:$baserev).",
 	    __("U   $copath/A/dir.lnk")], 'merge');
 is_output ($svk, 'diff', [$copath],
 	   [__('=== t/checkout/symlink/A/dir.lnk'),

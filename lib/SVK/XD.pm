@@ -8,7 +8,7 @@ use SVK::I18N;
 use SVK::Util qw( get_anchor abs_path abs2rel splitdir catdir splitpath $SEP
 		  HAS_SYMLINK is_symlink is_executable mimetype mimetype_is_text
 		  md5_fh get_prompt traverse_history make_path dirname
-		  from_native to_native get_encoder );
+		  from_native to_native get_encoder get_depot_anchor );
 use autouse 'File::Find' => qw(find);
 use autouse 'File::Path' => qw(rmtree);
 use autouse 'YAML'	 => qw(LoadFile DumpFile);
@@ -84,7 +84,10 @@ sub new {
     %$self = @_;
 
     if ($self->{svkpath}) {
-        mkdir($self->{svkpath}) or die loc("Cannot create svk-config-directory at '%1': %2", $self->{svkpath}, $!) unless -d $self->{svkpath};
+        mkdir($self->{svkpath})
+	    or die loc("Cannot create svk-config-directory at '%1': %2\n",
+		       $self->{svkpath}, $!)
+	    unless -d $self->{svkpath};
         $self->{signature} ||= SVK::XD::Signature->new (root => $self->cache_directory)
     }
 
@@ -254,11 +257,11 @@ sub giant_lock {
         }
 
         $self->{updated} = 1;
-        die loc("another svk might be running; remove %1 if not", $self->{giantlock});
+        die loc("Another svk might be running; remove %1 if not.\n", $self->{giantlock});
     }
 
     open my ($lock), '>', $self->{giantlock}
-	or die loc("cannot acquire giant lock");
+	or die loc("Cannot acquire giant loc %1:%2.\n", $self->{giantlock}, $!);
     print $lock $$;
     close $lock;
     $self->{giantlocked} = 1;
@@ -608,8 +611,16 @@ sub do_delete {
     # check for if the file/dir is modified.
     unless ($arg{targets}) {
 	my $target;
-	($arg{path}, $target, $arg{copath}, undef, $arg{report}) =
-	    get_anchor (1, @arg{qw/path copath report/});
+	($arg{path}, $target, $arg{copath}) =
+	    get_anchor (1, @arg{qw/path copath/});
+	# XXX: This logic is flawed; whether this is target has a copath
+	# doesn't actually tell us whether the report is a copath or depot
+	# path. (See also SVK::Target::anchorify.)
+	if ($arg{copath}) {
+	    ($arg{report}) = get_anchor (0, $arg{report});
+	} else {
+	    ($arg{report}) = get_depot_anchor (0, $arg{report});
+	}
 	$arg{targets} = [$target];
     }
 
@@ -626,17 +637,21 @@ sub do_delete {
 					@arg{qw/copath report/};
 				    my $st = $status->[0];
 				    if ($st eq 'M') {
-					die loc("%1 changed", $report);
+					die loc("%1 is modified, use 'svk revert' first.\n", $report);
 				    }
 				    elsif ($st eq 'D') {
 					push @deleted, $copath;
 				    }
-				    elsif (-f $copath) {
-					die loc("%1 is scheduled, use 'svk revert'.\n", $report);
+				    else {
+					lstat ($copath);
+					die loc("%1 is scheduled, use 'svk revert'.\n", $report)
+					    if -e _ && !-d _;
 				    }
 				})),
 			    cb_unknown => sub {
-				die loc("%1 is not under version control", $_[0]);
+				die loc("%1 is not under version control.\n",
+					abs2rel($_[1], $arg{copath} => $arg{report}));
+
 			    }
 			  );
 
@@ -683,12 +698,12 @@ sub do_propset {
 	$xdroot = $self->xdroot (%arg);
 	my ($source_path, $source_root) = $self->_copy_source ($entry, $arg{copath}, $xdroot);
 	$source_path ||= $arg{path}; $source_root ||= $xdroot;
-	die loc("%1(%2) is not under version control", $arg{copath}, $source_path)
+	die loc("%1 is not under version control.\n", $arg{report})
 	    if $xdroot->check_path ($source_path) == $SVN::Node::none;
     }
 
     #XXX: support working on multiple paths and recursive
-    die loc("%1 is already scheduled for delete", $arg{copath})
+    die loc("%1 is already scheduled for delete.\n", $arg{report})
 	if $entry->{'.schedule'} eq 'delete';
     %values = %{$entry->{'.newprop'}}
 	if exists $entry->{'.schedule'};
@@ -947,7 +962,7 @@ sub _node_props {
     my $newprops = (!$schedule && $arg{auto_add} && $arg{kind} == $SVN::Node::none && $arg{type} eq 'file')
 	? $self->auto_prop ($arg{copath}) : $arg{cinfo}{'.newprop'};
     my $fullprop = _combine_prop ($props, $newprops);
-    if ($arg{add}) {
+    if (!$arg{base} or $arg{in_copy}) {
 	$newprops = $fullprop;
     }
     elsif ($arg{base_root} ne $arg{xdroot} && $arg{base}) {
@@ -955,6 +970,20 @@ sub _node_props {
 	    if $arg{kind} && $arg{base_kind} && _prop_changed (@arg{qw/base_root base_path xdroot path/});
     }
     return ($newprops, $fullprop)
+}
+
+sub _node_type {
+    my $copath = shift;
+    lstat ($copath);
+    return '' if !-e _;
+    unless (-r _) {
+	print loc ("Warning: $copath is unreadable.\n");
+	return;
+    }
+    return 'file' if -f _ or is_symlink;
+    return 'directory' if -d _;
+    print loc ("Warning: unsupported node type $copath.\n");
+    return;
 }
 
 sub _delta_file {
@@ -1048,7 +1077,8 @@ sub _delta_dir {
 	if $thisdir && $arg{cb_conflict} && $cinfo->{'.conflict'};
 
     return if $self->_node_deleted_or_absent (%arg, pool => $pool);
-    $arg{base} = 0 if $schedule eq 'replace';
+    # if a node is replaced, it has no base, unless it was replaced with history.
+    $arg{base} = 0 if $schedule eq 'replace' && $arg{path} eq $arg{base_path};
     my ($entries, $baton) = ({});
     if ($arg{add}) {
 	$baton = $arg{root} ? $arg{baton} :
@@ -1091,10 +1121,16 @@ sub _delta_dir {
 	my $unchanged = ($kind == $SVN::Node::file && $signature && !$signature->changed ($entry));
 	$copath = SVK::Target->copath ($arg{copath}, $copath);
 	my $ccinfo = $self->{checkout}->get ($copath);
+	# a replace with history node requires handling the copy anchor in the
+	# latter direntries loop.  we should really merge the two.
+	if ($ccinfo->{'.schedule'} && $ccinfo->{'.schedule'} eq 'replace'
+	    && $ccinfo->{'.copyfrom'}) {
+	    delete $entries->{$entry};
+	    next;
+	}
 	next if $unchanged && !$ccinfo->{'.schedule'} && !$ccinfo->{'.conflict'};
-	lstat ($copath);
-	my $type = -e _ ? (-d _ and not is_symlink) ? 'directory' : 'file'
-	                : '';
+	my $type = _node_type ($copath);
+	next unless defined $type;
 	my $delta = $type ? $type eq 'directory' ? \&_delta_dir : \&_delta_file
 	                  : $kind == $SVN::Node::file ? \&_delta_file : \&_delta_dir;
 	my $newpath = $arg{path} eq '/' ? "/$entry" : "$arg{path}/$entry";
@@ -1177,10 +1213,7 @@ sub _delta_dir {
 	    }
 	    next;
 	}
-	lstat ($newpaths{copath});
-	# XXX: warn about unreadable entry?
-	next unless -r _;
-	my $type = (-d _ and not is_symlink) ? 'directory' : 'file';
+	my $type = _node_type ($newpaths{copath}) or next;
 	my $delta = $type eq 'directory' ? \&_delta_dir : \&_delta_file;
 	my $copyfrom = $ccinfo->{'.copyfrom'};
 	my $fromroot = $copyfrom ? $arg{repos}->fs->revision_root ($ccinfo->{'.copyfrom_rev'}) : undef;
@@ -1268,18 +1301,20 @@ sub do_resolved {
 }
 
 sub get_eol_layer {
-    my ($root, $path, $prop, $mode, $checkle) = @_;
+    my ($prop, $mode, $checkle) = @_;
     my $k = $prop->{'svn:eol-style'} or return ':raw';
     # short-circuit no-op write layers on lf platforms
     if (NATIVE eq LF) {
 	return ':raw' if $mode eq '>' && ($k eq 'native' or $k eq 'LF');
     }
+    # XXX: on write we should actually be notified when it's to be
+    # normalized.
     if ($k eq 'native') {
 	$checkle = $checkle ? '!' : '';
-        return ":raw:eol(LF$checkle-Native!)";
+        return ":raw:eol(LF$checkle-Native)";
     }
     elsif ($k eq 'CRLF' or $k eq 'CR' or $k eq 'LF') {
-	$k .= '!' if $checkle || $mode eq '>';
+	$k .= '!' if $checkle;
         return ":raw:eol($k)";
     }
     else {
@@ -1307,16 +1342,18 @@ sub get_keyword_layer {
 		 sub { my ($root, $path) = @_;
 		       my $rev = $root->node_created_rev ($path);
 		       my $fs = $root->fs;
-			$fs->revision_prop ($rev, 'svn:author');
+		       my $author = $fs->revision_prop ($rev, 'svn:author');
+			$author =~ s/[\r\n\$]/ /g;
 		 },
 		 Id =>
 		 sub { my ($root, $path) = @_;
 		       my $rev = $root->node_created_rev ($path);
 		       my $fs = $root->fs;
-		       join( ' ', $path, $rev,
+		       my $id = join( ' ', $path, $rev,
 			     $fs->revision_prop ($rev, 'svn:date'),
 			     $fs->revision_prop ($rev, 'svn:author'), ''
 			   );
+			$id =~ s/[\r\n\$]/ /g;
 		   },
 		 URL =>
 		 sub { my ($root, $path) = @_;
@@ -1358,9 +1395,9 @@ sub get_keyword_layer {
 
     return PerlIO::via::dynamic->new
 	(translate =>
-         sub { $_[1] =~ s/\$($keyword)\b[-#:\w\t \.\/]*\$/"\$$1: ".$kmap{$1}->($root, $path).' $'/eg; },
+         sub { $_[1] =~ s/\$($keyword)(?:: .*? )?\$/"\$$1: ".$kmap{$1}->($root, $path).' $'/eg; },
 	 untranslate =>
-	 sub { $_[1] =~ s/\$($keyword)\b[-#:\w\t \.\/]*\$/\$$1\$/g; });
+	 sub { $_[1] =~ s/\$($keyword)(?:: .*? )?\$/\$$1\$/g; });
 }
 
 sub _fh_symlink {
@@ -1395,10 +1432,10 @@ sub get_fh {
 	if HAS_SYMLINK and ( defined $prop->{'svn:special'} || ($mode eq '<' && is_symlink($fname)) );
     if (keys %$prop) {
 	$layer ||= get_keyword_layer ($root, $path, $prop);
-	$eol ||= get_eol_layer($root, $path, $prop, $mode, $checkle);
+	$eol ||= get_eol_layer($prop, $mode, $checkle);
     }
     $eol ||= ':raw';
-    open my ($fh), $mode.$eol, $fname or die "can't open $fname: $!\n";
+    open my ($fh), $mode.$eol, $fname or return undef;
     $layer->via ($fh) if $layer;
     return $fh;
 }

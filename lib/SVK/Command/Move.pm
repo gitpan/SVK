@@ -9,8 +9,14 @@ sub handle_direct_item {
     my $self = shift;
     $self->SUPER::handle_direct_item (@_);
     my ($editor, $anchor, $m, $src, $dst) = @_;
+    my $srcm = $self->under_mirror ($src);
+    if ($srcm && $srcm->{target_path} eq $src->path) {
+	die loc ("Can't move mirror anchor, detach the mirror first.\n");
+    }
+
     $editor->delete_entry (abs2rel ($src->path, $anchor => undef, '/'),
-			   $m ? $m->find_remote_rev ($src->{revision}) : $src->{revision}, 0);
+			   $m ? scalar $m->find_remote_rev ($src->{revision})
+			      : $src->{revision}, 0);
     $self->adjust_anchor ($editor);
 }
 
@@ -32,10 +38,10 @@ SVK::Command::Move - Move a file or directory
 
 =head1 OPTIONS
 
- -r [--revision] arg    : act on revision ARG instead of the head revision
- -m [--message] arg     : specify commit message ARG
+ -r [--revision] REV	: act on revision REV instead of the head revision
+ -m [--message] MESSAGE	: specify commit message MESSAGE
  -C [--check-only]      : try operation but make no changes
- -P [--patch] arg       : instead of commit, save this change as a patch
+ -P [--patch] NAME	: instead of commit, save this change as a patch
  -S [--sign]            : sign this change
 
 =head1 AUTHORS

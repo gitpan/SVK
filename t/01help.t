@@ -6,11 +6,12 @@ require 't/tree.pl';
 plan skip_all => 'MANIFEST not exists' unless -e 'MANIFEST';
 open FH, 'MANIFEST' or die $!;
 my @cmd = map { chomp; s|^lib/SVK/Command/(\w+)\.pm$|$1| ? $_ : () } <FH>;
-
+my $pager = $ENV{SVKPAGER};
+delete $ENV{SVKPAGER};
 our $output;
 my ($xd, $svk) = build_test();
 
-plan tests => ( 9 + ( 2 * @cmd ) );
+plan tests => ( 10 + ( 2 * @cmd ) );
 
 is_output_like ($svk, 'help', [], qr'topics');
 is_output_like ($svk, 'help', ['commands'], qr'Available commands:');
@@ -31,16 +32,13 @@ for (@cmd) {
     is_output_like ($svk, lc($_), ['--help'], qr'SYNOPSIS');
 }
 
-
 # Test ALIASES section
 {
     # First with rm which has aliases.
-    my $rm_help     = $svk->help('delete');
-    my($alias_list) = $rm_help =~ qr/\nALIASES\n\n \s+ (.*?) \n/x;
-    is( $alias_list, "del, remove, rm" );
-
+    is_output_like ($svk, 'help', ['delete'], qr/\nALIASES\n\n\s+del, remove, rm\n/);
 
     # Then with add which has no aliases.
-    my $add_help     = $svk->help('add');
-    unlike( $add_help, qr/\nALIASES\n\n/ );
+    $svk->help('add');
+    like( $output, qr/\nSYNOPSIS\n\n/ );
+    unlike( $output, qr/\nALIASES\n\n/ );
 }

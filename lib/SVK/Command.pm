@@ -4,7 +4,7 @@ use SVK::Version;  our $VERSION = $SVK::VERSION;
 use Getopt::Long qw(:config no_ignore_case bundling);
 
 use SVK::Util qw( get_prompt abs2rel abs_path is_uri catdir bsd_glob from_native
-		  $SEP IS_WIN32 HAS_SVN_MIRROR );
+		  find_svm_source $SEP IS_WIN32 HAS_SVN_MIRROR catdepot traverse_history);
 use SVK::I18N;
 use Encode;
 
@@ -152,7 +152,9 @@ sub invoke {
     my $error;
     local $SVN::Error::handler = sub {
 	$error = $_[0];
-	SVN::Error::croak_on_error (@_);
+	my $error_message = $error->expanded_message();
+	$error->clear();
+	die $error_message."\n";
     };
 
     local $@;
@@ -190,10 +192,13 @@ sub invoke {
 
     $ofh = select STDERR unless $output;
     unless ($error and $cmd->handle_error ($error)) {
-	print $ret if $ret;
+	print $ret if $ret && $ret !~ /^\d+$/;
 	print $@ if $@;
+	$ret = 1 if ($ret ? $ret !~ /^\d+$/ : $@);
     }
-    select $ofh if $ofh
+    select $ofh if $ofh;
+
+    return ($ret || 0);
 }
 
 =head3 getopt ($argv, %opt)
@@ -354,7 +359,7 @@ sub arg_condensed {
     return $target;
 }
 
-=head3 arg_uri_maybe ($arg)
+=head3 arg_uri_maybe ($arg, $no_new_mirror)
 
 Argument might be a URI or a depotpath.  If it is a URI, try to find it
 at or under one of currently mirrored paths.  If not found, prompts the
@@ -363,7 +368,7 @@ user to mirror and sync it.
 =cut
 
 sub arg_uri_maybe {
-    my ($self, $arg) = @_;
+    my ($self, $arg, $no_new_mirror) = @_;
 
     is_uri($arg) or return $self->arg_depotpath($arg);
     HAS_SVN_MIRROR or die loc("cannot load SVN::Mirror");
@@ -374,24 +379,26 @@ sub arg_uri_maybe {
     my $uri = URI->new($arg)->canonical or die loc("%1 is not a valid URI.\n", $arg);
     my $map = $self->{xd}{depotmap};
     foreach my $depot (sort keys %$map) {
-        local $@;
         my $repos = eval { ($self->{xd}->find_repos ("/$depot/", 1))[2] } or next;
 	foreach my $path ( SVN::Mirror::list_mirror ($repos) ) {
-	    my $m = SVN::Mirror->new (
+	    my $m = eval {SVN::Mirror->new (
                 repos => $repos,
                 get_source => 1,
                 target_path => $path,
-            );
+            ) } or next;
 
             my $rel_uri = $uri->rel(URI->new("$m->{source}/")->canonical) or next;
             next if $rel_uri->eq($uri);
             next if $rel_uri =~ /^\.\./;
 
-            my $depotpath = catdir('/', $depot, $path, $rel_uri);
+            my $depotpath = catdepot($depot, $path, $rel_uri);
             $depotpath = "/$depotpath" if !length($depot);
             return $self->arg_depotpath($depotpath);
 	}
     }
+
+    die loc ("URI not allowed here: %1.\n", $no_new_mirror)
+	if $no_new_mirror;
 
     print loc("New URI encountered: %1\n", $uri);
 
@@ -451,18 +458,40 @@ usually good enough.
 
     my $target = $self->arg_depotpath($path);
     $self->command ('mirror')->run ($target, $base_uri);
+  
+    # If we're mirroring via svn::mirror, not mirroring the whole history
+    # is an option
+    my ($m, $answer);
+    ($m,undef) = SVN::Mirror::is_mirrored ($target->{'repos'}, 
+                                           $target->{'path'}) if (HAS_SVN_MIRROR);
+    # If the user is mirroring from svn                                       
+    if (UNIVERSAL::isa($m,'SVN::Mirror::Ra'))  {                                
+        print loc("
+svk needs to mirror the remote repository so you can work locally.
+If you're mirroring a single branch, it's safe to use any of the options
+below.
 
-    print loc("Synchronizing the mirror for the first time:\n");
-    print loc("  a        : Retrieve all revisions (default)\n");
-    print loc("  h        : Only the most recent revision\n");
-    print loc("  -count   : At most 'count' recent revisions\n");
-    print loc("  revision : Start from the specified revision\n");
+If the repository you're mirroring contains multiple branches, svk will
+work best if you choose to retrieve all revisions.  Choosing to start
+with a recent revision can result in a larger local repository and will
+break history-sensitive merging within the mirrored path.
 
-    my $answer = lc(get_prompt(
-        loc("a)ll, h)ead, -count, revision? [a] "),
-        qr(^[ah]?|^-?\d+$)
-    ));
-    $answer = 'a' unless length $answer;
+");
+
+        print loc("Synchronizing the mirror for the first time:\n");
+        print loc("  a        : Retrieve all revisions (default)\n");
+        print loc("  h        : Only the most recent revision\n");
+        print loc("  -count   : At most 'count' recent revisions\n");
+        print loc("  revision : Start from the specified revision\n");
+
+        $answer = lc(get_prompt(
+            loc("a)ll, h)ead, -count, revision? [a] "),
+            qr(^[ah]?|^-?\d+$)
+            ));
+        $answer = 'a' unless length $answer;
+    } else { # The user is mirroring with VCP. gotta mirror everything
+        $answer = 'a';
+    }
 
     $self->command(
         sync => {
@@ -479,7 +508,7 @@ usually good enough.
     return $self->arg_depotpath($depotpath);
 }
 
-=head3 arg_co_maybe ($arg)
+=head3 arg_co_maybe ($arg, $no_new_mirror)
 
 Argument might be a checkout path or a depotpath. If argument is URI then
 handles it via C<arg_uri_maybe>.
@@ -487,9 +516,10 @@ handles it via C<arg_uri_maybe>.
 =cut
 
 sub arg_co_maybe {
-    my ($self, $arg) = @_;
+    my ($self, $arg, $no_new_mirror) = @_;
 
-    $arg = $self->arg_uri_maybe($arg)->{depotpath} if is_uri($arg);
+    $arg = $self->arg_uri_maybe($arg, $no_new_mirror)->{depotpath}
+	if is_uri($arg);
 
     my $rev = $arg =~ s/\@(\d+)$// ? $1 : undef;
     my ($repospath, $path, $copath, $cinfo, $repos) =
@@ -607,11 +637,13 @@ sub parse_revlist {
     if ($self->{chgspec}) {
 	my @revlist;
 	for (split (',', $self->{chgspec})) {
+	    my $reverse;
 	    if (($fromrev, $torev) = m/^(\d+)-(\d+)$/) {
 		--$fromrev;
 	    }
-	    elsif (($torev) = m/^(\d+)$/) {
+	    elsif (($reverse, $torev) = m/^(-?)(\d+)$/) {
 		$fromrev = $torev - 1;
+		($fromrev, $torev) = ($torev, $fromrev) if $reverse;
 	    }
 	    else {
 		die loc("Change spec %1 not recognized.\n", $_);
@@ -833,7 +865,7 @@ sub find_checkout_anchor {
 }
 
 sub prompt_depotpath {
-    my ($self, $action, $default) = @_;
+    my ($self, $action, $default, $allow_exist) = @_;
     my $path;
     my $prompt = '';
     if (defined $default and $default =~ m{(^/[^/]*/)}) {
@@ -869,11 +901,108 @@ svk use the default.
 	$path =~ s{/$}{};
 
 	my $target = $self->arg_depotpath ($path);
-	last if $target->root->check_path ($target->path) == $SVN::Node::none;
+	last if $allow_exist or $target->root->check_path ($target->path) == $SVN::Node::none;
 	print loc ("Path %1 already exists.\n", $path);
     }
 
     return $path;
+}
+
+sub resolve_revspec {
+    my ($self,$target) = @_;
+    my $fs = $target->{repos}->fs;
+    my $yrev = $fs->youngest_rev;
+    my ($r1,$r2);
+    if (my $revspec = $self->{revspec}) {
+        if ($#{$revspec} > 1) {
+            die loc ("Invliad -r.\n");
+        } else {
+            $revspec = [map {split /:/} @$revspec];
+            ($r1, $r2) = map {
+                $self->resolve_revision($target,$_);
+            } @$revspec;
+        }
+    }
+    return($r1,$r2);
+}
+
+sub resolve_revision {
+    my ($self,$target,$revstr) = @_;
+    return unless defined $revstr;
+    my $fs = $target->{repos}->fs;
+    my $yrev = $fs->youngest_rev;
+    my $rev;
+    if($revstr =~ /^HEAD$/) {
+        $rev = $self->find_head_rev($target);
+    } elsif ($revstr =~ /^BASE$/) {
+        $rev = $self->find_base_rev($target);
+    } elsif ($revstr =~ /\{(\d\d\d\d-\d\d-\d\d)\}/) { 
+        my $date = $1; $date =~ s/-//g;
+        $rev = $self->find_date_rev($target,$date);
+    } elsif (HAS_SVN_MIRROR && (my ($rrev) = $revstr =~ m'^(\d+)@$')) {
+	if (my ($m) = SVN::Mirror::is_mirrored ($target->{repos}, $target->{path})) {
+	    $rev = $m->find_local_rev ($rrev);
+	}
+	die loc ("Can't find local revision for %1 on %2.\n", $rrev, $target->path)
+	    unless defined $rev;
+    } elsif ($revstr =~ /\D/) {
+        die loc("%1 is not a number.\n",$revstr)
+    } else {
+        $rev = $revstr;
+    }
+    return $rev
+}
+
+sub find_date_rev {
+    my ($self,$target,$date) = @_;
+    # $date should be in yyyymmdd format
+    my $fs = $target->{repos}->fs;
+    my $yrev = $fs->youngest_rev;
+
+    my ($rev,$last);
+    traverse_history (
+        root        => $fs->revision_root($yrev),
+        path        => $target->path,
+        callback    => sub {
+            my $props = $fs->revision_proplist($_[1]);
+            my $revdate = $props->{'svn:date'};
+            $revdate =~ s/T.*$//; $revdate =~ s/-//g;
+            if($date > $revdate) {
+                $rev = ($last || $_[1]);
+                return 0;
+            }
+            $last = $_[1];
+            return 1;
+        },
+    );
+    return $rev || $last;
+}
+
+
+sub find_base_rev {
+    my ($self,$target) = @_;
+    die(loc("BASE can only be issued with a check-out path\n"))
+        unless(defined($target->{copath}));
+    my $rev = $self->{xd}{checkout}->get($target->copath)->{revision};
+    return $rev;
+}
+
+sub find_head_rev {
+    my ($self,$target) = @_;
+    $target->as_depotpath;
+    my $fs = $target->{repos}->fs;
+    my $yrev = $fs->youngest_rev;
+    my $rev;
+    traverse_history (
+        root        => $fs->revision_root($yrev),
+        path        => $target->path,
+        cross       => 0,
+        callback    => sub {
+            $rev = $_[1];
+            return 0; # only need this once
+        },
+    );
+    return $rev;
 }
 
 1;

@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 22;
+use Test::More tests => 25;
 use strict;
 require 't/tree.pl';
 our $output;
@@ -22,6 +22,10 @@ $svk->propset ('svn:mime-type', 'image/png', 'A/binary');
 is_output ($svk, 'diff', ['//asdf-non'],
 	   ['path //asdf-non does not exist.']);
 is_output ($svk, 'diff', ['//asdf-non', 'A/binary'],
+	   ['path //asdf-non does not exist.']);
+is_output ($svk, 'diff', ['A/binary', '//asdf-non'],
+	   ['Invalid arguments.']);
+is_output ($svk, 'diff', ['//asdf-non', '//'],
 	   ['path //asdf-non does not exist.']);
 is_output ($svk, 'diff', [],
            ['=== A/binary',
@@ -97,6 +101,7 @@ my $r12output = ['=== A/foo',
 		 '@@ -1 +0,0 @@',
 		 '-foobar'];
 is_sorted_output ($svk, 'diff', ['-r1:2'], $r12output, 'diff - rN:M copath');
+is_sorted_output ($svk, 'diff', ['-r1', '-r2'], $r12output, 'diff - rN:M copath');
 is_sorted_output ($svk, 'diff', ['-r1:2', '//'], $r12output, 'diff - rN:M depotdir');
 is_output ($svk, 'diff', ['-r1:2', '//A/foo'],
 	   ['=== foo',
