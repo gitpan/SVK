@@ -1,11 +1,25 @@
 package SVK::Util;
 require Exporter;
 @ISA       = qw(Exporter);
-@EXPORT_OK = qw(md5 get_buffer_from_editor slurp_fh);
+@EXPORT_OK = qw(md5 get_buffer_from_editor slurp_fh get_anchor get_prompt);
 $VERSION   = '0.09';
 
 use Digest::MD5 qw(md5_hex);
 use File::Temp;
+use Term::ReadLine;
+
+my $tr;
+sub get_prompt {
+    my ($prompt, $regex) = @_;
+    $tr ||= Term::ReadLine->new($0);
+
+    {
+	my $answer = $tr->readline("$prompt ");
+	chomp $answer;
+	redo if $regex and $answer !~ $regex;
+	return $answer;
+    }
+}
 
 sub md5 {
     my $fh = shift;
@@ -30,21 +44,18 @@ sub get_buffer_from_editor {
 
     while (1) {
 	my $mtime = (stat($file))[9];
-	my $ans;
 	my $editor =	defined($ENV{SVN_EDITOR}) ? $ENV{SVN_EDITOR}
 	   		: defined($ENV{EDITOR}) ? $ENV{EDITOR}
 			: "vi"; # fall back to something
 	print "waiting for editor...\n";
-	system ($editor, $file);
+	system ($editor, $file) and die "Aborted";
 	last if (stat($file))[9] > $mtime;
-	do {
-	    print "$what not modified: a)bort, e)dit, c)ommit?\n";
-	    $ans = <STDIN>;
-	    chomp $ans;
-	    last if $ans eq 'c';
-	    die "Aborted" if $ans eq 'a';
-	}
-	while ($ans !~ m/^[aec]/);
+	my $ans = get_prompt(
+	    "$what not modified: a)bort, e)dit, c)ommit?",
+	    qr/^[aec]/,
+	);
+	last if $ans =~ /^c/;
+	die "aborted.\n" if $ans =~ /^a/;
     }
 
     open $fh, $file;
@@ -70,5 +81,15 @@ sub slurp_fh {
 	print $to $_;
     }
 }
+
+sub get_anchor {
+    my $needtarget = shift;
+    map {
+	my (undef,$anchor,$target) = File::Spec->splitpath ($_);
+	chop $anchor if length ($anchor) > 1;
+	($anchor, $needtarget ? ($target) : ())
+    } @_;
+}
+
 
 1;

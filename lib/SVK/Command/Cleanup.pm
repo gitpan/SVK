@@ -1,17 +1,12 @@
-package SVK::Command::Resolved;
+package SVK::Command::Cleanup;
 use strict;
 our $VERSION = '0.11';
 
 use base qw( SVK::Command );
-use SVK::XD;
-
-sub options {
-    ('R|recursive'	=> 'rec');
-}
 
 sub parse_arg {
     my ($self, @arg) = @_;
-
+    @arg = ('') if $#arg < 0;
     return map {$self->arg_copath ($_)} @arg;
 }
 
@@ -22,24 +17,28 @@ sub lock {
 
 sub run {
     my ($self, @arg) = @_;
-
-    for my $target (@arg) {
-	$self->{xd}->do_resolved ( %$target,
-				   recursive => $self->{rec},
-				 );
+    for (@arg) {
+	if ($self->{xd}{checkout}->get ($_->{copath})->{lock}) {
+	    print "Cleanup stalled lock at $_->{copath}\n";
+	    $self->{xd}{checkout}->store ($_->{copath}, {lock => undef});
+	}
+	else {
+	    print "$_->{copath} not locked\n";
+	}
     }
     return;
 }
 
 1;
 
+
 =head1 NAME
 
-resolved - Mark checkout files or directories as resolved from conflict state.
+cleanup - Cleanup stalled locks.
 
 =head1 SYNOPSIS
 
-    resolved PATH...
+    cleanup [PATH...]
 
 =head1 AUTHORS
 
@@ -55,4 +54,3 @@ under the same terms as Perl itself.
 See L<http://www.perl.com/perl/misc/Artistic.html>
 
 =cut
-

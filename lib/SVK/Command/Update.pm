@@ -1,6 +1,6 @@
 package SVK::Command::Update;
 use strict;
-our $VERSION = '0.09';
+our $VERSION = '0.11';
 
 use base qw( SVK::Command );
 use SVK::XD;
@@ -15,6 +15,11 @@ sub parse_arg {
     return map {$self->arg_copath ($_)} @arg;
 }
 
+sub lock {
+    my ($self, @arg) = @_;
+    $self->lock_target ($_) for @arg;
+}
+
 sub run {
     my ($self, @arg) = @_;
 
@@ -22,10 +27,10 @@ sub run {
 	$self->{rev} = $target->{repos}->fs->youngest_rev
 	    unless defined $self->{rev};
 
-	SVK::XD::do_update ($self->{info},
-			    %$target,
-			    rev => $self->{rev},
-			   );
+	$self->{xd}->do_update
+	    ( %$target,
+	      rev => $self->{rev},
+	    );
     }
     return;
 }

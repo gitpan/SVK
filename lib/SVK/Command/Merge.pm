@@ -1,6 +1,6 @@
 package SVK::Command::Merge;
 use strict;
-our $VERSION = '0.09';
+our $VERSION = '0.11';
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
@@ -18,24 +18,30 @@ sub options {
 
 sub parse_arg {
     my ($self, @arg) = @_;
+    $self->usage if $#arg < 0 || $#arg > 1;
     return ($self->arg_depotpath ($arg[0]), $self->arg_co_maybe ($arg[1] || ''));
+}
+
+sub lock {
+    my $self = shift;
+    $_[1]->{copath} ? $self->lock_target ($_[1]) : $self->lock_none;
 }
 
 sub run {
     my ($self, $src, $dst) = @_;
-    my ($fromrev, $torev, $cb_merged, $cb_closed);
+    my ($fromrev, $torev, $baserev, $cb_merged, $cb_closed);
 
     die "different repos?" unless $src->{repospath} eq $dst->{repospath};
     my $repos = $src->{repos};
     unless ($self->{auto}) {
 	die "revision required" unless $self->{revspec};
-	($fromrev, $torev) = $self->{revspec} =~ m/^(\d+):(\d+)$/
+	($baserev, $torev) = $self->{revspec} =~ m/^(\d+):(\d+)$/
 	    or die "revision must be N:M";
     }
 
     my $base_path = $src->{path};
     if ($self->{auto}) {
-	($base_path, $fromrev, $torev) =
+	($base_path, $baserev, $fromrev, $torev) =
 	    ($self->find_merge_base ($repos, $src->{path}, $dst->{path}), $repos->fs->youngest_rev);
 	print "auto merge ($fromrev, $torev) $src->{path} -> $dst->{path} (base $base_path)\n";
 	$cb_merged = sub { my ($editor, $baton, $pool) = @_;
@@ -60,7 +66,7 @@ sub run {
     my $editor = SVK::MergeEditor->new
 	( anchor => $src->{path},
 	  base_anchor => $base_path,
-	  base_root => $fs->revision_root ($fromrev),
+	  base_root => $fs->revision_root ($baserev),
 	  target => '',
 	  send_fulltext => $cb{mirror} ? 0 : 1,
 	  cb_merged => $cb_merged,
@@ -68,7 +74,7 @@ sub run {
 	  %cb,
 	);
 
-    SVN::Repos::dir_delta ($fs->revision_root ($fromrev),
+    SVN::Repos::dir_delta ($fs->revision_root ($baserev),
 			   $base_path, '',
 			   $fs->revision_root ($torev), $src->{path},
 			   $editor, undef,
@@ -102,7 +108,7 @@ sub find_merge_base {
 	    ($basepath, $baserev) = ($path, $rev);
 	}
     }
-    return ($basepath, $baserev);
+    return ($basepath, $baserev, $dstinfo->{$repos->fs->get_uuid.':'.$src} || $baserev);
 }
 
 sub find_merge_sources {
@@ -132,21 +138,66 @@ sub find_merge_sources {
 	    unless $noself;
     }
 
-    # XXX: follow the copy history provided by svm too
-    my $spool = SVN::Pool->new_default ($pool);
-    my $hist = $root->node_history ($path);
-    while ($hist = $hist->prev (1)) {
-	$spool->clear;
-	my ($hpath, $rev) = $hist->location ();
-	if ($hpath ne $path) {
-	    my $source = join(':', $myuuid, $hpath);
-	    $minfo->{$source} = $rev
-		unless $minfo->{$source} && $minfo->{$source} > $rev;
-	    last;
-	}
+    my %ancestors = $self->copy_ancestors ($repos, $path, $fs->youngest_rev, 1);
+    for (keys %ancestors) {
+	my $rev = $ancestors{$_};
+	$minfo->{$_} = $rev
+	    unless $minfo->{$_} && $minfo->{$_} > $rev;
     }
 
     return $minfo;
+}
+
+sub copy_ancestors {
+    my ($self, $repos, $path, $rev, $nokeep) = @_;
+    my $fs = $repos->fs;
+    my $root = $fs->revision_root ($rev);
+    $rev = $root->node_created_rev ($path);
+
+    my $spool = SVN::Pool->new_default_sub;
+    my ($found, $hitrev, $source) = (0, 0, '');
+    my $myuuid = $fs->get_uuid ();
+    my $hist = $root->node_history ($path);
+    my ($hpath, $hrev);
+
+    while ($hist = $hist->prev (1)) {
+	$spool->clear;
+	($hpath, $hrev) = $hist->location ();
+	if ($hpath ne $path) {
+	    $found = 1;
+	}
+	elsif (defined ($source = $fs->revision_prop ($hrev, "svk:copied_from:$path"))) {
+	    $hitrev = $hrev;
+	    last unless $source;
+	    my $uuid;
+	    ($uuid, $hpath, $hrev) = split ':', $source;
+	    if ($uuid ne $myuuid) {
+		my $m;
+		if ($self->svn_mirror && ($m = SVN::Mirror::has_local ($repos, "$uuid:$path"))) {
+		    ($hpath, $hrev) = ($m->{target_path}, $m->find_local_rev ($hrev));
+		}
+		else {
+		    return ();
+		}
+	    }
+	    $found = 1;
+	}
+	last if $found;
+    }
+
+    $source = '' unless $found;
+    if (!$found || $hitrev != $hrev) {
+	$fs->change_rev_prop ($hitrev, "svk:copied_from:$path", undef)
+	    unless $hitrev || $fs->revision_prop ($hitrev, "svk:copied_from_keep:$path");
+	$source ||= join (':', $myuuid, $hpath, $hrev) if $found;
+	if ($hitrev != $rev) {
+	    $fs->change_rev_prop ($rev, "svk:copied_from:$path", $source);
+	    $fs->change_rev_prop ($rev, "svk:copied_from_keep:$path", 'yes')
+		unless $nokeep;
+	}
+    }
+    return () unless $found;
+    return ("$myuuid:$hpath" => $hrev, $self->copy_ancestors ($repos, $hpath, $hrev));
 }
 
 sub resolve_svm_source {
@@ -195,3 +246,36 @@ sub get_new_ticket {
 }
 
 1;
+
+=head1 NAME
+
+merge - Apply the differences between two sources.
+
+=head1 SYNOPSIS
+
+    merge -r N:M DEPOTPATH [PATH]
+    merge -r N:M DEPOTPATH1 DEPOTPATH2
+
+=head1 OPTIONS
+
+    -r [--revision]:        revision
+    -m message:             commit message
+    -C [--check-only]:      don't perform actual writes
+    -a [--auto]:            automatically find merge points
+    -l [--log]:             brings the logs of merged revs to the message buffer
+    --no-ticket:            don't associate the ticket tracking merge history
+
+=head1 AUTHORS
+
+Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2003-2004 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
+
+This program is free software; you can redistribute it and/or modify it
+under the same terms as Perl itself.
+
+See L<http://www.perl.com/perl/misc/Artistic.html>
+
+=cut

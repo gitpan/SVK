@@ -1,14 +1,24 @@
 package SVK::Command::Cmerge;
 use strict;
-our $VERSION = '0.09';
+our $VERSION = '0.11';
 
-use base qw( SVK::Command::Merge );
+use base qw( SVK::Command::Merge SVK::Command::Copy SVK::Command::Propset );
 use SVK::XD;
 use SVK::CombineEditor;
 
 sub options {
     ($_[0]->SUPER::options,
      'c|change=s',	=> 'chgspec');
+}
+
+sub parse_arg {
+    my $self = shift;
+    $self->SVK::Command::Merge::parse_arg (@_);
+}
+
+sub lock {
+    my $self = shift;
+    $self->SVK::Command::Merge::lock (@_);
 }
 
 sub run {
@@ -29,13 +39,13 @@ sub run {
     die "can't find a path for tmp branch" if $base_path eq '/';
     my $tmpbranch = "$src->{path}-merge-$$";
 
-    SVK::XD::do_copy_direct ($self->{info},
-			     %$src,
-			     path => $base_path,
-			     dpath => $tmpbranch,
-			     message => "preparing for cherry picking merging",
-			     rev => $base_rev,
-			    ) unless $self->{check_only};
+    $self->do_copy_direct
+	( %$src,
+	  path => $base_path,
+	  dpath => $tmpbranch,
+	  message => "preparing for cherry picking merging",
+	  rev => $base_rev,
+	) unless $self->{check_only};
 
     my $fs = $repos->fs;
     my $ceditor = SVK::CombineEditor->new(tgt_anchor => $base_path, #$check_only ? $base_path : $tmpbranch,
@@ -96,13 +106,13 @@ sub run {
 
     $ticket .= "\n$uuid:$tmpbranch:$newrev";
 
-    SVK::XD::do_propset_direct ($self->{info},
-				author => $ENV{USER},
-				%$src,
-				propname => 'svk:merge',
-				propvalue => $ticket,
-				message => "cherry picking merge $self->{chgspec} to $dst",
-			       ) unless $self->{check_only};
+    $self->do_propset_direct
+	( author => $ENV{USER},
+	  %$src,
+	  propname => 'svk:merge',
+	  propvalue => $ticket,
+	  message => "cherry picking merge $self->{chgspec} to $dst",
+	) unless $self->{check_only};
     my ($depot) = main::find_depotname ($src->{depotpath});
 
     $src->{path} = $tmpbranch;
@@ -113,3 +123,35 @@ sub run {
 }
 
 1;
+
+=head1 NAME
+
+smerge - Merge specific changes.
+
+=head1 SYNOPSIS
+
+    cmerge -c CHGSPEC DEPOTPATH [PATH]
+    cmerge -c CHGSPEC DEPOTPATH1 DEPOTPATH2
+
+=head1 OPTIONS
+
+    -m message:             commit message
+    -c [--change] chgspec:  change spec to merge
+    -C [--check-only]:      don't perform actual writes
+    -l [--log]:             brings the logs of merged revs to the message buffer
+    --no-ticket:            don't associate the ticket tracking merge history
+
+=head1 AUTHORS
+
+Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2003-2004 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
+
+This program is free software; you can redistribute it and/or modify it
+under the same terms as Perl itself.
+
+See L<http://www.perl.com/perl/misc/Artistic.html>
+
+=cut

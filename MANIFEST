@@ -15,8 +15,10 @@ inc/Module/Install/WriteAll.pm
 lib/SVK/CombineEditor.pm
 lib/SVK/Command.pm
 lib/SVK/Command/Add.pm
+lib/SVK/Command/Annotate.pm
 lib/SVK/Command/Cat.pm
 lib/SVK/Command/Checkout.pm
+lib/SVK/Command/Cleanup.pm
 lib/SVK/Command/Cmerge.pm
 lib/SVK/Command/Commit.pm
 lib/SVK/Command/Copy.pm
@@ -28,6 +30,7 @@ lib/SVK/Command/Info.pm
 lib/SVK/Command/List.pm
 lib/SVK/Command/Log.pm
 lib/SVK/Command/Merge.pm
+lib/SVK/Command/Mkdir.pm
 lib/SVK/Command/Mirror.pm
 lib/SVK/Command/Propedit.pm
 lib/SVK/Command/Proplist.pm
@@ -44,6 +47,7 @@ lib/SVK/DeleteEditor.pm
 lib/SVK/DiffEditor.pm
 lib/SVK/MergeEditor.pm
 lib/SVK/RevertEditor.pm
+lib/SVK/SignEditor.pm
 lib/SVK/StatusEditor.pm
 lib/SVK/Util.pm
 lib/SVK/XD.pm

@@ -1,17 +1,17 @@
 package SVK::Command::Depotmap;
 use strict;
-our $VERSION = '0.09';
+our $VERSION = '0.11';
 
 use base qw( SVK::Command );
 use SVK::XD;
-use SVK::Util qw(get_buffer_from_editor);
+use SVK::Util qw(get_buffer_from_editor get_prompt);
 use YAML;
 use File::Path;
 
 sub run {
     my ($self) = @_;
     my $sep = '===edit the above depot map===';
-    my $map = YAML::Dump ($self->{info}->{depotmap});
+    my $map = YAML::Dump ($self->{xd}{depotmap});
     my $new;
     do {
 	$map = get_buffer_from_editor ('depot map', $sep, "$map\n$sep\n",
@@ -20,16 +20,14 @@ sub run {
 	print "$@\n" if $@;
     } while ($@);
     print "New depot map saved.\n";
-    $self->{info}->{depotmap} = $new;
-    for my $path(values %{$self->{info}->{depotmap}}) {
-	my $ans;
+    $self->{xd}{depotmap} = $new;
+    for my $path (values %{$self->{xd}{depotmap}}) {
 	next if -d $path;
-	print "Repository $path does not exist, create? (y/n) ";
-	while (<STDIN>) {
-	    $ans = $1 if $_ =~ m/^([yn])/i;
-	    last if $ans;
-	}
-	next if $ans eq 'n';
+	my $ans = get_prompt(
+	    "Repository $path does not exist, create? (y/n)",
+	    qr/^[yn]/i,
+	);
+	next if $ans =~ /^n/i;
 	File::Path::mkpath([$path], 0, 0711);
 	SVN::Repos::create($path, undef, undef, undef,
 			   {'bdb-txn-nosync' => '1',

@@ -1,6 +1,6 @@
 package SVK::Command::Checkout;
 use strict;
-our $VERSION = '0.09';
+our $VERSION = '0.11';
 
 use base qw( SVK::Command::Update );
 use SVK::XD;
@@ -18,25 +18,27 @@ sub parse_arg {
 
 }
 
+sub lock { $_[0]->{xd}->lock ($_[2]) }
+
 sub run {
     my ($self, $target, $copath) = @_;
 
     die "checkout path $copath already exists" if -e $copath;
 
-    if (my ($entry, @where) = $self->{info}->{checkout}->get ($copath)) {
+    if (my ($entry, @where) = $self->{xd}{checkout}->get ($copath)) {
 	die "overlapping checkout path not supported yet ($where[-1])"
 	    if exists $entry->{depotpath} && $where[-1] ne $copath;
     }
 
     mkdir ($copath);
-    $self->{info}->{checkout}->store_recursively ( $copath,
-						   { depotpath => $target->{depotpath},
-						     schedule => undef,
-						     newprop => undef,
-						     deleted => undef,
-						     conflict => undef,
-						     revision => 0,
-						   });
+    $self->{xd}{checkout}->store_recursively ( $copath,
+					       { depotpath => $target->{depotpath},
+						 revision => 0,
+						 '.schedule' => undef,
+						 '.newprop' => undef,
+						 '.deleted' => undef,
+						 '.conflict' => undef,
+					       });
 
     $self->{rev} = $target->{repos}->fs->youngest_rev unless defined $self->{rev};
     $target->{copath} = $copath;
@@ -45,3 +47,31 @@ sub run {
 }
 
 1;
+
+=head1 NAME
+
+checkout - Checkout the depotpath.
+
+=head1 SYNOPSIS
+
+    checkout DEPOTPATH [PATH]
+
+=head1 OPTIONS
+
+    -r [--revision]:      revision
+
+
+=head1 AUTHORS
+
+Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2003-2004 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
+
+This program is free software; you can redistribute it and/or modify it
+under the same terms as Perl itself.
+
+See L<http://www.perl.com/perl/misc/Artistic.html>
+
+=cut
