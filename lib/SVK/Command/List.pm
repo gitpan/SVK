@@ -17,52 +17,46 @@ sub options {
 sub parse_arg {
     my ($self, @arg) = @_;
     @arg = ('') if $#arg < 0;
-    return @arg;
+    return map {$self->arg_co_maybe ($_)} @arg;
 }
 
 sub lock { $_[0]->lock_none }
 
 sub run {
     my ($self, @arg) = @_;
-    _do_list($self, 0, @arg);
+    _do_list($self, 0, $_) for @arg;
     return;
 }
 
 sub _do_list {
-    my ($self, $level, @arg) = @_;
-    for (@arg) {
-	my (undef, $path, $copath, undef, $repos) = $self->{xd}->find_repos_from_co_maybe ($_, 1);
+    my ($self, $level, $target) = @_;
+    my $pool = SVN::Pool->new_default;
+    $target->depotpath ($self->{rev});
+    my $root = $target->root;
+    unless ((my $kind = $root->check_path ($target->{path})) == $SVN::Node::dir) {
+       print loc("Path %1 is not a versioned directory\n", $target->{path})
+           unless $kind == $SVN::Node::file;
+       return;
+    }
 
-	my $pool = SVN::Pool->new_default;
-	my $fs = $repos->fs;
-	my $root = $fs->revision_root ($self->{rev} || $fs->youngest_rev);
-	unless ($root->check_path ($path) == $SVN::Node::dir) {
-	    print loc("Path %1 is not a versioned directory\n", $path) unless ($root->check_path($path) == $SVN::Node::file);
-	    next;
-	}
-	
-    $path .= "/" if ($root->check_path ($path) == $SVN::Node::dir);
-    $path =~ s#/+#/#g;
-    $path = "/$path";
-
-    my $entries = $root->dir_entries ($path);
-	for (sort keys %$entries) {
+    # XXX: SVK::Target should take care of this.
+    $target->{depotpath} =~ s|/$||;
+    my $entries = $root->dir_entries ($target->{path});
+    for (sort keys %$entries) {
+	my $isdir = ($entries->{$_}->kind == $SVN::Node::dir);
         if ($self->{'fullpath'}) {
-            print $path;
+	    print $target->{depotpath}.'/';
         }
         else {
-    	    print " " x ($level);
+	    print " " x ($level);
         }
-	    print $_.($entries->{$_}->kind == $SVN::Node::dir ? '/' : '')."\n";
-	    if (($self->{recursive}) && (!$self->{'depth'} ||( $level < $self->{'depth'} )) &&
-	    	($entries->{$_}->kind == $SVN::Node::dir)) {
-                if (defined $copath) {
-		    _do_list($self, $level+1, "$copath/$_");
-                }
-                else {
-                    _do_list($self, $level+1, "/$path/$_");
-                }
-	    }
+	print $_.($isdir ? '/' : '')."\n";
+	if ($isdir && ($self->{recursive}) &&
+	    (!$self->{'depth'} ||( $level < $self->{'depth'} ))) {
+	    _do_list($self, $level+1,
+		     SVK::Target->new (%$target,
+				       path => "$target->{path}/$_",
+				       depotpath => "$target->{depotpath}/$_"));
 	}
     }
 }
@@ -77,18 +71,16 @@ SVK::Command::List - List entries in a directory from depot
 
 =head1 SYNOPSIS
 
-    list [DEPOTPATH|PATH...]
+ list [DEPOTPATH|PATH...]
 
 =head1 OPTIONS
 
-    options:
-    -r [--revision] REV:    revision
-    -R [--recursive]:       recursive
-    -v [--verbose]:	Needs description
-    -d [--depth] LEVEL:     Recurse LEVEL levels.  Only useful with -R
-    -f [--full-path]:        Show the full path of each entry, rather than
-                            an indented hierarchy
-
+ -r [--revision] REV:    revision
+ -R [--recursive]:       recursive
+ -v [--verbose]:         Needs description
+ -d [--depth] LEVEL:     Recurse LEVEL levels.  Only useful with -R
+ -f [--full-path]:       Show the full path of each entry, rather than
+                         an indented hierarchy
 
 =head1 AUTHORS
 

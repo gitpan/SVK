@@ -52,18 +52,17 @@ sub run {
 	$root = $fs->revision_root ($yrev);
     }
 
-    my $editor = $self->{check_only} ? SVN::Delta::Editor->new :
-	SVN::Delta::Editor->new
-	( $target->{repos}->get_commit_editor
-	  ( "file://$target->{repospath}",
-	    $target->{path}, $ENV{USER},
-	    $self->{message},
-	    sub { $yrev = $_[0];
-		  print loc("Directory %1 imported to depotpath %2 as revision %3.\n",
-			    $copath, $target->{depotpath}, $yrev) }));
+    my ($editor, %cb) = $self->get_editor ($target);
+    ${$cb{callback}} =
+	sub { $yrev = $_[0];
+	      print loc("Directory %1 imported to depotpath %2 as revision %3.\n",
+			$copath, $target->{depotpath}, $yrev) };
 
     my $baton = $editor->open_root ($yrev);
-
+    local $SIG{INT} = sub {
+	$editor->abort_edit;
+	die loc("Interrupted.\n");
+    };
     if (exists $self->{xd}{checkout}->get ($copath)->{depotpath}) {
 	$self->{is_checkout}++;
 	die loc("Import source cannot be a checkout path")
@@ -83,7 +82,7 @@ sub run {
 	  copath => $copath,
 	  auto_add => 1,
 	  base => 1,
-	  cb_rev => sub { $yrev },
+	  cb_rev => $cb{cb_rev},
 	  editor => $editor,
 	  base_root => $root,
 	  base_path => $target->{path},
@@ -101,6 +100,8 @@ sub run {
 	    ($copath, {revision => $yrev,
 		       '.copyfrom' => undef,
 		       '.copyfrom_rev' => undef,
+		       '.newprop' => undef,
+		       scheduleanchor => undef,
 		       '.schedule' => undef})
 	    if $path eq $target->{path};
     }
@@ -124,14 +125,14 @@ SVK::Command::Import - Import directory into depot
 
 =head1 SYNOPSIS
 
-    import DEPOTPATH [PATH]
+ import DEPOTPATH [PATH]
 
 =head1 OPTIONS
 
-    -m [--message] message:        commit message
-    -C [--check-only]: don't perform actual writes
-    -s [--sign]:	Needs description
-    --force:	Needs description
+ -m [--message] message:    commit message
+ -C [--check-only]:         don't perform actual writes
+ -s [--sign]:               Needs description
+ --force:                   Needs description
 
 =head1 AUTHORS
 

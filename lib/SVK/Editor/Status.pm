@@ -9,8 +9,7 @@ sub new {
     my ($class, @arg) = @_;
     my $self = $class->SUPER::new (@arg);
     $self->{report} ||= '';
-    $self->{notify} ||= SVK::Notify->new
-	(cb_flush => SVK::Notify::flush_print_report ($self->{report}));
+    $self->{notify} ||= SVK::Notify->new_with_report ($self->{report});
     return $self;
 }
 
@@ -84,7 +83,8 @@ sub add_directory {
 
 sub open_directory {
     my ($self, $path, $pdir, $rev, $pool) = @_;
-    $self->{notify}->node_status ($path, '');
+    $self->{notify}->node_status ($path, '')
+	unless $self->{notify}->node_status ($path);
     return $path;
 }
 

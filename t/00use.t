@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -w
 use Test::More;
 BEGIN {
     plan skip_all => 'MANIFEST not exists' unless -e 'MANIFEST';
@@ -12,4 +12,6 @@ BEGIN {
 	s|/|::|g;
 	use_ok ($_);
     }
+    my $svk = SVK->new;
+    $svk->help;
 }

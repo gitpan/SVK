@@ -14,6 +14,8 @@ sub options {
     ($_[0]->SUPER::options,
      'a|auto'		=> 'auto',
      'l|log'		=> 'log',
+     'remoterev'	=> 'remoterev',
+     'host=s'   	=> 'host',
      'I|incremental'	=> 'incremental',
      'no-ticket'	=> 'no_ticket',
      'r|revision=s'	=> 'revspec');
@@ -48,8 +50,7 @@ sub run {
 
     if ($self->{auto}) {
 	# XXX: these should come from parse_arg
-	$src->{revision} ||= $yrev;
-	$dst->{revision} ||= $yrev;
+	$src->normalize; $dst->normalize;
 	$merge = SVK::Merge->auto (%$self, repos => $repos,
 				   ticket => !$self->{no_ticket},
 				   src => $src, dst => $dst);
@@ -61,8 +62,6 @@ sub run {
 	my ($baserev, $torev) = $self->{revspec} =~ m/^(\d+):(\d+)$/
 	    or die loc("Revision must be N:M\n");
 	$src->{revision} = $torev;
-	$dst->{revision} ||= $yrev;
-	# XXX: fix --base= and add regression test
 	$merge = SVK::Merge->new
 	    (%$self, repos => $repos, src => $src, dst => $dst,
 	     base => SVK::Target->new (%$src, revision => $baserev));
@@ -71,13 +70,15 @@ sub run {
     $self->get_commit_message ($self->{log} ? $merge->log : '')
 	unless $dst->{copath};
 
+    $merge->{report} = $dst->{report} if $dst->{copath};
+
     if ($self->{incremental} && !$self->{check_only}) {
 	die loc ("Not possible to do incremental merge without merge ticket.\n")
 	    if $self->{no_ticket};
 	print loc ("-m ignored in incremental merge\n") if $self->{message};
 	my @rev;
 	my $hist = $src->root->node_history ($src->{path});
-	my $spool = SVN::Pool->new;
+	my $spool = SVN::Pool->new_default;
 	while ($hist = $hist->prev (0)) {
 	    my $rev = ($hist->location)[1];
 	    last if $rev <= $merge->{fromrev};
@@ -114,20 +115,20 @@ SVK::Command::Merge - Apply differences between two sources
 
 =head1 SYNOPSIS
 
-    merge -r N:M DEPOTPATH [PATH]
-    merge -r N:M DEPOTPATH1 DEPOTPATH2
+merge -r N:M DEPOTPATH [PATH]\r
+merge -r N:M DEPOTPATH1 DEPOTPATH2
 
 =head1 OPTIONS
 
-    -r [--revision] rev:    revision
-    -m [--message] message: commit message
-    -C [--check-only]:      don't perform actual writes
-    -I [--incremental]:     apply changes individually
-    -a [--auto]:            automatically find merge points
-    -l [--log]:             brings the logs of merged revs to the message buffer
-    --no-ticket:            don't associate the ticket tracking merge history
-    --force:		    Needs description
-    -s [--sign]:	    Needs description
+ -r [--revision] rev:       revision
+ -m [--message] message:    commit message
+ -C [--check-only]:         don't perform actual writes
+ -I [--incremental]:        apply changes individually
+ -a [--auto]:               automatically find merge points
+ -l [--log]:                brings the logs of merged revs to the message buffer
+ --no-ticket:               don't associate the ticket tracking merge history
+ --force:                   Needs description
+ -s [--sign]:               Needs description
 
 =head1 AUTHORS
 

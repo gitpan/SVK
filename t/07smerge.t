@@ -1,11 +1,11 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -w
 use strict;
 require 't/tree.pl';
 use Test::More;
 our $output;
 eval "require SVN::Mirror"
 or plan skip_all => "SVN::Mirror not installed";
-plan tests => 10;
+plan tests => 15;
 
 # build another tree to be mirrored ourself
 my ($xd, $svk) = build_test('test', 'client2');
@@ -36,6 +36,21 @@ $svk->commit ('-m', 'commit on local branch', $copath);
 $svk->sync ('//m');
 
 my ($suuid, $srev) = ($srepos->fs->get_uuid, $srepos->fs->youngest_rev);
+
+TODO: {
+local $TODO = 'better target checks';
+
+is_output ($svk, 'smerge', ['-C', '//m/be', '//l/be'],
+	   ["Can't merge file yet."]);
+
+is_output ($svk, 'smerge', ['-C', '//m/be', '//l/'],
+	   ["Can't merge different types of nodes"]);
+
+}
+
+$svk->smerge ('-C', '//m/Q', '//l/');
+ok ($@ =~ m/find merge base/);
+
 is_output ($svk, 'smerge', ['-C', '//m', '//l'],
 	   ['Auto-merging (3, 6) /m to /l (base /m:3).',
 	    'U   be',
@@ -43,7 +58,14 @@ is_output ($svk, 'smerge', ['-C', '//m', '//l'],
 
 my ($uuid, $rev) = ($repos->fs->get_uuid, $repos->fs->youngest_rev);
 is_output ($svk, 'smerge', ['-C', '//l', '//m'],
-	   ['Auto-merging (3, 6) /l to /m (base /m:3).',
+	   ['Auto-merging (3, 5) /l to /m (base /m:3).',
+	    "Merging back to SVN::Mirror source file://$srepospath/A.",
+	    'Checking against mirrored directory locally.',
+	    'U   Q/qu',
+	    "New merge ticket: $uuid:/l:5"], 'check merge up');
+
+is_output ($svk, 'smerge', ['-C', '//l', '//m/'],
+	   ['Auto-merging (3, 5) /l to /m (base /m:3).',
 	    "Merging back to SVN::Mirror source file://$srepospath/A.",
 	    'Checking against mirrored directory locally.',
 	    'U   Q/qu',
@@ -52,12 +74,12 @@ is_output ($svk, 'smerge', ['-C', '//l', '//m'],
 $svk->merge ('-a', '-m', 'simple smerge from source', '//m', '//l');
 $srev = $srepos->fs->youngest_rev;
 $svk->update ($copath);
-is_deeply (SVK::XD::do_proplist ($xd,
-				 repos => $repos,
-				 copath => $copath,
-				 path => '/l',
-				 rev => $repos->fs->youngest_rev,
-				),
+is_deeply ($xd->do_proplist (SVK::Target->new
+			     ( repos => $repos,
+			       copath => $corpath,
+			       path => '/l',
+			       revision => $repos->fs->youngest_rev,
+			     )),
 	   {'svk:merge' => "$suuid:/A:$srev",
 	    'svm:source' => 'file://'.$srepos->path.'!/A',
 	    'svm:uuid' => $suuid }, 'simple smerge from source');
@@ -74,11 +96,11 @@ is_output ($svk, 'smerge', ['-m', 'simple smerge from local', '//l', '//m'],
 	    'Committed revision 8 from revision 4.'], 'merge up');
 $svk->sync ('//m');
 
-is_deeply (SVK::XD::do_proplist ($xd,
-				 repos => $repos,
-				 path => '/m',
-				 rev => $repos->fs->youngest_rev,
-				),
+is_deeply ($xd->do_proplist (SVK::Target->new
+			     ( repos => $repos,
+			       path => '/m',
+			       revision => $repos->fs->youngest_rev,
+			     )),
 	   {'svk:merge' => "$uuid:/l:$rev",
 	    'svm:source' => 'file://'.$srepos->path.'!/A',
 	    'svm:uuid' => $suuid },
@@ -115,7 +137,7 @@ append_file ("$copath/Q/qu", "modified on local\n");
 $svk->rm ("$copath/Q/qz");
 $svk->commit ('-m', 'commit on local', $copath);
 is_output ($svk, 'smerge', ['-C', '//m', '//l'],
-	   ['Auto-merging (7, 10) /m to /l (base /l:7).',
+	   ['Auto-merging (7, 9) /m to /l (base /l:7).',
 	    ' U  Q/qu',
 	    '    Q/qz - skipped',
 	    'C   be',
@@ -127,7 +149,17 @@ is_output ($svk, 'smerge', ['-C', '//m', '//l'],
 	    'Empty merge.', '1 conflict found.'],
 	   'smerge - added file collision');
 $svk->smerge ('-C', '//m', $copath);
-$svk->smerge ('//m', $copath);
+is_output ($svk, 'smerge', ['//m', $copath],
+	   ['Auto-merging (7, 9) /m to /l (base /l:7).',
+	    " U  $copath/Q/qu",
+	    "    $copath/Q/qz - skipped",
+	    "C   $copath/be",
+	    "    $copath/newdir - skipped",
+	    "g   $copath/newfile",
+	    "A   $copath/newdir2",
+	    "C   $copath/newfile2",
+	    "New merge ticket: $suuid:/A:5",
+	    '2 conflicts found.']);
 $svk->status ($copath);
 $svk->commit ('-m', 'commit with conflict state', $copath);
 ok ($output =~ m/conflict/, 'forbid commit with conflict state');

@@ -24,18 +24,14 @@ sub run {
     my ($self, @arg) = @_;
 
     for my $target (@arg) {
-	my $rev = $self->{rev};
-	$rev ||= $target->{repos}->fs->youngest_rev
-	    unless $target->{copath};
-
-	my $props = $self->{xd}->do_proplist ( %$target,
-					       rev => $rev,
-					     );
+	$target->depotpath ($self->{rev})
+	    if defined $self->{rev};
+	my $props = $self->{xd}->do_proplist ( $target );
 	return unless %$props;
-	my $report = $target->{copath} || $target->{depotpath};
-	print loc("Properties on %1:\n", $report);
-	while (my ($key, $value) = each (%$props)) {
-	    print loc("%1: %2\n", $key, $value);
+	print loc("Properties on %1:\n", $target->{report} || '.');
+	for my $key (sort keys %$props) {
+	    my $value = $props->{$key};
+	    print $self->{verbose} ? "  $key: $value\n" : "  $key\n";
 	}
     }
 
@@ -52,12 +48,12 @@ SVK::Command::Proplist - List all properties on files or dirs
 
 =head1 SYNOPSIS
 
-    proplist PATH...
+ proplist PATH...
 
 =head1 OPTIONS
 
-    -r [--revision] rev:        revision
-    -v [--verbose]:         print extra information
+ -r [--revision] rev:    revision
+ -v [--verbose]:         print extra information
 
 =head1 AUTHORS
 

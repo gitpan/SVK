@@ -2,6 +2,7 @@ package SVK::Merge;
 use strict;
 use SVK::Util qw (find_svm_source find_local_mirror svn_mirror);
 use SVK::I18N;
+use SVK::Editor::Merge;
 
 =head1 NAME
 
@@ -106,12 +107,12 @@ sub find_merge_base {
 	die loc("Can't find merge base for %1 and %2\n", $src->{path}, $dst->{path})
 	    unless $self->{baseless} or $self->{base};
 
-	unless ($baserev = $self->{base}) {
+	unless ($baserev = $self->{baserev}) {
 	    # baseless merge
 	    my $pool = SVN::Pool->new_default;
-	    my $hist = $fs->revision_root($yrev)->node_history($src);
-	    $pool->clear, $baserev = ($hist->location)[1]
-		while $hist = $hist->prev(0);
+	    my $hist = $src->root->node_history($src->{path});
+	    $baserev = ($hist->location)[1], $pool->clear
+		while $hist = $hist->prev (0);
 	}
 	return (SVK::Target->new (%$src, revision => $baserev), $baserev);
     }
@@ -248,11 +249,20 @@ sub get_new_ticket {
 
 sub log {
     my ($self, $verbatim) = @_;
-    my $sep = $verbatim ? "\n" : ('-' x 70)."\n";
     open my $buf, '>', \ (my $tmp);
-    SVK::Command::Log::do_log ($self->{repos}, $self->{src}{path}, $self->{fromrev}+1,
-			       $self->{src}{revision}, 0, 0, 0, 1, $buf, $sep);
-    $tmp =~ s/^/ /mg;
+    no warnings 'uninitialized';
+    use Sys::Hostname;
+    my $print_rev = SVK::Command::Log::_log_remote_rev
+	($self->{repos}, $self->{src}{path}, $self->{remoterev},
+	 '@'.($self->{host} || (split ('\.', hostname, 2))[0]));
+    my $sep = $verbatim ? '' : ('-' x 70)."\n";
+    my $cb_log = sub { SVK::Command::Log::_show_log
+	    (@_, $sep, $buf, 1, $print_rev) };
+
+    print $buf " $sep" if $sep;
+    SVK::Command::Log::do_log (repos => $self->{repos}, path => $self->{src}{path},
+			       fromrev => $self->{fromrev}+1, torev => $self->{src}{revision},
+			       cb_log => $cb_log);
     return $tmp;
 }
 
@@ -280,16 +290,22 @@ the merge to the storage editor. Returns the number of conflicts.
 
 sub run {
     my ($self, $storage, %cb) = @_;
-
+    # XXX: should deal with all the anchorify here
     $storage = SVK::Editor::Delay->new ($storage);
-    my $base_root = $self->{base}->root;
+    my $base_root = $self->{base_root} || $self->{base}->root ($self->{xd});
+    # XXX: this should really be in SVK::Target
+    my $report = $self->{report};
+    $report .= '/'
+	if $report && $report ne '' && substr($report, -1, 1) ne '/';
     my $editor = SVK::Editor::Merge->new
 	( anchor => $self->{src}{path},
+	  report => $report,
 	  base_anchor => $self->{base}{path},
 	  base_root => $base_root,
-	  target => '',
+	  target => $self->{src}{targets}[0] || '',
 	  send_fulltext => $cb{mirror} ? 0 : 1,
 	  storage => $storage,
+	  allow_conflicts => defined $self->{dst}{copath},
 	  cb_merged => $self->{ticket} ?
 	  sub { my ($editor, $baton, $pool) = @_;
 		$editor->change_dir_prop
@@ -301,9 +317,10 @@ sub run {
 	if !$self->{check_only} && $ENV{SVKMERGE} && -x (split (' ', $ENV{SVKMERGE}))[0];
     SVK::XD->depot_delta
 	    ( oldroot => $base_root, newroot => $self->{src}->root,
-	      oldpath => [$self->{base}{path}, ''],
-	      newpath => $self->{src}{path},
-	      editor => $editor
+	      oldpath => [$self->{base}{path}, $self->{base}{targets}[0] || ''],
+	      newpath => $self->{src}{targets}[0]
+	      ? "$self->{src}{path}/$self->{src}{targets}[0]" : $self->{src}{path},
+	      no_recurse => $self->{no_recurse}, editor => $editor
 	    );
     print loc("%*(%1,conflict) found.\n", $editor->{conflicts}) if $editor->{conflicts};
 

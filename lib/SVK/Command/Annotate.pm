@@ -22,7 +22,7 @@ sub run {
 
     my $pool = SVN::Pool->new_default_sub;
     my $fs = $target->{repos}->fs;
-    my $root = $fs->revision_root ($fs->youngest_rev);
+    my $root = $fs->revision_root ($target->{revision});
     my $ann = Algorithm::Annotate->new;
     my @revs;
 
@@ -44,8 +44,9 @@ sub run {
 	my ($path, $rev) = @$_;
 	my $content = $fs->revision_root ($rev)->file_contents ($path);
 	$content = [split "[\n\r]", <$content>];
+	no warnings 'uninitialized';
 	$ann->add ( sprintf("%6s\t(%8s %10s):\t\t", $rev,
-			    $fs->revision_prop ($rev, 'svn:author') || '',
+			    $fs->revision_prop ($rev, 'svn:author'),
 			    substr($fs->revision_prop ($rev, 'svn:date'),0,10)),
 		    $content);
     }
@@ -76,11 +77,11 @@ SVK::Command::Annotate - Print files with per-line revision and author info
 
 =head1 SYNOPSIS
 
-    annotate FILE
+ annotate FILE
 
 =head1 OPTIONS
 
-    -x [--cross]:      trace cross copied revisions
+ -x [--cross]:      trace cross copied revisions
 
 =head1 AUTHORS
 

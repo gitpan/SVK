@@ -7,7 +7,7 @@ use SVK::I18N;
 
 sub parse_arg {
     my ($self, @arg) = @_;
-    $self->usage if $#arg < 2;
+    return if $#arg < 2;
     return (@arg[0,1], map {$self->arg_co_maybe ($_)} @arg[2..$#arg]);
 }
 
@@ -77,14 +77,14 @@ SVK::Command::Propset - Set a property on path
 
 =head1 SYNOPSIS
 
-    propset PROPNAME PROPVAL [PATH|DEPOTPATH...]
+ propset PROPNAME PROPVAL [PATH|DEPOTPATH...]
 
 =head1 OPTIONS
 
-  -m [--message] message:	Commit message
-  -C [--check-only]:	Needs description
-  -s [--sign]:	Needs description
-  --force:	Needs description
+ -m [--message] message:    Commit message
+ -C [--check-only]:         Needs description
+ -s [--sign]:               Needs description
+ --force:                   Needs description
 
 =head1 AUTHORS
 

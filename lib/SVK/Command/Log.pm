@@ -13,14 +13,18 @@ sub options {
      'v|verbose'	=> 'verbose');
 }
 
-sub log_remote_rev {
-    # XXX: Use an api instead
-    my ($fs, $rev) = @_;
-    my $revprops = $fs->revision_proplist ($rev);
-
-    my ($rrev) = map {$revprops->{$_}} grep {m/^svm:headrev:/} sort keys %$revprops;
-
-    return $rrev ? " (orig r$rrev)" : '';
+# returns a sub for getting remote rev
+sub _log_remote_rev {
+    my ($repos, $path, $remoteonly, $host) = @_;
+    $host ||= '';
+    return sub {"r$_[0]$host"} unless SVN::Mirror::list_mirror ($repos);
+    # save some initialization
+    my $m = SVN::Mirror::is_mirrored ($repos, $path) || 'SVN::Mirror';
+    sub {
+	my $rrev = $m->find_remote_rev ($_[0], $repos);
+	$remoteonly ? "r$rrev$host" :
+	    "r$_[0]$host".($rrev ? " (orig r$rrev)" : '');
+    }
 }
 
 sub parse_arg {
@@ -35,7 +39,7 @@ sub lock { $_[0]->lock_none }
 
 sub run {
     my ($self, $target) = @_;
-
+    $target->depotpath;
     my $fs = $target->{repos}->fs;
     my ($fromrev, $torev);
     ($fromrev, $torev) = $self->{revspec} =~ m/^(\d+):(\d+)$/
@@ -43,19 +47,21 @@ sub run {
 	    if $self->{revspec};
     $fromrev ||= $fs->youngest_rev;
     $torev ||= 0;
-
     $self->{cross} ||= 0;
+
+    my $print_rev = _log_remote_rev (@{$target}{qw/repos path/});
 
     my $sep = ('-' x 70)."\n";
     print $sep;
-    _get_logs ($fs, $self->{limit} || -1, $target->{path}, $fromrev, $torev,
+    _get_logs ($target->root, $self->{limit} || -1, $target->{path}, $fromrev, $torev,
 	       $self->{verbose}, $self->{cross},
-	       sub {_show_log (@_, $sep, undef, '', 1)} );
+	       sub {_show_log (@_, $sep, undef, 0, $print_rev)} );
     return;
 }
 
 sub _get_logs {
-    my ($fs, $limit, $path, $fromrev, $torev, $verbose, $cross, $callback) = @_;
+    my ($root, $limit, $path, $fromrev, $torev, $verbose, $cross, $callback) = @_;
+    my $fs = $root->fs;
     my $reverse = ($fromrev < $torev);
     my @revs;
     ($fromrev, $torev) = ($torev, $fromrev) if $reverse;
@@ -71,9 +77,10 @@ sub _get_logs {
     };
 
     my $pool = SVN::Pool->new_default;
-    my $hist = $fs->revision_root ($fromrev)->node_history ($path);
+    my $hist = $root->node_history ($path);
     while (($hist = $hist->prev ($cross)) && $limit--) {
 	my $rev = ($hist->location)[1];
+	next if $rev > $fromrev;
 	last if $rev < $torev;
 	$reverse ?  unshift @revs, $rev : $docall->($rev);
 	$pool->clear;
@@ -90,16 +97,15 @@ $chg->[$SVN::Fs::PathChange::add] = 'A';
 $chg->[$SVN::Fs::PathChange::delete] = 'D';
 $chg->[$SVN::Fs::PathChange::replace] = 'R';
 
-sub _show_log { 
-    my ($rev, $root, $paths, $props, $sep, $output, $host, $remote) = @_;
+sub _show_log {
+    my ($rev, $root, $paths, $props, $sep, $output, $indent, $print_rev) = @_;
     $output ||= select;
     my ($author, $date, $message) = @{$props}{qw/svn:author svn:date svn:log/};
     no warnings 'uninitialized';
-    $output->print ("r$rev$host".
-		    ($remote ? log_remote_rev($root->fs, $rev): '').
-		    ":  $author | $date\n");
+    $indent = (' ' x $indent);
+    $output->print ($indent.$print_rev->($rev).":  $author | $date\n");
     if ($paths) {
-	$output->print (loc("Changed paths:\n"));
+	$output->print ($indent.loc("Changed paths:\n"));
 	for (sort keys %$paths) {
 	    my $entry = $paths->{$_};
 	    my ($action, $propaction) = ($chg->[$entry->change_kind], ' ');
@@ -107,27 +113,26 @@ sub _show_log {
 	    $propaction = 'M' if $action eq 'M' && $entry->prop_mod;
 	    $action = ' ' if $action eq 'M' && !$entry->text_mod;
 	    $action = 'M' if $action eq 'A' && $copyfrom_path && $entry->text_mod;
-	    $output->print (
+	    $output->print ($indent.
 		"  $action$propaction $_".
 		    ($copyfrom_path ?
 		     ' ' . loc("(from %1:%2)", $copyfrom_path, $copyfrom_rev) : ''
 		    )."\n");
 	}
     }
-    $output->print ("\n$message\n$sep");
+    $message = ($indent ? '' : "\n")."$message\n$sep";
+#    $message =~ s/\n\n+/\n/mg;
+    $message =~ s/^/$indent/mg if $indent;
+    $output->print ($message);
 }
 
 sub do_log {
-    my ($repos, $path, $fromrev, $torev, $verbose,
-	$cross, $remote, $showhost, $output, $sep) = @_;
-    $output ||= \*STDOUT;
-    print $output $sep if $sep;
-    no warnings 'uninitialized';
-    use Sys::Hostname;
-    my ($host) = split ('\.', hostname, 2);
-    $host = $showhost ? '@'.$host : '';
-    _get_logs ($repos->fs, -1, $path, $fromrev, $torev, $verbose, $cross,
-	       sub {_show_log (@_, $sep, $output, $host, $remote)} )
+    my (%arg) = @_;
+    $arg{cross} ||= 0, $arg{limit} ||= -1;
+    my $fs = $arg{repos}->fs;
+    my $rev = $arg{fromrev} > $arg{torev} ? $arg{fromrev} : $arg{torev};
+    _get_logs ($fs->revision_root ($rev),
+	       @arg{qw/limit path fromrev torev verbose cross cb_log/});
 }
 
 1;
@@ -140,22 +145,22 @@ SVK::Command::Log - Show log messages for revisions
 
 =head1 SYNOPSIS
 
-    log DEPOTPATH
-    log PATH
+ log DEPOTPATH
+ log PATH
 
 =head1 OPTIONS
 
-    -r [--revision]:        revision spec from:to
-    -l [--limit]:           limit the number of revisions displayed
-    -x [--cross]:           display cross copied nodes
-    -v [--verbose]:         print changed path in changes
+ -r [--revision]:        revision spec from:to
+ -l [--limit]:           limit the number of revisions displayed
+ -x [--cross]:           display cross copied nodes
+ -v [--verbose]:         print changed path in changes
 
 =head1 OPTIONS
 
-  -r [--revision] arg:	Needs description
-  -l [--limit] arg:	Needs description
-  -x [--cross]:	Needs description
-  -v [--verbose]:	Needs description
+ -r [--revision] arg:    Needs description
+ -l [--limit] arg:       Needs description
+ -x [--cross]:           Needs description
+ -v [--verbose]:         Needs description
 
 =head1 AUTHORS
 

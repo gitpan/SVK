@@ -4,6 +4,7 @@ our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command );
 use SVK::XD;
+use SVK::I18N;
 
 sub options {
     ('r|revision=i'   => 'rev',
@@ -25,16 +26,47 @@ sub run {
     my ($self, @arg) = @_;
 
     for my $target (@arg) {
-	$self->{rev} = $target->{repos}->fs->youngest_rev
-	    unless defined $self->{rev};
-
-	$self->{xd}->do_update
+	my $update_target = SVK::Target->new
 	    ( %$target,
-	      rev => $self->{rev},
-	      recursive => !$self->{nonrecursive},
+	      path => $self->{update_target_path} || $target->{path},
+	      revision => defined $self->{rev} ?
+	      $self->{rev} : $target->{repos}->fs->youngest_rev,
+	      copath => undef
 	    );
+
+	$self->do_update ($target, $update_target);
     }
     return;
+}
+
+sub do_update {
+    my ($self, $cotarget, $update_target) = @_;
+    my $xdroot = $cotarget->root ($self->{xd});
+    # unanchorified
+    my ($path, $copath) = @{$cotarget}{qw/path copath/};
+    my $report = $update_target->{report};
+
+    print loc("Syncing %1(%2) in %3 to %4.\n", @{$cotarget}{qw( depotpath path copath )},
+	      $update_target->{revision});
+    unless ($xdroot->check_path ($cotarget->{path}) == $SVN::Node::dir) {
+	$cotarget->anchorify;
+	$update_target->anchorify;
+    }
+    else {
+	mkdir ($cotarget->{copath})
+	    unless $self->{check_only};
+    }
+
+    my $merge = SVK::Merge->new
+	(repos => $cotarget->{repos}, base => $cotarget, base_root => $xdroot,
+	 no_recurse => $self->{nonrecursive}, report => $report,
+	 src => $update_target, xd => $self->{xd}, check_only => $self->{check_only});
+    $merge->run ($self->{xd}->get_editor (copath => $copath, path => $path,
+					  oldroot => $xdroot, newroot => $update_target->root,
+					  revision => $update_target->{revision},
+					  anchor => $cotarget->{path},
+					  target => $cotarget->{targets}[0] || '',
+					  update => 1, check_only => $self->{check_only}));
 }
 
 1;
@@ -47,12 +79,12 @@ SVK::Command::Update - Bring changes from the repository into checkout copies
 
 =head1 SYNOPSIS
 
-    update [PATH...]
+ update [PATH...]
 
 =head1 OPTIONS
 
-    -r [--revision]:      revision
-    -N [--nonrecursive]:  update non-recursively
+ -r [--revision]:        revision
+ -N [--nonrecursive]:    update non-recursively
 
 =head1 DESCRIPTION
 

@@ -25,11 +25,9 @@ sub _do_list {
     my $map = $self->{xd}{depotmap};
     local $\ = "\n";
     my $fmt = "%-20s %-s\n";
-    printf($fmt,'Depot','Path');
+    printf $fmt, 'Depot', 'Path';
     print '=' x 60;
-    for(keys %$map) {
-	printf($fmt,"/$_/",$map->{$_});
-    }
+    printf $fmt, "/$_/", $map->{$_} for keys %$map;
     print '=' x 60;
 }
 
@@ -57,7 +55,8 @@ sub _do_edit {
 	);
 	next if $ans =~ /^n/i;
 	SVN::Repos::create($path, undef, undef, undef,
-			   {'bdb-txn-nosync' => '1',
+			   {'fs-type' => $ENV{SVNFSTYPE} || 'bdb',
+			    'bdb-txn-nosync' => '1',
 			    'bdb-log-autoremove' => '1'});
     }
     return;
@@ -73,13 +72,12 @@ SVK::Command::Depotmap - Create or edit the depot mapping configuration
 
 =head1 SYNOPSIS
 
-    depotmap [OPTIONS]
+ depotmap [OPTIONS]
 
 =head1 OPTIONS
 
-    options:
-    -l [--list]:    List current depot mapping
-    -i [--init]:    Initialize a default deopt
+ -l [--list]:    List current depot mapping
+ -i [--init]:    Initialize a default deopt
 
 =head1 DESCRIPTION
 

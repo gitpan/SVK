@@ -3,10 +3,17 @@ use strict;
 our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Commit );
+use SVK::Util qw(svn_mirror);
 use SVK::I18N;
+
+sub options {
+    ('upgrade' => 'upgrade',
+     'list'    => 'list');
+}
 
 sub parse_arg {
     my ($self, $path, @arg) = @_;
+    $path ||= '//';
     return ($self->arg_depotpath ($path), @arg);
 }
 
@@ -14,7 +21,28 @@ sub lock { $_[0]->lock_none }
 
 sub run {
     my ($self, $target, $source, @options) = @_;
-    die loc("cannot load SVN::Mirror") unless $self->svn_mirror;
+    die loc("cannot load SVN::Mirror") unless svn_mirror;
+
+    if ($self->{upgrade}) {
+	SVN::Mirror::upgrade ($target->{repos});
+	return;
+    }
+    elsif ($self->{list}) {
+	my @paths = SVN::Mirror::list_mirror ($target->{repos});
+	my $fs = $target->{repos}->fs;
+	my $root = $fs->revision_root ($fs->youngest_rev);
+	local $\ = "\n";
+	my $fmt = "%-20s %-s\n";
+	printf $fmt, 'Path', 'Source';
+	print '=' x 60;
+	for (@paths) {
+	    my $m = SVN::Mirror->new (target_path => $_, repos => $target->{repos},
+				      get_source => 1);
+	    printf $fmt, $_, $m->{source};
+	}
+	print '=' x 60;
+	return;
+    }
 
     my $m = SVN::Mirror->new (target_path => $target->{path},
 			      source => $source,
@@ -40,18 +68,19 @@ SVK::Command::Mirror - Initialize a mirrored depotpath
 
 =head1 SYNOPSIS
 
-    mirror DEPOTPATH [http|svn]://server.host/path
-    mirror DEPOTPATH cvs::pserver:user@host:/cvsroot:module/...
-    mirror DEPOTPATH p4:user@host:1666://depot/module/...
+ mirror DEPOTPATH [http|svn]://server.host/path
+ mirror DEPOTPATH cvs::pserver:user@host:/cvsroot:module/...
+ mirror DEPOTPATH p4:user@host:1666://depot/module/...
+
+ mirror --list
+ mirror --upgrade /DEPOT/
 
 =head1 DESCRIPTION
 
 =head1 OPTIONS
 
-  -m [--message] arg:	Needs description
-  -C [--check-only]:	Needs description
-  -s [--sign]:	Needs description
-  --force:	Needs description
+ --list:               List mirrored path
+ --upgrade:            Upgrade mirror state to latest version
 
 =head1 AUTHORS
 

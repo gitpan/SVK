@@ -3,12 +3,15 @@ use strict;
 require Exporter;
 our @ISA       = qw(Exporter);
 our @EXPORT_OK = qw(md5 get_buffer_from_editor slurp_fh get_anchor get_prompt
-		    find_svm_source resolve_svm_source svn_mirror tmpfile find_local_mirror);
+		    find_svm_source resolve_svm_source svn_mirror tmpfile
+		    find_local_mirror abs_path);
 our $VERSION = $SVK::VERSION;
 
 use SVK::I18N;
 use Digest::MD5 qw(md5_hex);
-use File::Temp qw(mktemp);
+use File::Spec;
+use Cwd;
+use File::Temp 0.14 qw(mktemp);
 my $svn_mirror = eval 'require SVN::Mirror; 1' ? 1 : 0;
 
 sub svn_mirror { $svn_mirror }
@@ -113,12 +116,15 @@ sub find_svm_source {
     }
 
     if ($m) {
+	# XXX: we should normalize $rev before calling find_svm_source
+	$rev = ($root->node_history($path)->prev(0)->location)[1]
+	    unless $rev == $root->node_created_rev ($path);
+	$rev = $m->find_remote_rev ($rev);
 	$path =~ s/\Q$mpath\E$//;
-	$uuid = $root->node_prop ($path, 'svm:uuid');
+	$uuid = $m->{source_uuid};
 	$path = $m->{source}.$mpath;
 	$path =~ s/^\Q$m->{source_root}\E//;
 	$path ||= '/';
-	$rev = $m->{fromrev};
     }
     else {
 	$uuid = $fs->get_uuid;
@@ -160,6 +166,17 @@ sub tmpfile {
 			      );
 
     return wantarray ? ($tmp, $tmp->filename) : $tmp;
+}
+
+
+# return paths with components in symlink resolved, but keep the final
+# path even if it's symlink
+
+sub abs_path {
+    my $path = shift;
+    return Cwd::abs_path ($path) unless -l $path;
+    my (undef, $dir, $pathname) = File::Spec->splitpath ($path);
+    return File::Spec->catpath (undef, Cwd::abs_path ($dir), $pathname);
 }
 
 1;

@@ -40,8 +40,6 @@ sub run {
 						 '.conflict' => undef,
 					       });
     $self->{rev} = $target->{repos}->fs->youngest_rev unless defined $self->{rev};
-    $target->{report} = $report;
-    $target->{copath} = $copath;
 
     return $self->SUPER::run (SVK::Target->new (%$target,
 						report => $report,
@@ -58,11 +56,11 @@ SVK::Command::Checkout - Checkout the depotpath
 
 =head1 SYNOPSIS
 
-    checkout DEPOTPATH [PATH]
+ checkout DEPOTPATH [PATH]
 
 =head1 OPTIONS
 
-    -r [--revision] rev:      revision
+ -r [--revision] rev:      revision
 
 =head1 AUTHORS
 

@@ -75,7 +75,7 @@ sub get_commit_message {
     my ($self, $msg) = @_;
     return if defined $self->{message};
     $self->{message} = get_buffer_from_editor
-	('log message', $target_prompt, join ("\n", $msg, $target_prompt, ''), 'commit');
+	('log message', $target_prompt, join ("\n", $msg || '', $target_prompt, ''), 'commit');
 }
 
 # Return the editor according to copath, path, and is_mirror (path)
@@ -120,7 +120,6 @@ sub get_editor {
 		       $callback->($m->find_local_rev ($rev), @_)
 			   if $callback }
 		);
-	    $base_rev = $m->{fromrev};
 	}
     }
 
@@ -139,7 +138,6 @@ sub get_editor {
 		      if $self->{sign};
 		  $callback->(@_) if $callback; }
 	  ));
-    $base_rev ||= $yrev;
 
     if ($self->{sign}) {
 	my ($uuid, $dst) = find_svm_source ($target->{repos}, $target->{path});
@@ -148,7 +146,8 @@ sub get_editor {
 							       );
     }
 
-    %cb = SVK::Editor::Merge::cb_for_root ($root, $target->{path}, $base_rev);
+    %cb = SVK::Editor::Merge::cb_for_root
+	($root, $target->{path}, defined $base_rev ? $base_rev : $yrev);
 
     return ($editor, %cb, mirror => $m, callback => \$callback);
 }
@@ -290,7 +289,7 @@ sub run {
 		my $corev = $self->{xd}{checkout}->get($cotarget)->{revision};
 		return $revcache{$corev} if exists $revcache{corev};
 		my $rev = ($xdroot->node_history ($revtarget)->prev (0)->location)[1];
-		$revcache{$corev} = $fs->revision_prop ($rev, "svm:headrev:$cb{mirror}{source}");
+		$revcache{$corev} = $cb{mirror}->find_remote_rev ($rev);
 	    }) : ());
     return;
 }
@@ -305,16 +304,15 @@ SVK::Command::Commit - Commit changes to depot
 
 =head1 SYNOPSIS
 
-    commit [PATH...]
+ commit [PATH...]
 
 =head1 OPTIONS
 
-    options:
-    -m [--message] ARG:    specify commit message ARG
-    -s [--sign]:           sign the commit
-    -C [--check-only]:	Needs description
-    --force:	Needs description
-    --direct:	Commit directly even if the path is mirrored
+ -m [--message] ARG:    specify commit message ARG
+ -s [--sign]:           sign the commit
+ -C [--check-only]:     Needs description
+ --force:               Needs description
+ --direct:              Commit directly even if the path is mirrored
 
 =head1 AUTHORS
 

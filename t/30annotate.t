@@ -1,5 +1,5 @@
-#!/usr/bin/perl
-use Test::More tests => 5;
+#!/usr/bin/perl -w
+use Test::More tests => 6;
 use strict;
 require 't/tree.pl';
 our $output;
@@ -9,17 +9,18 @@ my ($repospath, undef, $repos) = $xd->find_repos ('//', 1);
 $svk->checkout ('//', $copath);
 
 is_output_like ($svk, 'blame', ['--help'], qr'SYNOPSIS', 'annotate - help');
+is_output_like ($svk, 'blame', [], qr'SYNOPSIS', 'annotate - help');
 
 chdir ($copath);
 mkdir ('A');
 overwrite_file ("A/foo", "foobar\nbarbar\n");
 $svk->add ('A');
 $svk->commit ('-m', 'init');
-overwrite_file ("A/foo", "#!/usr/bin/perl\nfoobar\nbarbaz\n");
+overwrite_file ("A/foo", "#!/usr/bin/perl -w\nfoobar\nbarbaz\n");
 $svk->commit ('-m', 'more');
-overwrite_file ("A/foo", "#!/usr/bin/perl\nfoobar\nbarbaz\nfnord\nahh");
+overwrite_file ("A/foo", "#!/usr/bin/perl -w\nfoobar\nbarbaz\nfnord\nahh");
 $svk->commit ('-m', 'and more');
-overwrite_file ("A/foo", "#!/usr/bin/perl\nfoobar\nat checkout\nbarbaz\nfnord\nahh");
+overwrite_file ("A/foo", "#!/usr/bin/perl -w\nfoobar\nat checkout\nbarbaz\nfnord\nahh");
 
 is_annotate (['A/foo'], [2,1,undef,2,3,3], 'annotate - checkout');
 is_annotate (['//A/foo'], [2,1,2,3,3], 'annotate - depotpath');

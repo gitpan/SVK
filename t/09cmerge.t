@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -w
 use Test::More tests => 1;
 use strict;
 require 't/tree.pl';
@@ -13,7 +13,7 @@ overwrite_file ("$copath/trunk/test.pl", "foobarbazzz\n");
 $svk->add ("$copath/trunk");
 $svk->commit ('-m', 'init', "$copath");
 
-overwrite_file ("$copath/trunk/test.pl", q|#!/usr/bin/perl
+overwrite_file ("$copath/trunk/test.pl", q|#!/usr/bin/perl -w
 
 sub main {
     print "this is main()\n";
@@ -94,8 +94,23 @@ sub fnord {}
 
 $svk->commit ('-m', 'more features unreleated to c14', "$copath/feature");
 
-$svk->cmerge ('-m', 'merge change 14,16 from feature to work', '-c', '14,16', '//feature', '//work');
+my (undef, undef, $repos) = $xd->find_repos ('//', 1);
+my $uuid = $repos->fs->get_uuid;
+
+is_output ($svk, 'cmerge', ['-m', 'merge change 14,16 from feature to work',
+                            '-c', '14,16', '//feature', '//work'],
+['Committed revision 17.',
+ 'Merging with base /trunk 9: applying /feature 13:14.',
+ 'G   test.pl',
+ 'Empty merge.',
+ 'Merging with base /trunk 9: applying /feature 15:16.',
+ 'G   test.pl',
+ 'Empty merge.',
+ 'Committed revision 18.',
+ 'Committed revision 19.',
+ "Auto-merging (9, 18) /feature-merge-$$ to /work (base /trunk:9).",
+ 'G   test.pl',
+ "New merge ticket: $uuid:/feature-merge-$$:18",
+ 'Committed revision 20.']);
 
 $svk->update ("$copath/work");
-
-ok (1);
