@@ -8,6 +8,7 @@ our @EXPORT_OK = qw(
     get_prompt get_buffer_from_editor
 
     find_local_mirror find_svm_source resolve_svm_source traverse_history
+    find_prev_copy
 
     read_file write_file slurp_fh md5_fh bsd_glob mimetype mimetype_is_text
 
@@ -109,20 +110,63 @@ the regular expression pattern.  Returns the chomped answer line.
 
 =cut
 
-sub get_prompt {
+sub get_prompt { {
     my ($prompt, $pattern) = @_;
 
     local $| = 1;
-    {
-	print "$prompt";
-	my $answer = <STDIN>;
-	chomp $answer;
-	if (defined $pattern) {
-	    $answer =~ $pattern or redo;
-	}
-	return $answer;
+    print $prompt;
+
+    local *IN;
+    local *SAVED = *STDIN;
+    local *STDIN = *STDIN;
+
+    my $formfeed = "";
+    if (!-t STDIN and -r '/dev/tty' and open IN, '<', '/dev/tty') {
+        *STDIN = *IN;
+        $formfeed = "\r";
     }
-}
+
+    require Term::ReadKey;
+    Term::ReadKey::ReadMode('raw');
+
+    my $answer = '';
+    while (defined(my $key = Term::ReadKey::ReadKey(0))) {
+        if ($key =~ /[\012\015]/) {
+            print "\n" if $key eq $formfeed; print $key; last;
+        }
+        elsif ($key eq "\cC") {
+            Term::ReadKey::ReadMode('restore');
+            *STDIN = *SAVED;
+            Term::ReadKey::ReadMode('restore');
+            my $msg = loc("Interrupted.\n");
+            $msg =~ s{\n\z}{$formfeed\n};
+            die $msg;
+        }
+        elsif ($key eq "\cH") {
+            next unless length $answer;
+            print "$key $key";
+            chop $answer; next;
+        }
+        elsif ($key eq "\cW") {
+            my $len = (length $answer) or next;
+            print "\cH" x $len, " " x $len, "\cH" x $len;
+            $answer = ''; next;
+        }
+        elsif (ord $key < 32) {
+            # control character -- ignore it!
+            next;
+        }
+        print $key;
+        $answer .= $key;
+    }
+
+    if (defined $pattern) {
+        $answer =~ $pattern or redo;
+    }
+
+    Term::ReadKey::ReadMode('restore');
+    return $answer;
+} }
 
 =head3 get_buffer_from_editor ($what, $sep, $content, $filename, $anchor, $targets_ref)
 
@@ -661,6 +705,52 @@ sub traverse_history {
     return $rv;
 }
 
+=head3 find_prev_copy ($fs, $rev)
+
+Find the revision of the nearest copy in a repository that is less or
+equal to C<$rev>.  Returns the found revision number, and a hash of
+arrayref that contains copied paths and its source found in that
+revision.
+
+=cut
+
+sub _copies_in_rev {
+    my ($fs, $rev) = @_;
+    my $copies;
+    my $root = $fs->revision_root ($rev);
+    my $changed = $root->paths_changed;
+    for (keys %$changed) {
+	next if $changed->{$_}->change_kind == $SVN::Fs::PathChange::delete;
+	my ($copyfrom_rev, $copyfrom_path) = $root->copied_from ($_);
+	$copies->{$_} = [$copyfrom_rev, $copyfrom_path]
+	    if defined $copyfrom_path;
+    }
+    return $copies;
+}
+
+sub find_prev_copy {
+    my ($fs, $endrev) = @_;
+    my $pool = SVN::Pool->new_default;
+    my ($rev, $startrev) = ($endrev, $endrev);
+    my $copy;
+    while ($rev > 0) {
+	$pool->clear;
+	if (defined (my $cache = $fs->revision_prop ($rev, 'svk:copy_cache_prev'))) {
+	    $startrev = $rev + 1;
+	    $rev = $cache;
+	    last if $rev == 0;
+	}
+	if ($copy = _copies_in_rev ($fs, $rev)) {
+	    last;
+	}
+	--$rev; --$startrev;
+    }
+    $fs->change_rev_prop ($_, 'svk:copy_cache_prev', $rev), $pool->clear
+	for $startrev..$endrev;
+    undef $copy unless $rev;
+    return ($rev, $copy);
+}
+
 1;
 
 __END__
@@ -671,7 +761,7 @@ Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright 2003-2004 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
+Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

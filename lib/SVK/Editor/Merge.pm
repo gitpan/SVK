@@ -101,6 +101,11 @@ undef if there is no local modification.
 Called when the merger needs to retrieve the local modification of a
 property. Return the property value.
 
+=item cb_prop_merged
+
+Called when properties are merged without changes, that is, the C<g>
+status.
+
 =item cb_dirdelta
 
 When C<delete_entry> needs to check if everything to be deleted does
@@ -657,12 +662,16 @@ sub _merge_prop_change {
 	$self->{cb_conflict}->($path, $_[0]) if $self->{cb_conflict};
 	++$self->{conflicts};
     }
+    elsif ($status eq 'g') {
+	$self->{cb_prop_merged}->($path, $_[0])
+	    if $self->{cb_prop_merged};
+    }
     else {
 	$_[1] = $merged;
     }
     $self->{notify}->prop_status ($path, $status);
     ++$self->{changes};
-    return 1;
+    return $status eq 'g' ? 0 : 1;
 }
 
 sub change_file_prop {
@@ -706,7 +715,7 @@ Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright 2003-2004 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
+Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

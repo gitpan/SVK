@@ -17,7 +17,7 @@ sub parse_arg {
     my ($self, @arg) = @_;
 
     if ($self->{detach}) {
-        goto &{ $self->rebless ('checkout')->can ('parse_arg') };
+        goto &{ $self->rebless ('checkout::detach')->can ('parse_arg') };
     }
 
     return if $#arg < 0 || $#arg > 1;
@@ -38,6 +38,8 @@ sub run {
     $self->{update_target_path} = $target->{path};
 #    switch to related_to once the api is ready
     # check if the switch has a base at all
+    die loc("path %1 does not exist.\n", $target->{report})
+	if $target->root->check_path ($target->{path}) == $SVN::Node::none;
     SVK::Merge->auto (%$self, repos => $target->{repos},
 		      src => $cotarget, dst => $target);
 #    die loc ("%1 is not related to %2.\n", $cotarget->{report}, $target->{report})
@@ -72,7 +74,7 @@ Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright 2003-2004 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
+Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

@@ -48,6 +48,9 @@ sub run {
 		      my $copath = $target->copath ($path);
 
                       if ($st =~ /[DMRC!]/) {
+			  # conflicted items do not necessarily exist
+			  return $self->do_unschedule ($target, $copath)
+			      if $st eq 'C' && !$xdroot->check_path ($dpath);
                           return $self->do_revert($target, $copath, $dpath, $xdroot);
                       }
 
@@ -116,7 +119,7 @@ Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright 2003-2004 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
+Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
