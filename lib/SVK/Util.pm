@@ -7,7 +7,7 @@ our @EXPORT_OK = qw(
 
     get_prompt get_buffer_from_editor
 
-    find_local_mirror find_svm_source resolve_svm_source 
+    find_local_mirror find_svm_source resolve_svm_source traverse_history
 
     read_file write_file slurp_fh md5_fh mimetype mimetype_is_text
 
@@ -266,7 +266,7 @@ Read from a file and returns its content as a single scalar.
 
 sub read_file {
     local $/;
-    open my $fh, '<', $_[0] or die $!;
+    open my $fh, "< $_[0]" or die $!;
     return <$fh>;
 }
 
@@ -277,6 +277,7 @@ Write out content to a file, overwriting existing content if present.
 =cut
 
 sub write_file {
+    return print $_[1] if ($_[0] eq '-');
     open my $fh, '>', $_[0] or die $!;
     print $fh $_[1];
 }
@@ -387,14 +388,29 @@ does not exist.
 
 sub abs_path {
     my $path = shift;
-    if (defined &Win32::GetFullPathName) {
-	$path = '.' if !length $path;
-	$path = Win32::GetFullPathName($path);
-	return((-d dirname($path)) ? $path : undef);
+
+    if (!IS_WIN32) {
+	return Cwd::abs_path ($path) unless -l $path;
+	my (undef, $dir, $pathname) = splitpath ($path);
+	return catpath (undef, Cwd::abs_path ($dir), $pathname);
     }
-    return Cwd::abs_path ($path) unless -l $path;
-    my (undef, $dir, $pathname) = splitpath ($path);
-    return catpath (undef, Cwd::abs_path ($dir), $pathname);
+
+    # Win32 - Complex handling to get the correct base case
+    $path = '.' if !length $path;
+    $path = ucfirst(Win32::GetFullPathName($path));
+    return undef unless -d dirname($path);
+
+    my ($base, $remainder) = ($path, '');
+    while (length($base) > 1) {
+	my $new_base = Win32::GetLongPathName($base);
+	return $new_base.$remainder if defined $new_base;
+
+	$new_base = dirname($base);
+	$remainder = substr($base, length($new_base)) . $remainder;
+	$base = $new_base;
+    }
+
+    return undef;
 }
 
 =head3 abs2rel ($pathname, $old_basedir, $new_basedir, $sep)
@@ -627,6 +643,27 @@ sub is_empty_path {
     }
 
     return 1;
+}
+
+sub traverse_history {
+    my %args = @_;
+
+    my $old_pool = SVN::Pool->new;
+    my $new_pool = SVN::Pool->new;
+    my $spool = SVN::Pool->new_default;
+
+    my $hist = $args{root}->node_history ($args{path}, $old_pool);
+    my $rv;
+
+    while ($hist = $hist->prev(($args{cross} || 0), $new_pool)) {
+        $rv = $args{callback}->($hist->location ($new_pool));
+        last if !$rv;
+        $old_pool->clear;
+	$spool->clear;
+        ($old_pool, $new_pool) = ($new_pool, $old_pool);
+    }
+
+    return $rv;
 }
 
 1;

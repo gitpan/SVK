@@ -1,9 +1,12 @@
 #!/usr/bin/perl -w
-use Test::More tests => 15;
 use strict;
-use File::Path;
-use Cwd;
+use Test::More;
 BEGIN { require 't/tree.pl' };
+eval { require SVN::Mirror; 1 } or plan skip_all => 'require SVN::Mirror';
+plan tests => 16;
+
+use Cwd;
+use File::Path;
 
 my ($xd, $svk) = build_test('test');
 our ($copath, $corpath) = get_copath ('import');
@@ -55,6 +58,14 @@ $svk->import ('-f', '-m', 'import -f', '//import');
 is_output ($svk, 'status', [], []);
 
 chdir ($oldwd);
+
+rmtree ["$copath/dir"];
+
+overwrite_file ("$copath/dir", "now file\n");
+$svk->import ('-f', '-m', 'import -f', '//import', $copath);
+rmtree [$copath];
+$svk->checkout ('//import', $copath);
+ok (-f copath ('dir'));
 
 my ($srepospath, $spath, $srepos) = $xd->find_repos ('/test/A', 1);
 $svk->mkdir ('-m', 'init', '/test/A');

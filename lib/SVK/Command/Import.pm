@@ -43,18 +43,12 @@ sub lock {
 
 sub mkpdir {
     my ($self, $target, $root, $yrev) = @_;
-    my $edit = SVN::Simple::Edit->new
-	(_editor => [SVN::Repos::get_commit_editor
-		     ( $target->{repos},
-		       "file://$target->{repospath}",
-		       '/', $ENV{USER},
-		       "directory for svk import",
-		       sub { print loc("Import path %1 initialized.\n", $target->{path}) })],
-	 pool => SVN::Pool->new,
-	 missing_handler => &SVN::Simple::Edit::check_missing ($root));
-    $edit->open_root ($yrev);
-    $edit->add_directory ($target->{path});
-    $edit->close_edit;
+
+    $self->command (
+        mkdir => { message => "Directory for svk import.", parent => 1 },
+    )->run ($target);
+
+    print loc("Import path %1 initialized.\n", $target->{path});
 }
 
 sub run {
@@ -84,8 +78,7 @@ sub run {
     }
 
     $self->get_commit_message () unless $self->{check_only};
-    my ($editor, %cb) = $self->get_editor ($target);
-    ${$cb{callback}} =
+    my $committed =
 	sub { $yrev = $_[0];
 	      print loc("Directory %1 imported to depotpath %2 as revision %3.\n",
 			$copath, $target->{depotpath}, $yrev);
@@ -109,6 +102,7 @@ sub run {
 				 '.schedule' => undef});
 	      }
 	  };
+    my ($editor, %cb) = $self->get_editor ($target, $committed);
 
     $self->{import} = 1;
     $self->run_delta ($target->new (copath => $copath), $root, $editor, %cb);

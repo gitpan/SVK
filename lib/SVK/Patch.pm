@@ -62,7 +62,7 @@ sub new {
 		       _source => $src,
 		       _target => $dst }, $class;
     (undef, undef, $self->{_repos}) = $self->{_xd}->find_repos ("/$self->{_depot}/", 1);
-    $self->{source} = $self->{_source}->universal;
+    $self->{source} = $self->{_source}->universal if $self->{_source};
     $self->{target} = $self->{_target}->universal;
     return $self;
 }
@@ -77,7 +77,7 @@ sub load {
     my ($class, $file, $xd, $depot) = @_;
 
     my $content = do {
-        open my $fh, '<', $file or die "Cannot open $file: $!";
+        open my $fh, "< $file" or die loc("cannot open %1: %2", $file, $!);
 
         # Serialized patches always begins with a block marker.
         # We need the \nVersion: to not trip over inlined block makers.
@@ -86,7 +86,6 @@ sub load {
 
         # Now we ignore header paragraph.
         $/ = ""; <$fh>;
-        
         # Slurp everything up to the '=' of the end marker.
         $/ = "\n="; <$fh>;
     };
@@ -99,6 +98,7 @@ sub load {
     $self->{_depot} = $depot;
 
     for (qw/source target/) {
+	next unless $self->{$_};
 	my $tmp = $self->{"_$_"} = $self->{$_}->local ($xd, $depot) or next;
 	$tmp = $tmp->new (revision => undef);
 	$tmp->normalize;
@@ -181,8 +181,10 @@ sub view {
 
     my $header = join("\n",
         "==== Patch <$self->{name}> level $self->{level}",
-        "Source: ".join(':', @{$self->{source}}{qw/uuid path rev/}).
-                   $self->_path_attribute_text ('source', $output),
+        "Source: ".($self->{source} ?
+		    join(':', @{$self->{source}}{qw/uuid path rev/}).
+		    $self->_path_attribute_text ('source', $output)
+		    : '[No source]'),
         "Target: ".join(':', @{$self->{target}}{qw/uuid path rev/}).
                    $self->_path_attribute_text ('target', $output),
         "Log:", $self->{log}, ''
@@ -230,7 +232,6 @@ sub apply_to {
     my $editor = SVK::Editor::Merge->new
 	( base_anchor => $base->path,
 	  base_root => $base->root,
-	  send_fulltext => 0,
 	  storage => $storage,
 	  anchor => $target->path,
 	  target => '',
@@ -262,7 +263,7 @@ sub update {
 				     SVK::Editor::Merge::cb_for_root
 				     ($target->root, $target->path, $target->{revision}))) {
 
-	print "Conflicts.\n";
+	print loc("Conflicts.\n");
 	return $conflict;
     }
 
@@ -277,21 +278,20 @@ sub regen {
     my $target = $self->{_target}
 	or die loc("Target not local nor mirrored, unable to regen patch.\n");
     unless ($self->{level} == 0 || $self->{_source_updated}) {
-	print "Source of path <$self->{name}> not updated or not local. No need to update.\n";
+	print loc("Source of patch %1 not updated or not local, no need to regen patch.\n", $self->{name});
 	return;
     }
     my $source = $self->{_source}->new (revision => undef);
     $source->normalize;
-    my $merge = SVK::Merge->auto (repos => $self->{_repos},
-				  src => $source,
-				  dst => $target);
+    my $merge = SVK::Merge->auto (repos => $self->{_repos}, xd => $self->{_xd},
+				  src => $source, dst => $target);
     my $conflict;
     my $patch = SVK::Editor::Patch->new;
     # XXX: handle empty
     unless ($conflict = $merge->run ($patch,
 				     SVK::Editor::Merge::cb_for_root
 				     ($target->root, $target->path, $target->{revision}))) {
-	$self->{log} = $merge->log;
+	$self->{log} = $merge->log (1);
 	++$self->{level};
 	$self->{_source} = $source;
 	$self->{source} = $source->universal;
@@ -299,6 +299,32 @@ sub regen {
 	$self->{ticket} = $merge->merge_info ($source)->add_target ($source)->as_string;
     }
     return $conflict;
+}
+
+=head2 commit_editor
+
+Returns a editor that finalize the patch object upon close_edit.
+
+=cut
+
+sub commit_editor {
+    SVK::Patch::CommitEditor->new ( patch => $_[0], filename => $_[1]);
+}
+
+package SVK::Patch::CommitEditor;
+use base qw(SVK::Editor::Patch);
+use SVK::I18N;
+
+sub close_edit {
+    my $self = shift;
+    $self->SUPER::close_edit (@_);
+    my $patch = delete $self->{patch};
+    my $filename = delete $self->{filename};
+    $patch->{editor} = bless $self, 'SVK::Editor::Patch';
+    ++$patch->{level};
+    $patch->store ($filename);
+    return if $filename eq '-';
+    print loc ("Patch %1 created.\n", $patch->{name});
 }
 
 =head1 AUTHORS

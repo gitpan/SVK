@@ -12,7 +12,7 @@ use SVK::Util qw (resolve_svm_source);
 use SVK::Command::Log;
 
 my %cmd = map {$_ => 1} qw/view dump update regen update test send delete apply/;
-$cmd{create} = $cmd{list} = 0;
+$cmd{delete} = $cmd{list} = 0;
 
 sub options {
     ('depot=s' => 'depot');
@@ -28,32 +28,7 @@ sub parse_arg {
 	    unless $arg[0];
 	$arg[0] = $self->_load ($arg[0]);
     }
-    if ($cmd eq 'apply') {
-	$arg[1] = $self->arg_co_maybe ($arg[1] || '');
-    }
     return ($cmd, @arg);
-}
-
-sub create {
-    my ($self, $name, @arg) = @_;
-    die loc ("Illegal patch name: %1.\n", $name)
-	if $name !~ m/^[\w\-]+$/;
-    my $fname = "$self->{xd}{svkpath}/patch";
-    mkdir ($fname);
-    $fname .= "/$name.patch";
-    return "file $fname already exists, use $0 patch regen or update $name instead\n"
-	if -e $fname;
-
-    my ($src, $dst) = map {$self->arg_depotpath ($_) } @arg;
-    die loc("repos paths mismatch") unless $src->same_repos ($dst);
-
-    my $patch = SVK::Patch->new ($name, $self->{xd}, $self->{xd}->find_depotname ($arg[0]),
-				 $src, $dst);
-    my $ret = $self->regen ($patch);
-    unless ($ret) {
-	print loc ("Patch %1 created.\n", $name);
-    }
-    return $ret;
 }
 
 sub view {
@@ -100,10 +75,16 @@ sub update {
 
 }
 
+sub delete {
+    my ($self, $name) = @_;
+    unlink $self->{xd}->patch_file ($name);
+    return;
+}
+
 sub list {
     my ($self) = @_;
     my (undef, undef, $repos) = $self->{xd}->find_repos ('//', 1);
-    opendir my $dir, "$self->{xd}{svkpath}/patch";
+    opendir my $dir, $self->{xd}->patch_directory;
     foreach my $file (readdir ($dir)) {
 	next if $file =~ /^\./;
 	$file =~ s/\.patch$// or next;
@@ -114,16 +95,16 @@ sub list {
 }
 
 sub apply {
-    require SVK::Command::Merge;
-    my ($self, $patch, $dst, @args) = @_;
+    my ($self, $patch, @args) = @_;
+    my $mergecmd = $self->command ('merge');
+    $mergecmd->getopt (\@args);
+    my $dst = $self->arg_co_maybe ($args[0] || '');
     $self->lock_target ($dst) if $dst->{copath};
     my $ticket;
-    my $mergecmd = SVK::Command::Merge->new ($self->{xd});
-    $mergecmd->getopt (\@args);
     $mergecmd->get_commit_message ($patch->{log}) unless $dst->{copath};
     my $merge = SVK::Merge->new (%$mergecmd, dst => $dst, repos => $dst->{repos});
     $ticket = sub { $merge->get_new_ticket (SVK::Merge::Info->new ($patch->{ticket})) }
-	if $dst->universal->same_resource ($patch->{target});
+	if $patch->{ticket} && $dst->universal->same_resource ($patch->{target});
     $patch->apply_to ($dst, $mergecmd->get_editor ($dst),
 		      resolve => $merge->resolver,
 		      ticket => $ticket);
@@ -132,14 +113,17 @@ sub apply {
 
 sub _store {
     my ($self, $patch) = @_;
-    $patch->store ("$self->{xd}{svkpath}/patch/$patch->{name}.patch");
+    $patch->store ($self->{xd}->patch_file ($patch->{name}));
 }
 
 sub _load {
     my ($self, $name) = @_;
     # XXX: support alternative path
-    SVK::Patch->load ("$self->{xd}{svkpath}/patch/$name.patch",
-		      $self->{xd}, $self->{depot} || '');
+    SVK::Patch->load (
+        $self->{xd}->patch_file ($name),
+        $self->{xd},
+        ($self->{depot} || ''),
+    );
 }
 
 sub run {
@@ -157,7 +141,6 @@ SVK::Command::Patch - Manage patches
 
 =head1 SYNOPSIS
 
- patch create PATCHNAME DEPOTPATH1 DEPOTPATH2
  patch list
  patch view PATCHNAME
  patch regen PATCHNAME
@@ -169,6 +152,12 @@ SVK::Command::Patch - Manage patches
 =head1 OPTIONS
 
  None
+
+=head1 DESCRIPTION
+
+Note that patches are created with C<commit -P> or C<smerge -P>.
+
+A patch name of C<-> refers to the standard input and output.
 
 =head1 AUTHORS
 

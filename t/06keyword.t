@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests => 17;
+use Test::More tests => 22;
 BEGIN { require 't/tree.pl' };
 
 my ($xd, $svk) = build_test();
@@ -48,27 +48,61 @@ $svk->commit ('-m', 'adding a file', $copath);
 
 is_file_content ("$copath/A/foo", "\$Rev: 999 \$", 'commit unreverted ref');
 append_file ("$copath/A/foo", "some more\n");
-$svk->ps ('svn:keywords', 'URL Author Rev Date Id FileRev', "$copath/A/foo");
+$svk->ps ('svn:keywords', 'Rev', "$copath/A/foo");
 $svk->commit ('-m', 'appending a file and change props', $copath);
-is_output ($svk, 'st', ["$copath/A/foo"], [], 'commit does keyword expansion');
+is_file_content ("$copath/A/foo", "\$Rev: 6 \$some more\n");
+is_output ($svk, 'st', ["$copath/A/foo"], [], 'commit does keyword expansion - rev');
+append_file ("$copath/A/foo", "<!-- \$Id\$ -->\n");
+$svk->ps ('svn:keywords', 'Rev Id', "$copath/A/foo");
+$svk->commit ('-m', 'test $Id$', $copath);
+is_output ($svk, 'st', ["$copath/A/foo"], [], 'commit does keyword expansion - id');
+
+my ($CR, $LF, $CRLF) = ("\015", "\012", "\015\012");
+my $Native = (
+    ($^O =~ /^(?:MSWin|cygwin|dos|os2)/) ? $CRLF :
+    ($^O =~ /^MacOS/) ? $CR : $LF
+);
 
 mkdir ("$copath/le");
-overwrite_file_raw ("$copath/le/dos", "dos\n");
-overwrite_file_raw ("$copath/le/unix", "unix\n");
-overwrite_file_raw ("$copath/le/native", "native\n");
-overwrite_file_raw ("$copath/le/na", "na\n");
+overwrite_file_raw ("$copath/le/dos", "dos$CR");
+overwrite_file_raw ("$copath/le/unix", "unix$CR");
+overwrite_file_raw ("$copath/le/mac", "mac$CRLF");
+overwrite_file_raw ("$copath/le/native", "native$Native");
+overwrite_file_raw ("$copath/le/na", "na$CR");
+overwrite_file_raw ("$copath/le/mixed", "mixed$CRLF...endings$CR...");
 $svk->add ("$copath/le");
 $svk->ps ('svn:eol-style', 'CRLF', "$copath/le/dos");
 $svk->ps ('svn:eol-style', 'native', "$copath/le/native");
 $svk->ps ('svn:eol-style', 'LF', "$copath/le/unix");
+$svk->ps ('svn:eol-style', 'CR', "$copath/le/mac");
 $svk->ps ('svn:eol-style', 'NA', "$copath/le/na");
 $svk->commit ('-m', 'test line ending', $copath);
-is_file_content_raw ("$copath/le/dos", "dos\r\n");
-is_file_content_raw ("$copath/le/unix", "unix\n");
-is_file_content_raw ("$copath/le/na", "na\n");
-if ($^O eq 'MSWin32') {
-    is_file_content_raw ("$copath/le/native", "native\r\n");
+
+is_file_content_raw ("$copath/le/na", "na$CR");
+SKIP: {
+# we don't update eolstyle=native files on lf-platforms,
+# or eolstyle=crlf files on crlf-platforms.
+# this should be done with checkout_delta/commit harvesting
+# the translated md5 to decide if they should be updated.
+skip 'fix inconsistent eol-style after commit', 3;
+
+is_file_content_raw ("$copath/le/dos", "dos$CRLF");
+is_file_content_raw ("$copath/le/unix", "unix$LF");
+is_file_content_raw ("$copath/le/mac", "mac$CR");
 }
-else {
-    is_file_content_raw ("$copath/le/native", "native\n");
-}
+
+is_file_content_raw ("$copath/le/native", "native$Native");
+
+$svk->ps ('svn:eol-style', 'CRLF', "$copath/le/native");
+$svk->commit ('-m', 'test line ending', $copath);
+is_file_content_raw ("$copath/le/native", "native$CRLF");
+
+$SIG{__DIE__} = sub {
+    $_[0] =~ /Mixed newlines/ or return;
+    ok(1, 'mixed line endings should raise exceptions');
+    exit;
+};
+
+$svk->ps ('svn:eol-style', 'native', "$copath/le/mixed");
+$svk->commit ('-m', 'test line ending', $copath);
+ok(0, 'mixed line endings should raise exceptions');

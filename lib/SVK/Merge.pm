@@ -1,6 +1,6 @@
 package SVK::Merge;
 use strict;
-use SVK::Util qw(HAS_SVN_MIRROR find_svm_source find_local_mirror is_executable);
+use SVK::Util qw(HAS_SVN_MIRROR find_svm_source find_local_mirror is_executable traverse_history);
 use SVK::I18N;
 use SVK::Editor::Merge;
 use SVK::Editor::Rename;
@@ -66,22 +66,38 @@ sub auto {
     return $self;
 }
 
+sub _is_merge_from {
+    my ($self, $path, $target, $rev) = @_;
+    my $fs = $self->{repos}->fs;
+    my $u = $target->universal;
+    my $resource = join (':', $u->{uuid}, $u->{path});
+    local $@;
+    my ($merge, $pmerge) =
+	map {SVK::Merge::Info->new (eval { $fs->revision_root ($_)->node_prop
+					       ($path, 'svk:merge') })->{$resource}{rev} || 0}
+	    ($rev, $rev-1);
+    return ($merge != $pmerge);
+}
+
 sub _next_is_merge {
     my ($self, $repos, $path, $rev, $checkfrom) = @_;
     return if $rev == $checkfrom;
     my $fs = $repos->fs;
-    my $pool = SVN::Pool->new_default;
-    my $hist = $fs->revision_root ($checkfrom)->node_history ($path);
-    my $newhist = $hist->prev (0);
     my $nextrev;
-    while ($hist = $newhist) {
-	$pool->clear;
-	$hist = $newhist;
-	$newhist = $hist->prev (0);
-	$nextrev = ($hist->location)[1], last
-	    if $newhist && ($newhist->location)[1] == $rev;
-    }
+
+    (traverse_history (
+        root     => $fs->revision_root ($checkfrom),
+        path     => $path,
+        cross    => 0,
+        callback => sub {
+            return 0 if ($_[1] == $rev); # last
+            $nextrev = $_[1];
+            return 1;
+        }
+    ) == 0) or return;
+
     return unless $nextrev;
+
     my ($merge, $pmerge) =
 	map {$fs->revision_root ($_)->node_prop ($path, 'svk:merge') || ''}
 	    ($nextrev, $rev);
@@ -108,11 +124,11 @@ sub find_merge_base {
     return ($src->new (revision => $self->{baserev}), $self->{baserev})
         if $self->{baserev};
 
-    return ($src->new (path => '/', revision => 0), 0)
-        if $self->{baseless};
-
-    die loc("Can't find merge base for %1 and %2\n", $src->path, $dst->path)
-        unless $basepath;
+    unless ($basepath) {
+	return ($src->new (path => '/', revision => 0), 0)
+	    if $self->{baseless};
+	die loc("Can't find merge base for %1 and %2\n", $src->path, $dst->path);
+    }
 
     # XXX: document this, cf t/07smerge-foreign.t
     if ($basepath ne $src->path && $basepath ne $dst->path) {
@@ -137,11 +153,10 @@ sub find_merge_base {
 
 sub merge_info {
     my ($self, $target) = @_;
-    # XXX: support xdroot
-    $target->as_depotpath;
-    my $root = $target->root; # ($self->{xd});
-    my $info = SVK::Merge::Info->new ($root->node_prop ($target->path, 'svk:merge'));
-    return $info;
+    return SVK::Merge::Info->new
+	( $self->{xd}->get_props
+	  ($target->root ($self->{xd}), $target->path,
+	   $target->copath ($target->{copath_target}))->{'svk:merge'} );
 }
 
 sub find_merge_sources {
@@ -169,22 +184,31 @@ sub copy_ancestors {
     my $root = $fs->revision_root ($rev);
     $rev = $root->node_created_rev ($path);
 
-    my $spool = SVN::Pool->new_default_sub;
     my ($found, $hitrev, $source) = (0, 0, '');
     my $myuuid = $fs->get_uuid ();
-    my $hist = $root->node_history ($path);
     my ($hpath, $hrev);
 
-    while ($hist = $hist->prev (1)) {
-	($hpath, $hrev) = $hist->location ();
-	if ($hpath ne $path) {
-	    $found = 1;
-	}
-	elsif (defined ($source = $fs->revision_prop ($hrev, "svk:copied_from:$path"))) {
+    defined( traverse_history (
+        root     => $root,
+        path     => $path,
+        cross    => 1,
+        callback => sub {
+            ($hpath, $hrev) = @_;
+
+            if ($hpath ne $path) {
+                $found = 1;
+                return 0; # last
+            }
+
+            $source = $fs->revision_prop ($hrev, "svk:copied_from:$path");
+            return 1 if !defined $source;
+
 	    $hitrev = $hrev;
-	    last unless $source;
+            return 0 if !$source; # last
+
 	    my $uuid;
-	    ($uuid, $hpath, $hrev) = split ':', $source;
+	    ($uuid, $hpath, $hrev) = split /:/, $source;
+
 	    if ($uuid ne $myuuid) {
 		my ($m, $mpath);
 		if (HAS_SVN_MIRROR &&
@@ -194,14 +218,14 @@ sub copy_ancestors {
 		    $hpath =~ s/\Q$mpath\E$//;
 		}
 		else {
-		    return ();
+		    return undef; # last and return ()
 		}
-	    }
+            }
+
 	    $found = 1;
-	}
-	last if $found;
-	$spool->clear;
-    }
+            return 0; # last
+        }
+    ) ) or return ();
 
     $source = '' unless $found;
     if (!$found || $hitrev != $hrev) {
@@ -239,8 +263,11 @@ sub log {
 	($self->{repos}, $self->{src}->path, $self->{remoterev},
 	 '@'.($self->{host} || (split ('\.', hostname, 2))[0]));
     my $sep = $verbatim ? '' : ('-' x 70)."\n";
-    my $cb_log = sub { SVK::Command::Log::_show_log
-	    (@_, $sep, $buf, 1, $print_rev) };
+    my $cb_log = sub {
+	SVK::Command::Log::_show_log
+		(@_, $sep, $buf, 1, $print_rev)
+		    unless $self->_is_merge_from ($self->{src}->path, $self->{dst}, $_[0]);
+    };
 
     print $buf " $sep" if $sep;
     SVK::Command::Log::do_log (repos => $self->{repos}, path => $self->{src}->path,
@@ -350,7 +377,6 @@ sub run {
 	  base_anchor => $base->{path},
 	  base_root => $base_root,
 	  target => $target,
-	  send_fulltext => $cb{mirror} ? 0 : 1,
 	  storage => $storage,
 	  notify => $notify,
 	  allow_conflicts => $is_copath,

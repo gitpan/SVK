@@ -7,7 +7,7 @@ our $output;
 
 eval "require SVN::Mirror"
 or plan skip_all => "SVN::Mirror not installed";
-plan tests => 27;
+plan tests => 28;
 
 # build another tree to be mirrored ourself
 my ($xd, $svk) = build_test();
@@ -34,20 +34,22 @@ $svk2->commit ('-m', "modified on local", $copath);
 
 my ($uuid, $uuid2) = map {$_->fs->get_uuid} ($repos, $repos2);
 
-is_output ($svk2, 'patch', ['create', '//local', '//trunk'],
-	   ['Illegal patch name: //local.']);
-is_output ($svk2, 'patch', ['create', 'test-1', '//local', '//trunk'],
-	   ['U   B/fe',
+is_output ($svk2, 'smerge', ['-lm', '', '-P', '//local', '//local', '//trunk',],
+	   ['Auto-merging (0, 6) /local to /trunk (base /trunk:4).',
+	    "Patching locally against mirror source $uri/trunk.",
+	    'Illegal patch name: //local.']);
+is_output ($svk2, 'smerge', ['-lm', '', '-P', 'test-1', '//local', '//trunk'],
+	   ['Auto-merging (0, 6) /local to /trunk (base /trunk:4).',
+	    "Patching locally against mirror source $uri/trunk.",
+	    'U   B/fe',
 	    'Patch test-1 created.']);
 
 my $log1 = ['Log:',
-	    ' ----------------------------------------------------------------------',
 	    qr'.*',
 	    ' local branch',
-	    ' ----------------------------------------------------------------------',
 	    qr'.*',
-	    ' modified on local',
-	    ' ----------------------------------------------------------------------'];
+	    ' modified on local'];
+#	    ''];
 my $patch1 = ['',
 	      '=== B/fe',
 	      '==================================================================',
@@ -64,6 +66,23 @@ is_output ($svk2, 'patch', ['view', 'test-1'],
             "        ($uri/trunk)",
 	    @$log1, @$patch1]);
 
+is_output ($svk2, 'smerge', ['-lm', '', '-P', '-', '//local', '//trunk'],
+	   ['Auto-merging (0, 6) /local to /trunk (base /trunk:4).',
+	    "Patching locally against mirror source $uri/trunk.",
+	    'U   B/fe',
+	    '==== Patch <-> level 1',
+	    "Source: $uuid2:/local:6",
+	    "Target: $uuid:/trunk:3",
+            "        ($uri/trunk)",
+	    @$log1,
+            (map { join('-', split(/test-1/, $_)) } @$patch1),
+            '',
+            '==== BEGIN SVK PATCH BLOCK ====',
+            qr'Version: svk .*',
+            '',
+            ((qr'.*') x (9)),
+            '==== END SVK PATCH BLOCK ====',
+            ]);
 
 ok (-e "$xd2->{svkpath}/patch/test-1.patch");
 mkdir ("$xd->{svkpath}/patch");
@@ -88,8 +107,7 @@ is_output ($svk, 'patch', ['view', 'test-1'],
 $svk2->sync ('-a');
 
 is_output ($svk2, 'patch', [qw/test test-1/],
-	   ["Merging back to SVN::Mirror source $uri/trunk.",
-	    'Checking against mirrored directory locally.',
+	   ["Checking locally against mirror source $uri/trunk.",
 	    'G   B/fe',
 	    'Empty merge.'],
 	   'patch still applicable from original.');
@@ -130,8 +148,7 @@ is_output ($svk, 'patch', [qw/test test-1/], ['U   B/fe', 'Empty merge.'],
 	   'patch applies cleanly on server.');
 
 is_output ($svk2, 'patch', [qw/test test-1/],
-	   ["Merging back to SVN::Mirror source $uri/trunk.",
-	    'Checking against mirrored directory locally.',
+	   ["Checking locally against mirror source $uri/trunk.",
 	    'U   B/fe',
 	    'Empty merge.'],
 	   'patch applies cleanly from local.');
@@ -151,6 +168,11 @@ is_output ($svk2, 'patch', ['apply', 'test-1', '//patch-branch', '--', '-C'],
 	    'Empty merge.']);
 
 overwrite_file ("$scopath/B/fe", "on trunk\nfile fe added later\nbzzzzz\n");
+
+$svk->ci ('-Pfrom-ci-P', '-mTest', $scopath);
+# check me
+$svk->patch ('view', 'from-ci-P');
+
 $svk->commit ('-m', "modified on trunk", $scopath);
 is_output ($svk, 'patch', [qw/test test-1/],
 	   ['C   B/fe', 'Empty merge.', '1 conflict found.',
@@ -175,7 +197,6 @@ is_output ($svk2, 'patch', ['view', 'test-1'],
 	    @$log1,
 	    qr'.*',
 	    ' catch up on local',
-	    ' ----------------------------------------------------------------------',
 	    '',
 	    '=== B/fe',
 	    '==================================================================',
@@ -196,7 +217,6 @@ is_output ($svk2, 'patch', ['view', 'test-1'],
 	    @$log1,
 	    qr'.*',
 	    ' catch up on local',
-	    ' ----------------------------------------------------------------------',
 	    '',
 	    '=== B/fe',
 	    '==================================================================',

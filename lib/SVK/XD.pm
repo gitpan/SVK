@@ -10,12 +10,15 @@ use SVK::Editor::Status;
 use SVK::Editor::Delay;
 use SVK::Editor::XD;
 use SVK::I18N;
-use SVK::Util qw( slurp_fh md5_fh get_anchor abs_path mimetype mimetype_is_text abs2rel splitdir catdir $SEP is_symlink is_executable splitpath HAS_SYMLINK );
-use Data::Hierarchy '0.18';
+use SVK::Util qw( get_anchor abs_path abs2rel splitdir catdir splitpath $SEP
+		  HAS_SYMLINK is_symlink is_executable mimetype mimetype_is_text
+		  md5_fh  traverse_history );
+use Data::Hierarchy 0.18;
 use File::Spec;
 use File::Find;
 use File::Path;
 use YAML qw(LoadFile DumpFile);
+use PerlIO::eol 0.10 qw( NATIVE LF );
 use PerlIO::via::dynamic;
 use PerlIO::via::symlink;
 use Regexp::Shellish qw( compile_shellish ) ;
@@ -270,7 +273,7 @@ sub find_repos {
     my ($self, $depotpath, $open) = @_;
     die loc("no depot spec") unless $depotpath;
     my ($depot, $path) = $depotpath =~ m|^/(\w*)(/.*?)/?$|
-	or die loc("invalid depot spec");
+	or die loc("%1 is not a depot path.\n", $depotpath);
 
     my $repospath = $self->{depotmap}{$depot} or die loc("no such depot: %1", $depot);
 
@@ -288,11 +291,11 @@ C<SVN::Repos> object if caller wants the repository to be opened.
 
 sub find_repos_from_co {
     my ($self, $copath, $open) = @_;
-    die loc("path %1 is not a checkout path\n", $copath)
+    die loc("path %1 is not a checkout path.\n", $copath)
 	unless abs_path ($copath);
     $copath = abs_path ($copath);
     my ($cinfo, $coroot) = $self->{checkout}->get ($copath);
-    die loc("path %1 is not a checkout path\n", $copath) unless %$cinfo;
+    die loc("path %1 is not a checkout path.\n", $copath) unless %$cinfo;
     my ($repospath, $path, $repos) = $self->find_repos ($cinfo->{depotpath}, $open);
 
     if ($copath eq $coroot) {
@@ -353,7 +356,7 @@ sub condense {
     my ($anchor, $report);
     for my $path (@_) {
 	my $copath = abs_path ($path);
-	die loc("path %1 is not a checkout path\n", $path)
+	die loc("path %1 is not a checkout path.\n", $path)
 	    unless $copath;
 	if (!$anchor) {
 	    $anchor = $copath;
@@ -370,7 +373,6 @@ sub condense {
 	    $schedule = $cinfo->{'.schedule'} || '';
 	}
     }
-    $report =~ s|/$||;
     return ($report, $anchor, map { abs2rel($_, $anchor) } grep {$_ ne $anchor} @targets);
 }
 
@@ -502,20 +504,20 @@ sub _load_svn_autoprop {
     eval {
 	$self->{svnconfig}{config}->
 	    enumerate ('auto-props',
-		       sub { $self->{svnautoprop}{compile_shellish $_[0]} = $_[1]} );
+		       sub { $self->{svnautoprop}{compile_shellish $_[0]} = $_[1]; 1} );
     };
     warn "Your svn is too old, auto-prop in svn config is not supported: $@\n" if $@;
 }
 
 sub auto_prop {
     my ($self, $copath) = @_;
+
     # no other prop for links
     return {'svn:special' => '*'} if is_symlink($copath);
     my $prop;
     $prop->{'svn:executable'} = '*' if is_executable($copath);
     # auto mime-type
-    require IO::File;
-    my $fh = IO::File->new ($copath) or die "$copath: $!";
+    open my $fh, '<', $copath or die "$copath: $!";
     if (my $type = mimetype($fh)) {
 	# add only binary mime types or text/* but not text/plain
 	$prop->{'svn:mime-type'} = $type
@@ -581,7 +583,9 @@ sub do_delete {
     my @paths = grep {is_symlink($_) || -e $_} (exists $arg{targets}[0] ?
 			      map { SVK::Target->copath ($arg{copath}, $_) } @{$arg{targets}}
 			      : $arg{copath});
+    my $ignore = ignore ();
     find(sub {
+	     return if m/$ignore/;
 	     my $cpath = catdir($File::Find::dir, $_);
 	     no warnings 'uninitialized';
 	     return if $self->{checkout}->get ($cpath)->{'.schedule'}
@@ -737,7 +741,7 @@ sub ignore {
 sub _delta_content {
     my ($self, %arg) = @_;
 
-    my $handle = $arg{editor}->apply_textdelta ($arg{baton}, undef, $arg{pool});
+    my $handle = $arg{editor}->apply_textdelta ($arg{baton}, $arg{md5}, $arg{pool});
     return unless $handle && $#{$handle} > 0;
 
     if ($arg{send_delta} && $arg{base}) {
@@ -778,18 +782,8 @@ sub _unknown_verbose {
 		return if $seen{$copath};
 		my $schedule = $self->{checkout}->get ($copath)->{'.schedule'} || '';
 		return if $schedule eq 'delete';
-		if ($arg{entry}) {
-		    $dpath = abs2rel($dpath, $arg{copath} => $arg{entry}, '/');
-		}
-		else {
-		    if ($dpath eq $arg{copath}) {
-			$dpath = '';
-		    }
-		    else {
-			$dpath = abs2rel($dpath, $arg{copath}, '/');
-		    }
-		}
-		$arg{cb_unknown}->($dpath, catdir($File::Find::dir, $_));
+		$dpath = abs2rel($dpath, $arg{copath} => $arg{entry}, '/');
+		$arg{cb_unknown}->($dpath, $copath);
 	  }}, defined $arg{targets} ?
 	  map { SVK::Target->copath ($arg{copath}, $_) } @{$arg{targets}} : $arg{copath});
 }
@@ -799,14 +793,12 @@ sub _node_deleted {
     $arg{rev} = $arg{cb_rev}->($arg{entry});
     $arg{editor}->delete_entry (@arg{qw/entry rev baton pool/});
 
-    if ($arg{type} ne 'file') {
-	if ($arg{delete_verbose}) {
-	    foreach my $file (sort $self->{checkout}->find
-			      ($arg{copath}, {'.schedule' => 'delete'})) {
-		$file = abs2rel($file, $arg{copath} => undef, '/');
-		$arg{editor}->delete_entry ("$arg{entry}/$file", @arg{qw/rev baton pool/})
-		    if $file;
-	    }
+    if ($arg{kind} == $SVN::Node::dir && $arg{delete_verbose}) {
+	foreach my $file (sort $self->{checkout}->find
+			  ($arg{copath}, {'.schedule' => 'delete'})) {
+	    $file = abs2rel($file, $arg{copath} => undef, '/');
+	    $arg{editor}->delete_entry ("$arg{entry}/$file", @arg{qw/rev baton pool/})
+		if $file;
 	}
     }
 }
@@ -824,23 +816,36 @@ sub _node_deleted_or_absent {
 	}
     }
 
-    lstat ($arg{copath});
-    unless (-e _) {
+    if ($arg{type}) {
+	if ($arg{kind} && (($arg{type} eq 'file') xor ($arg{kind} == $SVN::Node::file))) {
+	    if ($arg{obstruct_as_replace}) {
+		$self->_node_deleted (%arg);
+	    }
+	    else {
+		$arg{cb_obstruct}->($arg{editor}, $arg{entry}, $arg{baton})
+		    if $arg{cb_obstruct};
+	    }
+	}
+    }
+    else {
 	# deleted during base_root -> xdroot
 	if ($arg{xdroot} ne $arg{base_root} && $arg{kind} == $SVN::Node::none) {
 	    $self->_node_deleted (%arg);
 	    return 1;
 	}
 	return 1 if $arg{absent_ignore};
-	$arg{rev} = $arg{cb_rev}->($arg{entry});
+	# absent
+	my $type = $arg{kind} == $SVN::Node::dir ? 'directory' : 'file';
+
 	if ($arg{absent_as_delete}) {
+	    $arg{rev} = $arg{cb_rev}->($arg{entry});
 	    $self->_node_deleted (%arg);
 	}
 	else {
-	    my $func = "absent_$arg{type}";
+	    my $func = "absent_$type";
 	    $arg{editor}->$func (@arg{qw/entry baton pool/});
 	}
-	return 1 unless $arg{type} ne 'file' && $arg{absent_verbose};
+	return 1 unless $type ne 'file' && $arg{absent_verbose};
     }
     return 0;
 }
@@ -866,6 +871,24 @@ sub _prop_changed {
     return SVN::Fs::props_changed ($root1, $path1, $root2, $path2);
 }
 
+sub _node_props {
+    my ($self, %arg) = @_;
+    my $schedule = $arg{cinfo}{'.schedule'} || '';
+    my $props = $arg{kind} ? $schedule eq 'replace' ? {} : $arg{xdroot}->node_proplist ($arg{path}) :
+	$arg{base_kind} ? $arg{base_root}->node_proplist ($arg{base_path}) : {};
+    my $newprops = (!$schedule && $arg{auto_add} && $arg{kind} == $SVN::Node::none && $arg{type} eq 'file')
+	? $self->auto_prop ($arg{copath}) : $arg{cinfo}{'.newprop'};
+    my $fullprop = _combine_prop ($props, $newprops);
+    if ($arg{add}) {
+	$newprops = $fullprop;
+    }
+    elsif ($arg{base_root} ne $arg{xdroot} && $arg{base}) {
+	$newprops = _prop_delta ($arg{base_root}->node_proplist ($arg{base_path}), $fullprop)
+	    if $arg{kind} && $arg{base_kind} && _prop_changed (@arg{qw/base_root base_path xdroot path/});
+    }
+    return ($newprops, $fullprop)
+}
+
 sub _delta_file {
     my ($self, %arg) = @_;
     my $pool = SVN::Pool->new_default (undef);
@@ -880,27 +903,14 @@ sub _delta_file {
 	$arg{cb_conflict}->($arg{editor}, $arg{entry}, $arg{baton});
     }
 
-    return 1 if $self->_node_deleted_or_absent (%arg, pool => $pool, type => 'file');
+    return 1 if $self->_node_deleted_or_absent (%arg, pool => $pool);
 
-    # This is getting too complicated, must make _delta_dir simpler.
-    my $props = $arg{kind} ? $schedule eq 'replace' ? {} : $arg{xdroot}->node_proplist ($arg{path}) :
-	$arg{base_kind} ? $arg{base_root}->node_proplist ($arg{base_path}) : {};
-    my $newprops = (!$schedule && $arg{auto_add} && $arg{kind} == $SVN::Node::none)
-	? $self->auto_prop ($arg{copath}) : $cinfo->{'.newprop'};
-    my $fullprop = _combine_prop ($props, $newprops);
-    if ($arg{add}) {
-	$newprops = $fullprop;
-    }
-    elsif ($arg{base_root} ne $arg{xdroot} && $arg{base}) {
-	$newprops = _prop_delta ($arg{base_root}->node_proplist ($arg{base_path}), $fullprop)
-	    if $arg{kind} && $arg{base_kind} && _prop_changed (@arg{qw/base_root base_path xdroot path/});
-    }
-    my $fh = get_fh ($arg{xdroot}, '<', $arg{path}, $arg{copath}, 0, undef, undef,
-		     $fullprop);
+    my ($newprops, $fullprops) = $self->_node_props (%arg);
+    my $fh = get_fh ($arg{xdroot}, '<', $arg{path}, $arg{copath}, $fullprops);
     my $mymd5 = md5_fh ($fh);
     my ($baton, $md5);
 
-    $arg{base} = 0 if $arg{in_copy};
+    $arg{base} = 0 if $arg{in_copy} || $schedule eq 'replace';;
 
     return $modified unless $schedule || $arg{add} ||
 	($arg{base} && $mymd5 ne ($md5 = $arg{base_root}->file_md5_checksum ($arg{base_path})));
@@ -921,7 +931,8 @@ sub _delta_file {
 	$mymd5 ne ($md5 ||= $arg{base_root}->file_md5_checksum ($arg{base_path}))) {
 	seek $fh, 0, 0;
 	$baton ||= $arg{editor}->open_file ($arg{entry}, $arg{baton}, $arg{cb_rev}->($arg{entry}), $pool);
-	$self->_delta_content (%arg, baton => $baton, fh => $fh, pool => $pool);
+	$self->_delta_content (%arg, baton => $baton, pool => $pool,
+			       fh => $fh, md5 => $arg{base} ? $md5 : undef);
     }
 
     $arg{editor}->close_file ($baton, $mymd5, $pool) if $baton;
@@ -953,7 +964,7 @@ sub _delta_dir {
     $arg{cb_conflict}->($arg{editor}, $arg{entry}, $arg{baton})
 	if $arg{cb_conflict} && $cinfo->{'.conflict'};
 
-    return if $self->_node_deleted_or_absent (%arg, pool => $pool, type => 'directory');
+    return if $self->_node_deleted_or_absent (%arg, pool => $pool);
     $arg{base} = 0 if $schedule eq 'replace';
     my ($entries, $baton) = ({});
     if ($arg{add}) {
@@ -970,12 +981,6 @@ sub _delta_dir {
     $baton ||= $arg{root} ? $arg{baton}
 	: $arg{editor}->open_directory ($arg{entry}, $arg{baton},
 					$arg{cb_rev}->($arg{entry}), $pool);
-
-    if (($schedule eq 'prop' || $arg{add}) && (!defined $targets)) {
-	my $newprop = $cinfo->{'.newprop'};
-	$arg{editor}->change_dir_prop ($baton, $_, ref ($newprop->{$_}) ? undef : $newprop->{$_}, $pool)
-	    for sort keys %$newprop;
-    }
 
     my $signature;
     if ($self->{signature} && $arg{xdroot} eq $arg{base_root}) {
@@ -996,11 +1001,19 @@ sub _delta_dir {
 	my $copath = SVK::Target->copath ($arg{copath}, $entry);
 	my $ccinfo = $self->{checkout}->get ($copath);
 	next if $unchanged && !$ccinfo->{'.schedule'} && !$ccinfo->{'.conflict'};
-	my $delta = ($kind == $SVN::Node::file) ? \&_delta_file : \&_delta_dir;
+	# XXX: save this stat() result for node_delete_or_absent
+	lstat ($copath);
+	my $type = -e _ ? (-d _ and not is_symlink) ? 'directory' : 'file'
+	                : '';
+	my $delta = $type ? $type eq 'directory' ? \&_delta_dir : \&_delta_file
+	                  : $kind == $SVN::Node::file ? \&_delta_file : \&_delta_dir;
 	my $newpath = $arg{path} eq '/' ? "/$entry" : "$arg{path}/$entry";
+	my $obs = $type ? ($kind == $SVN::Node::dir xor $type eq 'directory') : 0;
 	$self->$delta ( %arg,
-			add => $arg{in_copy},
-			base => 1,
+			add => $arg{in_copy} || ($obs && $arg{obstruct_as_replace}),
+			type => $type,
+			# if copath exist, we have base only if they are of the same type
+			base => !$obs,
 			depth => $arg{depth} ? $arg{depth} - 1: undef,
 			entry => defined $arg{entry} ? "$arg{entry}/$entry" : $entry,
 			kind => $arg{xdroot} eq $arg{base_root} ? $kind : $arg{xdroot}->check_path ($newpath),
@@ -1022,10 +1035,8 @@ sub _delta_dir {
 
     # check scheduled addition
     # XXX: does this work with copied directory?
-    my $ignore = ignore ($arg{add} ? () :
-			 split ("\n", $self->get_props
-				($arg{xdroot}, $arg{path},
-				 $arg{copath}, $cinfo)->{'svn:ignore'} || ''));
+    my ($newprops, $fullprops) = $self->_node_props (%arg);
+    my $ignore = ignore (split ("\n", $fullprops->{'svn:ignore'} || ''));
 
     my @direntries;
     unless (defined $targets && !keys %$targets) {
@@ -1034,7 +1045,6 @@ sub _delta_dir {
     }
 
     for my $entry (@direntries) {
-	next if $entry =~ m/$ignore/;
 	my $newtarget;
 	if (defined $targets) {
 	    next unless exists $targets->{$entry};
@@ -1051,6 +1061,7 @@ sub _delta_dir {
 	my $sche = $ccinfo->{'.schedule'} || '';
 	my $add = $sche || $arg{auto_add} || $newpaths{kind};
 	unless ($add) {
+	    next if !defined $targets && $entry =~ m/$ignore/ ;
 	    if ($arg{cb_unknown}) {
 		if ($arg{unknown_verbose}) {
 		    $self->_unknown_verbose (%arg, %newpaths);
@@ -1064,12 +1075,13 @@ sub _delta_dir {
 	lstat ($newpaths{copath});
 	# XXX: warn about unreadable entry?
 	next unless -r _;
-	my $delta = (-d _ and not is_symlink)
-	    ? \&_delta_dir : \&_delta_file;
+	my $type = (-d _ and not is_symlink) ? 'directory' : 'file';
+	my $delta = $type eq 'directory' ? \&_delta_dir : \&_delta_file;
 	my $copyfrom = $ccinfo->{'.copyfrom'};
 	my $fromroot = $copyfrom ? $arg{repos}->fs->revision_root ($ccinfo->{'.copyfrom_rev'}) : undef;
 	$self->$delta ( %arg, %newpaths, add => 1, baton => $baton,
 			root => 0, base => 0, cinfo => $ccinfo,
+			type => $type,
 			$copyfrom ?
 			( base => 1,
 			  in_copy => $arg{expand_copy},
@@ -1077,6 +1089,11 @@ sub _delta_dir {
 			  base_root => $fromroot,
 			  base_path => $copyfrom) : (),
 		      );
+    }
+
+    unless (defined $targets) {
+	$arg{editor}->change_dir_prop ($baton, $_, ref ($newprops->{$_}) ? undef : $newprops->{$_}, $pool)
+	    for sort keys %$newprops;
     }
 
     if (defined $targets) {
@@ -1116,7 +1133,7 @@ sub checkout_delta {
     };
 
     my $baton = $arg{editor}->open_root ($rev);
-    $self->_delta_dir (%arg, baton => $baton, root => 1, base => 1);
+    $self->_delta_dir (%arg, baton => $baton, root => 1, base => 1, type => 'directory');
     $arg{editor}->close_directory ($baton);
     $arg{editor}->close_edit ();
 }
@@ -1143,12 +1160,21 @@ sub do_resolved {
 }
 
 sub get_eol_layer {
-    my ($root, $path, $prop) = @_;
-    my $k = $prop->{'svn:eol-style'};
-    return ':raw' unless $k;
-    return ':crlf' if $k eq 'CRLF';
-    return ' ' if $k eq 'native';
-    return ':raw'; # unsupported or lf
+    my ($root, $path, $prop, $mode) = @_;
+    my $k = $prop->{'svn:eol-style'} or return ':raw';
+    # short-circuit no-op write layers on lf platforms
+    if (NATIVE eq LF) {
+	return ':raw' if $mode eq '>' && ($k eq 'native' or $k eq 'LF');
+    }
+    if ($k eq 'native') {
+        return ':raw:eol(LF!-Native!)';
+    }
+    elsif ($k eq 'CRLF' or $k eq 'CR' or $k eq 'LF') {
+        return ":raw:eol($k!)";
+    }
+    else {
+        return ':raw'; # unsupported
+    }
 }
 
 sub get_keyword_layer {
@@ -1189,10 +1215,10 @@ sub get_keyword_layer {
 		 FileRev =>
 		 sub { my ($root, $path) = @_;
 		       my $rev = 0;
-		       my $fs = $root->fs;
-		       my $hist = $root->node_history ($path);
-		       my $spool = SVN::Pool->new_default_sub;
-		       $rev++, $spool->clear while $hist = $hist->prev (0);
+		       traverse_history ( root     => $root,
+					  path     => $path,
+					  cross    => 0,
+					  callback => sub { ++$rev });
 		       "#$rev";
 		   },
 	       );
@@ -1250,18 +1276,16 @@ Returns a file handle with keyword translation and line-ending layers attached.
 =cut
 
 sub get_fh {
-    my ($root, $mode, $path, $fname, $raw, $layer, $eol, $prop) = @_;
+    my ($root, $mode, $path, $fname, $prop, $layer, $eol) = @_;
     {
 	local $@;
 	$prop ||= eval { $root->node_proplist ($path) };
     }
-    unless ($raw) {
-	return _fh_symlink ($mode, $fname)
-	    if HAS_SYMLINK and ( defined $prop->{'svn:special'} || ($mode eq '<' && is_symlink($fname)) );
-	if (keys %$prop) {
-	    $layer ||= get_keyword_layer ($root, $path, $prop);
-	    $eol ||= get_eol_layer($root, $path, $prop);
-	}
+    return _fh_symlink ($mode, $fname)
+	if HAS_SYMLINK and ( defined $prop->{'svn:special'} || ($mode eq '<' && is_symlink($fname)) );
+    if (keys %$prop) {
+	$layer ||= get_keyword_layer ($root, $path, $prop);
+	$eol ||= get_eol_layer($root, $path, $prop, $mode);
     }
     $eol ||= ':raw';
     open my ($fh), $mode.$eol, $fname or die "can't open $fname: $!\n";
@@ -1316,6 +1340,19 @@ sub get_props {
 	$props = $root->node_proplist ($path);
     }
     return _combine_prop ($props, $entry->{'.newprop'});
+}
+
+sub patch_directory {
+    my ($self) = @_;
+    my $rv = catdir ( $self->{svkpath}, 'patch' );
+    mkdir $rv unless -e $rv;
+    return $rv;
+}
+
+sub patch_file {
+    my ($self, $name) = @_;
+    return '-' if $name eq '-';
+    return catdir ($self->patch_directory, "$name.patch");
 }
 
 sub DESTROY {

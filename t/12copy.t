@@ -1,6 +1,10 @@
 #!/usr/bin/perl -w
-use Test::More tests => 42;
 use strict;
+use Test::More;
+BEGIN { require 't/tree.pl' };
+eval { require SVN::Mirror; 1 } or plan skip_all => 'require SVN::Mirror';
+plan tests => 45;
+
 our $output;
 BEGIN { require 't/tree.pl' };
 my ($xd, $svk) = build_test('foo');
@@ -124,7 +128,7 @@ is_copied_from ("//V/me-dcopied", '/V/me', 3);
 
 is_output ($svk, 'cp', ['-m', 'copy for remote', '//foo-remote/me', '//foo-remote/me-rcopied'],
 	   [
-	    "Merging back to SVN::Mirror source $uri.",
+	    "Merging back to mirror source $uri.",
 	    'Merge back committed as revision 3.',
 	    "Syncing $uri",
 	    'Retrieving log information from 3 to 3',
@@ -157,6 +161,14 @@ is_copied_from ("/foo/me-cocopied", '/me', 2);
 
 is_output ($svk, 'cp', ['-m', 'copy direcly', '//V/me', '//V/A/Q/'],
 	   ['Committed revision 17.']);
+is_copied_from ("//V/A/Q/me", '/V/me', 3);
+
+is_output ($svk, 'cp', ['-m', 'copy direcly', '//V/me', '//V/newdir-with-p/me-dcopied'],
+	   [qr'Transaction is out of date',
+	    'Please update checkout first.']);
+is_output ($svk, 'cp', ['-p', '-m', 'copy direcly', '//V/me', '//V/newdir-with-p/me-dcopied'],
+	   ['Committed revision 18.']);
+
 is_copied_from ("//V/A/Q/me", '/V/me', 3);
 
 sub is_copied_from {

@@ -7,6 +7,25 @@ our @ISA = qw(SVN::Delta::Editor);
 use SVK::I18N;
 use SVK::Util qw( slurp_fh tmpfile mimetype_is_text catfile );
 
+=head1 NAME
+
+SVK::Editor::Diff - An editor for producing textual diffs
+
+=head1 SYNOPSIS
+
+ $editor = SVK::Editor::Diff->new
+    ( cb_basecontent => sub { ... },
+      cb_baseprop    => sub { ... },
+      cb_llabel      => sub { ... },
+      # or llabel => 'revision <left>',
+      cb_rlabel      => sub { ... },
+      # or rlabel => 'revision <left>',
+      oldtarget => $target, oldroot => $root,
+    );
+ $xd->depot_delta ( editor => $editor, ... );
+
+=cut
+
 sub set_target_revision {
     my ($self, $revision) = @_;
 }
@@ -155,7 +174,8 @@ sub output_prop_diff {
                     ($baseprop||''), ($self->{info}{$path}{prop}{$_}||'');
             @args = reverse @args if $self->{reverse};
 
-            open my $fh, '>', \(my $diff);
+            my $diff = '';
+            open my $fh, '>', \$diff;
             _output_diff_content($fh, @args, '', '');
             $diff =~ s/.*\n.*\n//;
             $diff =~ s/^\@.*\n//mg;
@@ -185,7 +205,7 @@ sub close_directory {
 sub delete_entry {
     my ($self, $path, $revision, $pdir, @arg) = @_;
     # generate delta between empty root and oldroot of $path, then reverse in output
-    $self->{xd}->depot_delta
+    SVK::XD->depot_delta
 	( oldroot => $self->{oldtarget}{repos}->fs->revision_root (0),
 	  oldpath => [$self->{oldtarget}{path}, $path],
 	  newroot => $self->{oldroot},

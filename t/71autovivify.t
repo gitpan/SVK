@@ -1,7 +1,9 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests => 4;
+use Test::More;
 BEGIN { require 't/tree.pl' };
+eval { require SVN::Mirror; 1 } or plan skip_all => 'require SVN::Mirror';
+plan tests => 4;
 
 our ($answer, $output);
 my ($xd, $svk) = build_test();
@@ -11,7 +13,7 @@ my $tree = create_basic_tree ($xd, '//V');
 my ($copath, $corpath) = get_copath ('autovivify');
 mkdir $corpath;
 
-$answer = 'new';
+$answer = '//new';
 is_output($svk, 'copy', [-m => '', '//V/A', "$corpath/A"], [
             'Committed revision 4.',
             "Syncing //new(/new) in ".__("$corpath/A to 4."),

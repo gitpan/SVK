@@ -58,7 +58,9 @@ sub run {
             }
         }
 
-        if ($self->{sync} and HAS_SVN_MIRROR) {
+        if ($self->{sync}) {
+            die loc("cannot load SVN::Mirror") unless HAS_SVN_MIRROR;
+
             # Because syncing under the mirror anchor is impossible,
             # we always sync from the mirror anchor.
             my ($m, $mpath) = SVN::Mirror::is_mirrored (
@@ -69,13 +71,12 @@ sub run {
         }
 
         if ($self->{merge}) {
-            require SVK::Command::Smerge;
-            my $smerge = SVK::Command::Smerge->new;
-            %$smerge = (
-                ($self->{incremental} ? () : (message => '', log => 0)),
-                %$self, %$smerge, sync => 0,
-            );
-            $smerge->run(
+            $self->command (
+                smerge => {
+                    ($self->{incremental} ? () : (message => '', log => 1)),
+                    %$self, sync => 0,
+                }
+            )->run (
                 $merge_target->copied_from($self->{sync}) => $merge_target
             );
         }

@@ -92,6 +92,9 @@ sub new {
 Load the command subclass specified in C<$cmd>, and return a new
 instance of it, populated with C<$xd>.  Command aliases are handled here.
 
+To construct a command object from another command object, use the
+C<command> instance method instead.
+
 =cut
 
 sub get_cmd {
@@ -324,7 +327,8 @@ sub arg_uri_maybe {
     my $uri = URI->new("$arg/")->canonical or die loc("%1 is not a valid URI.\n", $arg);
     my $map = $self->{xd}{depotmap};
     foreach my $depot (sort keys %$map) {
-        my $repos = ($self->{xd}->find_repos ("/$depot/", 1))[2];
+        local $@;
+        my $repos = eval { ($self->{xd}->find_repos ("/$depot/", 1))[2] } or next;
 	foreach my $path ( SVN::Mirror::list_mirror ($repos) ) {
 	    my $m = SVN::Mirror->new (
                 repos => $repos,
@@ -373,9 +377,7 @@ sub arg_uri_maybe {
     $path = "//mirror/$path" unless $path =~ m!^/!;
 
     my $target = $self->arg_depotpath($path);
-    require SVK::Command::Mirror;
-    my $mirror = SVK::Command::Mirror->new;
-    $mirror->run($target, $base_uri);
+    $self->command ('mirror')->run ($target, $base_uri);
 
     print loc("Synchronizing the mirror for the first time:\n");
     print loc("  a        : Retrieve all revisions (default)\n");
@@ -389,15 +391,16 @@ sub arg_uri_maybe {
     ));
     $answer = 'a' unless length $answer;
 
-    require SVK::Command::Sync;
-    my $sync = SVK::Command::Sync->new;
-    $sync->{skip_to} = (
-        ($answer eq 'a') ? undef :
-        ($answer eq 'h') ? 'HEAD-1' :
-        ($answer < 0)    ? "HEAD$answer" :
-                           $answer
-    );
-    $sync->run ($target);
+    $self->command(
+        sync => {
+            skip_to => (
+                ($answer eq 'a') ? undef :
+                ($answer eq 'h') ? 'HEAD-1' :
+                ($answer < 0)    ? "HEAD$answer" :
+                                $answer
+            ),
+        }
+    )->run ($target);
 
     my $depotpath = "$target->{depotpath}/$rel_uri";
     return $self->arg_depotpath($depotpath);
@@ -511,6 +514,44 @@ sub arg_path {
     my ($self, $arg) = @_;
 
     return abs_path ($arg);
+}
+
+=head3 parse_revlist ()
+
+Parse -c or -r to a list of [from, to] pairs.
+
+=cut
+
+sub parse_revlist {
+    my $self = shift;
+    die loc("Revision required.\n") unless $self->{revspec} or $self->{chgspec};
+    die loc("Can't assign --revision and --change at the same time.\n")
+	if $self->{revspec} and $self->{chgspec};
+    my ($fromrev, $torev);
+    if ($self->{chgspec}) {
+	my @revlist;
+	for (split (',', $self->{chgspec})) {
+	    if (($fromrev, $torev) = m/^(\d+)-(\d+)$/) {
+		--$fromrev;
+	    }
+	    elsif (($torev) = m/^(\d+)$/) {
+		$fromrev = $torev - 1;
+	    }
+	    else {
+		die loc("Change spec %1 not recognized.\n", $_);
+	    }
+	    push @revlist , [$fromrev, $torev];
+	}
+	return @revlist;
+    }
+
+    # revspec
+    if (($fromrev, $torev) = $self->{revspec} =~ m/^(\d+):(\d+)$/) {
+	return ([$fromrev, $torev]);
+    }
+    else {
+	die loc ("Revision spec must be N:M.\n");
+    }
 }
 
 my %empty = map { ($_ => undef) } qw/.schedule .copyfrom .copyfrom_rev .newprop scheduleanchor/;
@@ -649,6 +690,42 @@ sub msg_handler {
 	 });
 }
 
+=head3 command ($cmd, \%args)
+
+Construct a command object of the C<$cmd> subclass and return it.
+
+The new object will share the C<xd> from the calling command object;
+contents in C<%args> is also assigned into the new object.
+
+=cut
+
+sub command {
+    my ($self, $command, $args, $is_rebless) = @_;
+
+    $command = ucfirst(lc($command));
+    require "SVK/Command/$command.pm";
+
+    my $cmd = (
+        $is_rebless ? bless($self, "SVK::Command::$command")
+                    : "SVK::Command::$command"->new ($self->{xd})
+    );
+    $cmd->{$_} = $args->{$_} for sort keys %$args;
+
+    return $cmd;
+}
+
+=head3 rebless ($cmd, \%args)
+
+Like C<command> above, but modifies the calling object instead
+of creating a new one.  Useful for a command object to recast
+itself into another command class.
+
+=cut
+
+sub rebless {
+    my ($self, $command, $args) = @_;
+    return $self->command($command, $args, 1);
+}
 
 1;
 
