@@ -1,6 +1,6 @@
 package SVK::Command::Cat;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.13';
 
 use base qw( SVK::Command );
 use SVK::Util qw(slurp_fh);
@@ -19,7 +19,7 @@ sub lock { $_[0]->lock_none }
 sub run {
     my ($self, @arg) = @_;
     for (@arg) {
-	my (undef, $path, undef, undef, $repos) = main::find_repos_from_co_maybe ($_, 1);
+	my (undef, $path, undef, undef, $repos) = $self->{xd}->find_repos_from_co_maybe ($_, 1);
 	my $pool = SVN::Pool->new_default;
 	my $fs = $repos->fs;
 	my $root = $fs->revision_root ($self->{rev} || $fs->youngest_rev);
@@ -35,6 +35,8 @@ sub run {
 }
 
 1;
+
+__DATA__
 
 =head1 NAME
 

@@ -1,6 +1,6 @@
 package SVK::Command::Checkout;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.13';
 
 use base qw( SVK::Command::Update );
 use SVK::XD;
@@ -31,7 +31,6 @@ sub run {
 	    if exists $entry->{depotpath} && $where[-1] ne $copath;
     }
 
-    mkdir ($copath);
     $self->{xd}{checkout}->store_recursively ( $copath,
 					       { depotpath => $target->{depotpath},
 						 revision => 0,
@@ -48,6 +47,8 @@ sub run {
 }
 
 1;
+
+__DATA__
 
 =head1 NAME
 

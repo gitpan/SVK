@@ -1,6 +1,6 @@
 package SVK::Command::Cleanup;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.13';
 
 use base qw( SVK::Command );
 use SVK::I18N;
@@ -27,6 +27,7 @@ sub run {
 
 1;
 
+__DATA__
 
 =head1 NAME
 

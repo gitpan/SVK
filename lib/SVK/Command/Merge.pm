@@ -1,6 +1,6 @@
 package SVK::Command::Merge;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.13';
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
@@ -89,7 +89,7 @@ sub run {
 
 sub log_for_merge {
     my $self = shift;
-    my $buf = IO::String->new (\my $tmp);
+    open my $buf, '>', \(my $tmp);
     SVK::Command::Log::do_log (@_, 0, 0, 0, 1, $buf);
     return $tmp;
 }
@@ -112,8 +112,26 @@ sub find_merge_base {
 	    ($basepath, $baserev) = ($path, $rev);
 	}
     }
-    die loc("Can't find merge base for %1 and %2\n", $src, $dst)
-	unless $basepath;
+
+    if (!$basepath) {
+	die loc("Can't find merge base for %1 and %2\n", $src, $dst)
+	  unless $self->{baseless} or $self->{base};
+
+	my $fs = $repos->fs;
+	my ($from_rev, $to_rev) = ($self->{base}, $fs->youngest_rev);
+
+	if (!$from_rev) {
+	    # baseless merge
+	    my $pool = SVN::Pool->new_default;
+	    my $hist = $fs->revision_root($to_rev)->node_history($src);
+	    do {
+		$pool->clear;
+		$from_rev = ($hist->location)[1];
+	    } while $hist = $hist->prev(0);
+	}
+
+	return ($src, $from_rev, $to_rev);
+    };
 
     return ($basepath, $baserev, $dstinfo->{$repos->fs->get_uuid.':'.$src} || $baserev);
 }
@@ -232,6 +250,8 @@ sub get_new_ticket {
 }
 
 1;
+
+__DATA__
 
 =head1 NAME
 

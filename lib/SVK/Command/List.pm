@@ -1,6 +1,6 @@
 package SVK::Command::List;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.13';
 
 use base qw( SVK::Command );
 use SVK::XD;
@@ -29,7 +29,7 @@ sub run {
 sub _do_list {
     my ($self, $level, @arg) = @_;
     for (@arg) {
-	my (undef, $path, $copath, undef, $repos) = main::find_repos_from_co_maybe ($_, 1);
+	my (undef, $path, $copath, undef, $repos) = $self->{xd}->find_repos_from_co_maybe ($_, 1);
 	my $pool = SVN::Pool->new_default;
 	my $fs = $repos->fs;
 	my $root = $fs->revision_root ($self->{rev} || $fs->youngest_rev);
@@ -55,6 +55,8 @@ sub _do_list {
 }
 
 1;
+
+__DATA__
 
 =head1 NAME
 

@@ -1,6 +1,6 @@
 package SVK::Command::Cmerge;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.13';
 
 use base qw( SVK::Command::Merge SVK::Command::Copy SVK::Command::Propset );
 use SVK::XD;
@@ -114,7 +114,7 @@ sub run {
 	  propvalue => $ticket,
 	  message => "cherry picking merge $self->{chgspec} to $dst",
 	) unless $self->{check_only};
-    my ($depot) = main::find_depotname ($src->{depotpath});
+    my ($depot) = $self->{xd}->find_depotname ($src->{depotpath});
 
     $src->{path} = $tmpbranch;
     $src->{depotpath} = "/$depot$tmpbranch";
@@ -124,6 +124,8 @@ sub run {
 }
 
 1;
+
+__DATA__
 
 =head1 NAME
 

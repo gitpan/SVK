@@ -1,6 +1,6 @@
 package SVK::XD;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.13';
 require SVN::Core;
 require SVN::Repos;
 require SVN::Fs;
@@ -48,7 +48,9 @@ sub load {
 
 sub store {
     my ($self) = @_;
+    $self->{updated} = 1;
     return unless $self->{statefile};
+    my $error = $@;
     if ($self->{giantlocked}) {
 	DumpFile ($self->{statefile}, { checkout => $self->{checkout},
 					depotmap => $self->{depotmap}} );
@@ -63,6 +65,7 @@ sub store {
 					depotmap => $info->{depotmap}} );
     }
     $self->giant_unlock ();
+    $@ = $error;
 }
 
 sub lock {
@@ -81,7 +84,6 @@ sub lock {
 
 sub unlock {
     my ($self) = @_;
-
     my @paths = $self->{checkout}->find ('/', {lock => $$});
     $self->{checkout}->store ($_, {lock => undef})
 	for @paths;
@@ -91,8 +93,10 @@ sub giant_lock {
     my ($self) = @_;
     return unless $self->{giantlock};
 
-    die loc("another svk might be running; remove %1 if not", $self->{giantlock})
-	if -e $self->{giantlock};
+    if (-e $self->{giantlock}) {
+	$self->{updated} = 1;
+	die loc("another svk might be running; remove %1 if not", $self->{giantlock});
+    }
 
     open my ($lock), '>', $self->{giantlock};
     print $lock $$;
@@ -105,6 +109,72 @@ sub giant_unlock {
     return unless $self->{giantlock};
     unlink ($self->{giantlock});
     delete $self->{giantlocked};
+}
+
+my %REPOS;
+my $REPOSPOOL = SVN::Pool->new;
+
+sub open_repos {
+    my ($repospath) = @_;
+    $REPOS{$repospath} ||= SVN::Repos::open ($repospath, $REPOSPOOL);
+}
+
+sub find_repos {
+    my ($self, $depotpath, $open) = @_;
+    die loc("no depot spec") unless $depotpath;
+    my ($depot, $path) = $depotpath =~ m|^/(\w*)(/.*)/?$|
+	or die loc("invalid depot spec");
+
+    my $repospath = $self->{depotmap}{$depot} or die loc("no such depot: %1", $depot);
+
+    return ($repospath, $path, $open && open_repos ($repospath));
+}
+
+sub find_repos_from_co {
+    my ($self, $copath, $open) = @_;
+    $copath = Cwd::abs_path ($copath || '');
+
+    my ($cinfo, $coroot) = $self->{checkout}->get ($copath);
+    die loc("path %1 is not a checkout path", $copath) unless %$cinfo;
+    my ($repospath, $path, $repos) = $self->find_repos ($cinfo->{depotpath}, $open);
+
+    if ($copath eq $coroot) {
+	$copath = '';
+    }
+    else {
+	$copath =~ s|^\Q$coroot\E/|/|;
+    }
+
+    return ($repospath, $path eq '/' ? $copath || '/' : $path.$copath,
+	    $cinfo, $repos);
+}
+
+sub find_repos_from_co_maybe {
+    my ($self, $target, $open) = @_;
+    my ($repospath, $path, $copath, $cinfo, $repos);
+    unless (($repospath, $path, $repos) = eval { $self->find_repos ($target, $open) }) {
+	undef $@;
+	($repospath, $path, $cinfo, $repos) = $self->find_repos_from_co ($target, $open);
+	$copath = Cwd::abs_path ($target || '');
+    }
+    return ($repospath, $path, $copath, $cinfo, $repos);
+}
+
+sub find_depotname {
+    my ($self, $target, $can_be_co) = @_;
+    my ($cinfo);
+    if ($can_be_co) {
+	(undef, undef, $cinfo) = eval { $self->find_repos_from_co ($target, 0) };
+	if ($@) {
+	    undef $@;
+	}
+	else {
+	    $target = $cinfo->{depotpath};
+	}
+    }
+
+    $self->find_repos ($target, 0);
+    return ($target =~ m|^/(.*?)/|);
 }
 
 sub condense {
@@ -171,26 +241,24 @@ sub translator {
     my ($target) = @_;
     $target .= '/' if $target;
     $target ||= '';
-    return qr/^$target/;
+    return qr/^\Q$target\E/;
 }
 
 sub xd_storage_cb {
     my ($self, %arg) = @_;
-    my $t = translator ($arg{target});
-
     # translate to abs path before any check
     return
-	( cb_exist => sub { $_ = shift; s|$t|$arg{copath}/|; -e $_},
-	  cb_rev => sub { $_ = shift; s|$t|$arg{copath}/|;
+	( cb_exist => sub { $_ = shift; $arg{get_copath} ($_); -e $_},
+	  cb_rev => sub { $_ = shift; $arg{get_copath} ($_);
 			  $self->{checkout}->get ($_)->{revision} },
-	  cb_conflict => sub { $_ = shift; s|$t|$arg{copath}/|;
+	  cb_conflict => sub { $_ = shift; $arg{get_copath} ($_);
 			       $self->{checkout}->store ($_, {'.conflict' => 1})
 				   unless $arg{check_only};
 			   },
 	  cb_localmod => sub { my ($path, $checksum) = @_;
-			       $_ = $path; s|$t|$arg{copath}/|;
+			       $arg{get_copath} ($path);
 			       my $base = get_fh ($arg{oldroot}, '<',
-						  "$arg{anchor}/$arg{path}", $_);
+						  "$arg{anchor}/$arg{path}", $path);
 			       my $md5 = md5 ($base);
 			       return undef if $md5 eq $checksum;
 			       seek $base, 0, 0;
@@ -201,15 +269,15 @@ sub xd_storage_cb {
 sub get_editor {
     my ($self, %arg) = @_;
 
+    my $t = translator($arg{target});
+    $arg{get_copath} = sub { $_[0] = $arg{copath}, return
+				 if $arg{target} eq $_[0];
+			     $_[0] =~ s|$t|$arg{copath}/|
+				 or die loc("unable to translate %1 with %2", $_[0], $t);
+			     $_[0] =~ s|/$||;
+			 };
     my $storage = SVK::XD::Editor->new
 	( %arg,
-	  get_copath => sub { my $t = translator($arg{target});
-			      $_[0] = $arg{copath}, return
-				  if $arg{target} eq $_[0];
-			      $_[0] =~ s|$t|$arg{copath}/|
-				  or die loc("unable to translate %1 with %2", $_[0], $t);
-			      $_[0] =~ s|/$||;
-			  },
 	  checkout => $self->{checkout},
 	  xd => $self,
 	);
@@ -230,8 +298,13 @@ sub do_update {
 
     print loc("Syncing %1(%2) in %3 to %4.\n", @arg{qw( depotpath path copath rev )});
     unless ($xdroot->check_path ($arg{path}) == $SVN::Node::dir) {
-	($anchor, $target, $tanchor, $ttarget) = 
+	($anchor, $target, $tanchor, $ttarget) =
 	    get_anchor (1, $arg{path}, $arg{target_path});
+    }
+    else {
+	# no anchor
+	mkdir ($arg{copath})
+	    unless $arg{check_only};
     }
 
     my $newroot = $fs->revision_root ($arg{rev});
@@ -918,6 +991,12 @@ sub get_props {
 	    %{$entry->{'.newprop'}}};
 
 
+}
+
+sub DESTROY {
+    my ($self) = @_;
+    return if $self->{updated};
+    $self->store ();
 }
 
 package SVK::XD::CheckEditor;

@@ -1,6 +1,6 @@
 package SVK::Command::Log;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.13';
 
 use base qw( SVK::Command );
 use SVK::XD;
@@ -68,7 +68,6 @@ sub do_log {
     no warnings 'uninitialized';
     use Sys::Hostname;
     my ($host) = split ('\.', hostname, 2);
-    warn $host;
     $repos->get_logs ([$path], $fromrev, $torev, $verbose, !$cross,
 		     sub { my ($paths, $rev, $author, $date, $message) = @_;
 			   no warnings 'uninitialized';
@@ -93,6 +92,8 @@ sub do_log {
 }
 
 1;
+
+__DATA__
 
 =head1 NAME
 

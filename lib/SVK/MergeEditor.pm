@@ -1,6 +1,6 @@
 package SVK::MergeEditor;
 use strict;
-our $VERSION = '0.12';
+our $VERSION = '0.13';
 our @ISA = qw(SVN::Delta::Editor);
 use SVK::Notify;
 use SVK::Util qw( slurp_fh md5 get_anchor );
@@ -96,7 +96,6 @@ Called after each file close call.
 
 use Digest::MD5 qw(md5_hex);
 use File::Compare ();
-use IO::String;
 use File::Temp qw/:mktemp/;
 
 sub set_target_revision {
@@ -148,6 +147,20 @@ sub ensure_open {
 	$self->{storage}->open_file ($path, $self->{storage_baton}{$pdir},
 				     &{$self->{cb_rev}}($path), $pool);
     delete $self->{info}{$path}{open};
+}
+
+sub ensure_close {
+    my ($self, $path, $checksum, $pool) = @_;
+
+    $self->cleanup_fh ($self->{info}{$path}{fh});
+    $self->{notify}->flush ($path, 1);
+    &{$self->{cb_closed}} ($path, $checksum, $pool)
+        if $self->{cb_closed};
+    $self->{storage}->close_file ($self->{storage_baton}{$path},
+				  $checksum, $pool)
+        if $self->{storage_baton}{$path};
+
+    delete $self->{info}{$path};
 }
 
 sub cleanup_fh {
@@ -219,9 +232,8 @@ sub close_file {
 
 	if (File::Compare::compare ($fh->{new}[1], $fh->{base}[1]) == 0 ||
 	    ($fh->{local}[0] && File::Compare::compare ($fh->{new}[1], $fh->{local}[1]) == 0)) {
-	    $self->cleanup_fh ($fh);
 	    $self->{notify}->node_status ($path) = 'g';
-
+	    $self->ensure_close ($path, $checksum, $pool);
 	    return;
 	}
 
@@ -244,11 +256,7 @@ sub close_file {
 		}
 	    }
 
-	    &{$self->{cb_closed}} ($path, $checksum, $pool)
-		if $self->{cb_closed};
-	    $self->{storage}->close_file ($self->{storage_baton}{$path},
-					  $checksum, $pool);
-	    $self->cleanup_fh ($fh);
+	    $self->ensure_close ($path, $checksum, $pool);
 	    return;
 	}
 
@@ -303,15 +311,7 @@ sub close_file {
 	}
     }
 
-    $self->{notify}->flush ($path, 1);
-    &{$self->{cb_closed}} ($path, $checksum, $pool)
-        if $self->{cb_closed};
-
-    $self->{storage}->close_file ($self->{storage_baton}{$path},
-				  $checksum, $pool)
-        if $self->{storage_baton}{$path};
-
-    delete $self->{info}{$path};
+    $self->ensure_close ($path, $checksum, $pool);
 }
 
 sub add_directory {

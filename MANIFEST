@@ -35,6 +35,7 @@ lib/SVK/Command/Log.pm
 lib/SVK/Command/Merge.pm
 lib/SVK/Command/Mirror.pm
 lib/SVK/Command/Mkdir.pm
+lib/SVK/Command/Propdel.pm
 lib/SVK/Command/Propedit.pm
 lib/SVK/Command/Proplist.pm
 lib/SVK/Command/Propset.pm
@@ -52,6 +53,7 @@ lib/SVK/DeleteEditor.pm
 lib/SVK/DiffEditor.pm
 lib/SVK/I18N.pm
 lib/SVK/I18N/i_default.po
+lib/SVK/I18N/zh_cn.po
 lib/SVK/I18N/zh_tw.po
 lib/SVK/MergeEditor.pm
 lib/SVK/Notify.pm
@@ -66,6 +68,7 @@ META.yml			Module meta-data (added by MakeMaker)
 README
 SIGNATURE
 t/10switch.t
+t/11checkout.t
 t/1use.t
 t/2basic.t
 t/3import.t

@@ -5,7 +5,6 @@ our $VERSION = '0.09';
 our @ISA = qw(SVN::Delta::Editor);
 
 use SVK::I18N;
-use IO::String;
 use SVK::Util qw( slurp_fh );
 use Text::Diff;
 
@@ -40,7 +39,8 @@ sub apply_textdelta {
 	my $tmp = File::Temp->new ( TEMPLATE => 'svk-diffXXXXX',
 				    DIR => '/tmp',
 				  );
-	slurp_fh ($self->{info}{$path}{base}, $tmp);
+	slurp_fh ($self->{info}{$path}{base}, $tmp)
+	    if $self->{info}{$path}{base};
 	seek $tmp, 0, 0;
 	$self->{info}{$path}{base} = $tmp;
 	$self->{info}{$path}{new} = $new =
@@ -49,7 +49,7 @@ sub apply_textdelta {
 			    );
     }
     else {
-	$new = IO::String->new (\$self->{info}{$path}{new});
+	open $new, '>', \$self->{info}{$path}{new};
     }
 
     return [SVN::TxDelta::apply ($self->{info}{$path}{base}, $new,
@@ -67,9 +67,9 @@ sub close_file {
 	if ($self->{external}) {
 	    # XXX: the 2nd file could be - and save some disk IO
 	    system (split (' ', $self->{external}),
-		    '-L', $llabel,
+		    '-L', _full_label ($path, undef, $llabel),
 		    $self->{info}{$path}{base}->filename,
-		    '-L', $rlabel,
+		    '-L', _full_label ($path, undef, $rlabel),
 		    $self->{info}{$path}{new}->filename);
 	}
 	else {
@@ -83,6 +83,11 @@ sub close_file {
     delete $self->{info}{$path};
 }
 
+sub _full_label {
+    my ($path, $mypath, $label) = @_;
+    return "$path ".($mypath ? "  ($mypath)  " : '')." ($label)";
+}
+
 sub output_diff {
     my ($fh, $path, $llabel, $rlabel, $lpath, $rpath, $ltext, $rtext) = @_;
 
@@ -92,10 +97,10 @@ sub output_diff {
     $rtext = \<$rtext> if ref ($rtext) && ref ($rtext) ne 'SCALAR';
 
     my $showpath = ($lpath ne $rpath);
-    print $fh loc("Index: %1\n", $path);
+    print $fh "=== $path\n";
     print $fh '=' x 66,"\n";
-    print $fh "--- $path ".($showpath ? "  ($lpath)  " : '')." ($llabel)\n";
-    print $fh "+++ $path ".($showpath ? "  ($rpath)  " : '')." ($rlabel)\n";
+    print $fh "--- "._full_label ($path, $showpath ? $lpath : undef, $llabel)."\n";
+    print $fh "+++ "._full_label ($path, $showpath ? $rpath : undef, $rlabel)."\n";
     print $fh Text::Diff::diff ($ltext, $rtext);
 }
 
@@ -106,9 +111,14 @@ sub output_prop_diff {
 	print $fh "\n", loc("Property changes on: %1\n", $path), ('_' x 67), "\n";
 	for (sort keys %{$self->{info}{$path}{prop}}) {
 	    print $fh loc("Name: %1\n", $_);
-	    print $fh Text::Diff::diff (\(&{$self->{cb_baseprop}} ($path, $_) || ''),
-		\$self->{info}{$path}{prop}{$_}, { STYLE => 'SVK::DiffEditor::NoHeader' });
+	    my $baseprop;
+	    $baseprop = &{$self->{cb_baseprop}} ($path, $_)
+		unless $self->{info}{$path}{added};
+	    print $fh Text::Diff::diff (\ ($baseprop || ''),
+					\$self->{info}{$path}{prop}{$_},
+					{ STYLE => 'SVK::DiffEditor::NoHeader' });
 	}
+	print "\n\n";
     }
 }
 
