@@ -7,7 +7,9 @@ require SVN::Fs;
 require SVN::Delta;
 require SVK::MergeEditor;
 use SVK::RevertEditor;
+use SVK::DelayEditor;
 use SVK::DeleteEditor;
+use SVK::I18N;
 use SVK::Util qw( slurp_fh md5 get_anchor );
 use Data::Hierarchy '0.15';
 use File::Spec;
@@ -66,7 +68,7 @@ sub store {
 sub lock {
     my ($self, $path) = @_;
     if ($self->{checkout}->get ($path)->{lock}) {
-	die "$path already locked, use svk cleanup if lock is stalled";
+	die loc("%1 already locked, use 'svk cleanup' if lock is stalled", $path);
     }
     $self->{checkout}->store ($path, {lock => $$});
     $self->{modified} = 1;
@@ -89,7 +91,7 @@ sub giant_lock {
     my ($self) = @_;
     return unless $self->{giantlock};
 
-    die "Another svk might be running. Remove $self->{giantlock} if not"
+    die loc("another svk might be running; remove %1 if not", $self->{giantlock})
 	if -e $self->{giantlock};
 
     open my ($lock), '>', $self->{giantlock};
@@ -205,7 +207,7 @@ sub get_editor {
 			      $_[0] = $arg{copath}, return
 				  if $arg{target} eq $_[0];
 			      $_[0] =~ s|$t|$arg{copath}/|
-				  or die "unable to translate $_[0] with $t";
+				  or die loc("unable to translate %1 with %2", $_[0], $t);
 			      $_[0] =~ s|/$||;
 			  },
 	  checkout => $self->{checkout},
@@ -226,7 +228,7 @@ sub do_update {
     $arg{target_path} ||= $arg{path};
     my ($tanchor, $ttarget) = ($arg{target_path}, '');
 
-    print "syncing $arg{depotpath}($arg{path}) to $arg{copath} to $arg{rev}\n";
+    print loc("Syncing %1(%2) in %3 to %4.\n", @arg{qw( depotpath path copath rev )});
     unless ($xdroot->check_path ($arg{path}) == $SVN::Node::dir) {
 	($anchor, $target, $tanchor, $ttarget) = 
 	    get_anchor (1, $arg{path}, $arg{target_path});
@@ -240,6 +242,7 @@ sub do_update {
 					    target => $target,
 					    update => 1);
 
+    $storage = SVK::DelayEditor->new ($storage);
     my $editor = SVK::MergeEditor->new
 	(_debug => 0,
 	 fs => $fs,
@@ -251,7 +254,6 @@ sub do_update {
 	 storage => $storage,
 	 %cb
 	);
-
 
     SVN::Repos::dir_delta ($xdroot->[1], $anchor, $target,
 			   $newroot, $arg{target_path},
@@ -302,7 +304,7 @@ sub do_delete {
 			      }
 			    ),
 			    cb_unknown => sub {
-				die "$_[0] is not under version control";
+				die loc("%1 is not under version control", $_[0]);
 			    }
 			  );
 
@@ -319,7 +321,7 @@ sub do_delete {
 	 }, @paths) if @paths;
 
     for (@deleted) {
-	print "D  $_\n";
+	print "D  $_\n" unless $arg{quiet};
 	$self->{checkout}->store ($_, {'.schedule' => 'delete'});
     }
 
@@ -352,12 +354,12 @@ sub do_propset {
     unless ($entry->{'.schedule'} eq 'add' || !$arg{repos}) {
 	($txn, $xdroot) = create_xd_root ($self, %arg);
 
-	die "$arg{copath} ($arg{path})not under version control"
+	die loc("%1(%2) is not under version control", $arg{copath}, $arg{path})
 	    if $xdroot->check_path ($arg{path}) == $SVN::Node::none;
     }
 
     #XXX: support working on multiple paths and recursive
-    die "$arg{copath} is already scheduled for delete"
+    die loc("%1 is already scheduled for delete", $arg{copath})
 	if $entry->{'.schedule'} eq 'delete';
     %values = %{$entry->{'.newprop'}}
 	if exists $entry->{'.schedule'};
@@ -380,7 +382,7 @@ sub do_revert {
     my $revert = sub {
 	my $kind = $xdroot->check_path ($_[0]);
 	if ($kind == $SVN::Node::none) {
-	    print "$_[1] is not versioned, ignored\n";
+	    print loc("%1 is not versioned; ignored.\n", $_[1]);
 	    return;
 	}
 	if ($kind == $SVN::Node::dir) {
@@ -394,14 +396,17 @@ sub do_revert {
 	}
 	$self->{checkout}->store ($_[1],
 				  {'.schedule' => undef});
-	print "Reverted $_[1]\n";
+	print loc("Reverted %1\n", $_[1]);
     };
 
     my $unschedule = sub {
+	my $sche = $self->{checkout}->get ($_[1])->{'.schedule'};
 	$self->{checkout}->store ($_[1],
 				  {'.schedule' => undef,
 				   '.newprop' => undef});
-	print "Reverted $_[1]\n";
+	-d $_[1] ? rmtree ([$_[1]]) : unlink($_[1])
+	    if $sche eq 'add';
+	print loc("Reverted %1\n", $_[1]);
     };
 
     my $revert_item = sub {
@@ -497,7 +502,7 @@ sub _delta_file {
 
     my $newprop = $cinfo->{'.newprop'};
     $arg{editor}->change_file_prop ($baton, $_, $newprop->{$_}, $pool)
-	for keys %$newprop;
+	for sort keys %$newprop;
 
     if ($arg{add} || $mymd5 ne ($md5 ||= $arg{xdroot}->file_md5_checksum ($arg{path}))) {
 	seek $fh, 0, 0;
@@ -568,10 +573,10 @@ sub _delta_dir {
     if ($schedule eq 'prop' || $arg{add}) {
 	my $newprop = $cinfo->{'.newprop'};
 	$arg{editor}->change_dir_prop ($baton, $_, $newprop->{$_}, $pool)
-	    for keys %$newprop;
+	    for sort keys %$newprop;
     }
 
-    for (keys %{$entries}) {
+    for (sort keys %{$entries}) {
 	my $kind = $entries->{$_}->kind;
 	my $delta = ($kind == $SVN::Node::file) ? \&_delta_file : \&_delta_dir;
 	$self->$delta ( %arg,
@@ -598,8 +603,8 @@ sub _delta_dir {
     for (grep { !m/^\.+$/ && !exists $entries->{$_} } readdir ($dir)) {
 	next if m/$ignore/;
 	my $ccinfo = $self->{checkout}->get ("$arg{copath}/$_");
-	my $sche = $ccinfo->{'.schedule'};
-	unless ($arg{add} || $sche) {
+	my $sche = $ccinfo->{'.schedule'} || '';
+	unless ($sche || ($arg{auto_add} && $arg{add})) {
 	    if ($arg{cb_unknown} &&
 		(!defined $arg{targets} || exists $targets->{$_})) {
 		if ($arg{unknown_verbose}) {
@@ -625,7 +630,7 @@ sub _delta_dir {
 	$self->$delta ( %arg,
 		   add => 1,
 		   entry => $arg{entry} ? "$arg{entry}/$_" : $_,
-		   kind => $arg{xdroot}->check_path ("$arg{path}/$_"),
+		   kind => $SVN::Node::none,
 		   baton => $baton,
 		   targets => $targets->{$_},
 		   root => 0,
@@ -661,6 +666,10 @@ sub checkout_delta {
     my ($self, %arg) = @_;
     my $kind = $arg{xdroot}->check_path ($arg{path});
     my $copath = $arg{copath};
+    $arg{editor} = SVK::DelayEditor->new ($arg{editor})
+	unless $arg{nodelay};
+    $arg{editor} = SVN::Delta::Editor->new (_debug => 1, _editor => [$arg{editor}])
+	if $arg{debug};
     $arg{cb_rev} ||= sub { my $target = shift;
 			   $target = $target ? "$copath/$target" : $copath;
 			   $self->_get_rev ($target);
@@ -716,7 +725,7 @@ sub resolved_entry {
     my $val = $self->{checkout}->get ($entry);
     return unless $val && $val->{'.conflict'};
     $self->{checkout}->store ($entry, {%$val, '.conflict' => undef});
-    print "$entry marked as resolved.\n";
+    print loc("%1 marked as resolved.\n", $entry);
 }
 
 sub do_resolved {
@@ -739,8 +748,7 @@ sub do_import {
     my $root = $fs->revision_root ($yrev);
     my $kind = $root->check_path ($arg{path});
 
-    die "import destination is a file"
-	if $kind == $SVN::Node::file;
+    die loc("import destination cannot be a file") if $kind == $SVN::Node::file;
 
     if ($kind == $SVN::Node::none) {
 	my $edit = SVN::Simple::Edit->new
@@ -748,7 +756,7 @@ sub do_import {
 					    "file://$arg{repospath}",
 					    '/', $ENV{USER},
 					    "directory for svk import",
-					    sub {print "Import path $arg{path} initialized.\n"})],
+					    sub { print loc("Import path %1 initialized.\n", $arg{path}) })],
 	     missing_handler => &SVN::Simple::Edit::check_missing ($root));
 
 	$edit->open_root ($yrev);
@@ -764,7 +772,7 @@ sub do_import {
 	    "file://$arg{repospath}",
 	    $arg{path}, $ENV{USER},
 	    $arg{message},
-	    sub {print "Directory $arg{copath} imported to depotpath $arg{depotpath} as revision $_[0].\n"}));
+	    sub { print loc("Directory %1 imported to depotpath %2 as revision %3.\n", $arg{copath}, $arg{depotpath}, $_[0]) }));
 
     $editor = SVK::XD::CheckEditor->new ($editor)
 	if $arg{check_only};
@@ -772,7 +780,7 @@ sub do_import {
     my $baton = $editor->open_root ($yrev);
 
     if (exists $self->{checkout}->get ($arg{copath})->{depotpath}) {
-	die "Import source is a checkout path. it's likely not what you want";
+	die loc("Import source cannot be a checkout path");
     }
 
     # XXX: check the entry first
@@ -784,6 +792,7 @@ sub do_import {
 
     $self->_delta_dir (%arg,
 		add => 1,
+	        auto_add => 1,
 		cb_rev => sub { $yrev },
 		editor => $editor,
 		baseroot => $root,
@@ -809,6 +818,7 @@ sub get_keyword_layer {
     my ($root, $path) = @_;
     my $pool = SVN::Pool->new_default;
     my $k = eval { $root->node_prop ($path, 'svn:keywords') };
+    undef $@;
     return unless $k;
 
     # XXX: should these respect svm related stuff
@@ -899,7 +909,7 @@ sub get_props {
 
     unless ($entry->{'.schedule'} eq 'add') {
 
-	die "$path not found"
+	die loc("path %1 not found", $path)
 	    if $root->check_path ($path) == $SVN::Node::none;
 	$props = $root->node_proplist ($path);
     }
@@ -911,26 +921,28 @@ sub get_props {
 }
 
 package SVK::XD::CheckEditor;
+use SVK::I18N;
 our @ISA = qw(SVN::Delta::Editor);
 
 sub close_edit {
     my $self = shift;
-    print "Commit checking finished.\n";
-    print $self->{conflicts}." Conflicts found.\n" if $self->{conflicts};
+    print loc("Commit checking finished.\n");
+    print loc("%*(%1,conflict) found.\n", $self->{conflicts}) if $self->{conflicts};
     $self->{_editor}->abort_edit (@_);
 }
 
 sub abort_edit {
     my $self = shift;
-    print "Empty merge.\n";
+    print loc("Empty merge.\n");
     $self->{_editor}->abort_edit (@_);
 }
 
 package SVK::XD::Editor;
+use SVK::I18N;
 require SVN::Delta;
 our @ISA = qw(SVN::Delta::Editor);
 use File::Path;
-use SVK::Util qw( get_anchor );
+use SVK::Util qw( get_anchor md5 );
 
 sub set_target_revision {
     my ($self, $revision) = @_;
@@ -947,7 +959,7 @@ sub add_file {
     my ($self, $path) = @_;
     my $copath = $path;
     $self->{get_copath}($copath);
-    die "$path already exists" if -e $copath;
+    die loc("path %1 already exists", $path) if -e $copath;
     return $path;
 }
 
@@ -955,7 +967,7 @@ sub open_file {
     my ($self, $path) = @_;
     my $copath = $path;
     $self->{get_copath}($copath);
-    die "path not exists" unless -e $copath;
+    die loc("path %1 does not exist", $path) unless -e $copath;
     return $path;
 }
 
@@ -972,7 +984,9 @@ sub apply_textdelta {
 				 "$self->{anchor}/$path", $copath);
 	if ($checksum) {
 	    my $md5 = md5($base);
-	    die "source checksum mismatch" if $md5 ne $checksum;
+	    use Carp;
+	    confess "bzz";
+	    die loc("source checksum mismatch") if $md5 ne $checksum;
 	    seek $base, 0, 0;
 	}
 	rename ($copath, $basename);
@@ -1008,7 +1022,9 @@ sub add_directory {
     my ($self, $path) = @_;
     my $copath = $path;
     $self->{get_copath}($copath);
-    mkdir ($copath);
+    mkdir ($copath) unless $self->{check_only};
+    $self->{xd}->do_add (copath => $copath, quiet => 1)
+	if !$self->{update} && !$self->{check_only};
     return $path;
 }
 
@@ -1024,14 +1040,22 @@ sub delete_entry {
     $self->{get_copath}($copath);
     # XXX: check if everyone under $path is sane for delete";
     return if $self->{check_only};
-    -d $copath ? rmtree ([$copath]) : unlink($copath);
+    if ($self->{update}) {
+	-d $copath ? rmtree ([$copath]) : unlink($copath);
+    }
+    else {
+	$self->{xd}->do_delete (%$self,
+				path => "$self->{anchor}/$path",
+				copath => $copath,
+				quiet => 1);
+    }
 }
 
 sub close_directory {
     my ($self, $path) = @_;
     my $copath = $path;
     eval {$self->{get_copath}($copath)};
-    return if $@;
+    undef $@, return if $@;
     $self->{checkout}->store_recursively ($copath,
 					  {revision => $self->{revision},
 					   '.deleted' => undef})
@@ -1065,6 +1089,7 @@ sub close_edit {
 }
 
 package SVK::XD::Root;
+use SVK::I18N;
 
 our $AUTOLOAD;
 sub AUTOLOAD {

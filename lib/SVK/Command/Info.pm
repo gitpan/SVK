@@ -4,6 +4,7 @@ our $VERSION = '0.11';
 
 use base qw( SVK::Command );
 use SVK::XD;
+use SVK::I18N;
 
 sub parse_arg {
     my ($self, @arg) = @_;
@@ -19,10 +20,12 @@ sub run {
 
     for my $target (@arg) {
 	my $rev = $target->{cinfo}{revision};
-	print "Depot Path: $target->{depotpath}\n";
-	print "Revision: $rev\n";
-	print "Last Changed Rev: ".$target->{repos}->fs->revision_root
-	    ($rev)->node_created_rev ($target->{path})."\n";
+	print loc("Depot Path: %1\n", $target->{depotpath});
+	print loc("Revision: %1\n", $rev);
+	print loc(
+	    "Last Changed Rev.: %1\n",
+	    $target->{repos}->fs->revision_root($rev)->node_created_rev($target->{path})
+	);
     }
 }
 
@@ -30,11 +33,15 @@ sub run {
 
 =head1 NAME
 
-info - Display information about a file or directory.
+SVK::Command::Info - Display information about a file or directory
 
 =head1 SYNOPSIS
 
     info [PATH]
+
+=head1 OPTIONS
+
+   None
 
 =head1 AUTHORS
 

@@ -1,9 +1,10 @@
 package SVK::Command::Diff;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 use base qw( SVK::Command );
 use SVK::XD;
+use SVK::I18N;
 use SVK::DiffEditor;
 
 sub options {
@@ -26,10 +27,10 @@ sub run {
     if (($self->{revspec} && (my ($fromrev, $torev) = $self->{revspec} =~ m/^(\d+):(\d+)$/))
 	|| $target2) {
 	if ($target->{copath}) {
-	    die "Invalid arguments" if $target2;
+	    die loc("invalid arguments") if $target2;
 	}
 	elsif ($target2) {
-	    die "different repository"
+	    die loc("different repository")
 		if $target->{repospath} ne $target2->{repospath};
 	}
 
@@ -60,6 +61,7 @@ sub run {
 	      rlabel => "revision $torev",
 	      lpath  => $target->{path},
 	      rpath  => $target2->{path},
+	      external => $ENV{SVKDIFF},
 	    );
 
 	SVN::Repos::dir_delta ($baseroot, $target->{path}, '',
@@ -69,7 +71,7 @@ sub run {
 
     }
     else {
-	die "revision should be N:M or N"
+	die loc("revision should be N:M or N")
 	    if $self->{revspec} && $self->{revspec} !~ /^\d+$/;
 
 	my $xdroot = $self->{xd}->xdroot (%$target);
@@ -104,6 +106,7 @@ sub run {
 			$self->{xd}{checkout}->get ("$target->{copath}/$rpath")->{revision};
 	      },
 	      rlabel => "local",
+	      external => $ENV{SVKDIFF},
 	    );
 
 	$self->{xd}->checkout_delta
@@ -120,13 +123,18 @@ sub run {
 
 =head1 NAME
 
-diff - Display diff between revisions or checkout copies.
+SVK::Command::Diff - Display diff between revisions or checkout copies
 
 =head1 SYNOPSIS
 
     diff [-r REV] [PATH]
     diff -r N:M DEPOTPATH
     diff DEPOTPATH1 DEPOTPATH2
+
+=head1 OPTIONS
+
+  -r [--revision] rev|old:new :	Needs description
+  -v [--verbose]:	Needs description
 
 =head1 AUTHORS
 

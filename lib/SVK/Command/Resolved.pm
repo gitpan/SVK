@@ -35,11 +35,15 @@ sub run {
 
 =head1 NAME
 
-resolved - Mark checkout files or directories as resolved from conflict state.
+SVK::Command::Resolved - Remove conflict mark from checkout items
 
 =head1 SYNOPSIS
 
     resolved PATH...
+
+=head1 OPTIONS
+
+  -R [--recursive]:	Needs description
 
 =head1 AUTHORS
 

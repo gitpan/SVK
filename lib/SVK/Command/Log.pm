@@ -4,7 +4,7 @@ our $VERSION = '0.11';
 
 use base qw( SVK::Command );
 use SVK::XD;
-use SVK::CommitStatusEditor;
+use SVK::I18N;
 
 sub options {
     ('l|limit=i'	=> 'limit',
@@ -18,7 +18,7 @@ sub log_remote_rev {
     my ($repos, $rev) = @_;
     my $revprops = $repos->fs->revision_proplist ($rev);
 
-    my ($rrev) = map {$revprops->{$_}} grep {m/^svm:headrev:/} keys %$revprops;
+    my ($rrev) = map {$revprops->{$_}} grep {m/^svm:headrev:/} sort keys %$revprops;
 
     return $rrev ? " (orig r$rrev)" : '';
 }
@@ -60,27 +60,29 @@ sub run {
 }
 
 sub do_log {
-    my ($repos, $path, $fromrev, $torev, $verbose, $cross, $remote, $output)
-	= @_;
+    my ($repos, $path, $fromrev, $torev, $verbose,
+	$cross, $remote, $showhost, $output) = @_;
     $output ||= \*STDOUT;
     print $output ('-' x 70);
     print $output "\n";
     no warnings 'uninitialized';
+    use Sys::Hostname;
+    my ($host) = split ('\.', hostname, 2);
+    warn $host;
     $repos->get_logs ([$path], $fromrev, $torev, $verbose, !$cross,
 		     sub { my ($paths, $rev, $author, $date, $message) = @_;
 			   no warnings 'uninitialized';
-			   print $output "r$rev".
+			   print $output "r$rev".($showhost ? "\@$host" : '').
 			       ($remote ? log_remote_rev($repos, $rev): '').
 				   ":  $author | $date\n";
 			   if ($paths) {
-			       print $output "Changed paths:\n";
+			       print $output loc("Changed paths:\n");
 			       for (sort keys %$paths) {
 				   my $entry = $paths->{$_};
 				   print $output
 				       '  '.$entry->action." $_".
 					   ($entry->copyfrom_path ?
-					    " (from ".$entry->copyfrom_path.
-					    ':'.$entry->copyfrom_rev.')' : ''
+					    ' ' . loc("(from %1:%2)", $entry->copyfrom_path, $entry->copyfrom_rev) : ''
 					   ).
 					   "\n";
 			       }
@@ -94,7 +96,7 @@ sub do_log {
 
 =head1 NAME
 
-log - Show the log messages for revisions.
+SVK::Command::Log - Show log messages for revisions
 
 =head1 SYNOPSIS
 
@@ -105,8 +107,15 @@ log - Show the log messages for revisions.
 
     -r [--revision]:        revision spec from:to
     -l [--limit]:           limit the number of revisions displayed
-    -x [--cross]:           cross copied node
+    -x [--cross]:           display cross copied nodes
     -v [--verbose]:         print changed path in changes
+
+=head1 OPTIONS
+
+  -r [--revision] arg:	Needs description
+  -l [--limit] arg:	Needs description
+  -x [--cross]:	Needs description
+  -v [--verbose]:	Needs description
 
 =head1 AUTHORS
 

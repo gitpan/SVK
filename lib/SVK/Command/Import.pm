@@ -1,10 +1,9 @@
 package SVK::Command::Import;
 use strict;
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
-use SVK::CommitStatusEditor;
 use SVK::Util qw (get_buffer_from_editor);
 
 sub parse_arg {
@@ -37,16 +36,18 @@ sub run {
 
 =head1 NAME
 
-smerge - Import directory into depot.
+SVK::Command::Import - Import directory into depot
 
 =head1 SYNOPSIS
 
-  import DEPOTPATH [PATH]
+    import DEPOTPATH [PATH]
 
 =head1 OPTIONS
 
-    -m message:        commit message
+    -m [--message] message:        commit message
     -C [--check-only]: don't perform actual writes
+    -s [--sign]:	Needs description
+    --force:	Needs description
 
 =head1 AUTHORS
 

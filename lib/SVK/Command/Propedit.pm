@@ -35,11 +35,18 @@ sub run {
 
 =head1 NAME
 
-propedit - Edit a property on path.
+SVK::Command::Propedit - Edit a property on path
 
 =head1 SYNOPSIS
 
     propedit PROPNAME [PATH|DEPOTPATH...]
+
+=head1 OPTIONS
+
+  -m [--message] message:	Commit message
+  -C [--check-only]:	Needs description
+  -s [--sign]:	Needs description
+  --force:	Needs description
 
 =head1 AUTHORS
 

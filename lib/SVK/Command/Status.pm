@@ -21,6 +21,7 @@ sub run {
 	( %$target,
 	  baseroot => $xdroot,
 	  xdroot => $xdroot,
+	  nodelay => 1,
 	  delete_verbose => 1,
 	  editor => SVK::StatusEditor->new
 	  ( copath => $target->{copath},
@@ -38,11 +39,14 @@ sub run {
 
 =head1 NAME
 
-status - Display the status of files and directories of the checkout copy.
+SVK::Command::Status - Display the status of items in the checkout copy
 
 =head1 SYNOPSIS
 
     status [PATH..]
+
+=head1 OPTIONS
+
 
 =head1 AUTHORS
 

@@ -18,16 +18,24 @@ requires(
         'YAML'                  => '0',
         'IO::String'            => '0',
         'Regexp::Shellish'      => '0',
-        'Data::Hierarchy'       => '0.15',
+        'Data::Hierarchy'       => '0.17',
+        'File::Temp'            => '0.14',
         'Clone'	                => '0',
         'Pod::Simple'           => '0',
         'PerlIO::via::dynamic'  => '0.02',
         'SVN::Simple::Edit'     => '0.21',
 );
 features(
+    'Localized messages' => [
+	-default => 1,
+        'Locale::Maketext::Lexicon' => '0.36',
+        'Locale::Maketext::Simple'  => '0.12',
+    ],
+);
+features(
     'SVN::Mirror support' => [
 	-default => 1,
-	'SVN::Mirror'    => '0.29',
+	'SVN::Mirror'    => '0.30',
     ],
 );
 

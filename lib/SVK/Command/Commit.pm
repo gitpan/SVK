@@ -3,14 +3,13 @@ use strict;
 our $VERSION = '0.11';
 use base qw( SVK::Command );
 use SVK::XD;
+use SVK::I18N;
 use SVK::CommitStatusEditor;
 use SVK::SignEditor;
-use SVK::Util qw(get_buffer_from_editor slurp_fh);
+use SVK::Util qw(get_buffer_from_editor slurp_fh find_svm_source svn_mirror);
 use File::Temp;
 use SVN::Simple::Edit;
 
-my $svn_mirror;
-eval 'require SVN::Mirror' and ++$svn_mirror;
 my $target_prompt = '=== below are targets to be committed ===';
 
 my $auth;
@@ -36,7 +35,7 @@ sub lock {
 }
 
 sub target_prompt { $target_prompt }
-sub svn_mirror { $svn_mirror }
+
 sub auth {
     eval 'require SVN::Client' or die $@;
     $auth ||= SVN::Core::auth_open
@@ -50,9 +49,8 @@ sub path_is_mirrored {
     my $fs = $repos->fs;
     my $root = $fs->revision_root ($fs->youngest_rev);
 
-    my $rev = $root->node_created_rev ($path);
-
-    return (grep {m/^svm:headrev:/} keys %{$fs->revision_proplist ($rev)});
+    my $rev = (($root->node_history ($path)->prev (0)->location)[1]);
+    return (grep {m/^svm:headrev:/} sort keys %{$fs->revision_proplist ($rev)});
 }
 
 sub get_commit_editor {
@@ -100,19 +98,21 @@ sub get_editor {
 
     my ($base_rev, $m, $mpath);
 
-    if ($svn_mirror && (($m, $mpath) = SVN::Mirror::is_mirrored ($target->{repos}, $target->{path}))) {
-	print "Merge back to SVN::Mirror source $m->{source}.\n";
+    if (svn_mirror && (($m, $mpath) = SVN::Mirror::is_mirrored ($target->{repos}, $target->{path}))) {
+	print loc("Merging back to SVN::Mirror source %1.\n", $m->{source});
 	if ($self->{check_only}) {
-	    print "Check against mirrored directory locally.\n";
+	    print loc("Checking against mirrored directory locally.\n");
 	}
 	else {
 	    $m->{auth} = $self->auth;
+	    $m->{revprop} = ['svk:signature'];
 	    ($base_rev, $editor) = $m->get_merge_back_editor
 		($mpath, $self->{message},
-		 sub { print "Merge back committed as revision $_[0].\n";
+		 sub { print loc("Merge back committed as revision %1.\n", $_[0]);
 		       my $rev = shift;
-		       # XXX: do svk:signature here
-		       # XXX: some failsafe handler
+		       $m->_new_ra->change_rev_prop ($rev, 'svk:signature',
+						     $self->{signeditor}{sig})
+			   if $self->{sign};
 		       $m->run ($rev);
 		       &{$callback} ($m->find_local_rev ($rev), @_)
 			   if $callback }
@@ -128,7 +128,7 @@ sub get_editor {
 	( SVN::Repos::get_commit_editor
 	  ( $target->{repos}, "file://$target->{repospath}",
 	    $target->{path}, $ENV{USER}, $self->{message},
-	    sub { print "Committed revision $_[0]\n";
+	    sub { print loc("Committed revision %1.\n", $_[0]);
 		  $fs->change_rev_prop ($_[0], 'svk:signature',
 					$self->{signeditor}{sig})
 		      if $self->{sign};
@@ -136,8 +136,12 @@ sub get_editor {
 	  ));
     $base_rev ||= $target->{repos}->fs->youngest_rev;
 
-    $self->{signeditor} = $editor = SVK::SignEditor->new ($editor)
-	if $self->{sign};
+    if ($self->{sign}) {
+	my ($uuid, $dst) = find_svm_source ($target->{repos}, $target->{path});
+	$self->{signeditor} = $editor = SVK::SignEditor->new (_editor => [$editor],
+							      anchor => "$uuid:$dst"
+							     );
+    }
 
     $editor = SVK::XD::CheckEditor->new ($editor)
 	if $self->{check_only};
@@ -147,7 +151,7 @@ sub get_editor {
 		  $root->check_path ($path) != $SVN::Node::none;
 	      },
 	    cb_rev => sub { $base_rev; },
-	    cb_conflict => sub { die "conflict $target->{path}/$_[0]"
+	    cb_conflict => sub { die loc("conflict on %1", "$target->{path}/$_[0]")
 				     unless $self->{check_only};
 				 $editor->{conflicts}++;
 			     },
@@ -161,11 +165,9 @@ sub get_editor {
 	      },
 	  );
 
-#    $editor = SVN::Delta::Editor->new (_debug => 1, _editor => [$editor]);
-
     return ($editor, %cb, mirror => $m, callback => \$callback);
 
-=for comment
+=begin comment
 
     if ($self->{sign} && !$self->{check_only}) {
 	my $digest = IO::String->new;
@@ -181,6 +183,8 @@ sub get_editor {
 			   &{$old_cb_merged} (@_) };
     }
 
+=end comment
+
 =cut
 
 }
@@ -191,8 +195,8 @@ sub run {
 
     my $is_mirrored;
     $is_mirrored = $self->path_is_mirrored ($target->{repos}, $target->{path})
-	if $svn_mirror;
-    print "Commit into mirrored path, merge back directly\n"
+	if svn_mirror;
+    print loc("Commit into mirrored path: merging back directly.\n")
 	if $is_mirrored;
 
     my ($fh, $file);
@@ -209,6 +213,7 @@ sub run {
 	( %$target,
 	  baseroot => $xdroot,
 	  xdroot => $xdroot,
+	  nodelay => 1,
 	  delete_verbose => 1,
 	  absent_ignore => 1,
 	  editor => SVK::CommitStatusEditor->new
@@ -218,16 +223,17 @@ sub run {
 	  cb_conflict => \&SVK::StatusEditor::conflict,
 	);
 
-    if (grep {$_->[0] eq 'C'} @$targets) {
+    my $conflicts = grep {$_->[0] eq 'C'} @$targets;
+    if ($conflicts) {
 	if ($fh) {
 	    close $fh;
 	    unlink $fh;
 	}
-	print "Conflicts detected. Use svk resolved after resolving the conflicts.\n";
+	print loc("%*(%1,conflict) detected. Use 'svk resolved' after resolving them.\n", $conflicts);
 	return;
     }
 
-    die "no targets to commit" if $#{$targets} < 0;
+    die loc("no targets to commit") if $#{$targets} < 0;
 
     if ($fh) {
 	close $fh;
@@ -257,10 +263,16 @@ sub run {
 						    });
 	}
 	my $oldroot = $fs->revision_root ($rev-1);
+	my $oldrev = $oldroot->node_created_rev ($target->{path});
 	for (@datapoint) {
-	    $self->{xd}{checkout}->store ($_, {revision => $rev})
-		if $self->{xd}{checkout}->get ($_)->{revision} >=
-		    $oldroot->node_created_rev ($target->{path});
+	    # use store_single to effectively override all the oldvalue but not others.
+	    for my $path ($self->{xd}{checkout}->find ($_, {revision => qr/.*/})) {
+		next unless $self->{xd}{checkout}->get ($path)->{revision} >= $oldrev;
+		# XXX: should be a data::hierarchy api to simply do this and remove
+		# duplicates
+		$self->{xd}{checkout}->store_override ($path, {revision => $rev});
+		$self->{xd}{checkout}->store ($path, {'.deleted' => undef});
+	    }
 	}
 	my $root = $fs->revision_root ($rev);
 	for (@$targets) {
@@ -284,7 +296,7 @@ sub run {
 	}
     };
 
-    die "unexpected error: commit to mirrored path but no mirror object"
+    die loc("unexpected error: commit to mirrored path but no mirror object")
 	if $is_mirrored && !$cb{mirror};
 
     ${$cb{callback}} = $committed;
@@ -316,7 +328,7 @@ sub run {
 
 =head1 NAME
 
-commit - Commit changes to depot.
+SVK::Command::Commit - Commit changes to depot
 
 =head1 SYNOPSIS
 
@@ -327,7 +339,8 @@ commit - Commit changes to depot.
     options:
     -m [--message] ARG:    specify commit message ARG
     -s [--sign]:           sign the commit
-
+    -C [--check-only]:	Needs description
+    --force:	Needs description
 
 =head1 AUTHORS
 

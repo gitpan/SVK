@@ -3,6 +3,7 @@ use strict;
 our $VERSION = '0.11';
 
 use base qw( SVK::Command::Commit );
+use SVK::I18N;
 
 sub options {
     ('s|skipto=s'	=> 'skip_to',
@@ -20,15 +21,15 @@ sub lock { $_[0]->lock_none }
 
 sub copy_notify {
     my ($m, $path, $from_path, $from_rev) = @_;
-    warn "copy_notify: ".join(',',@_);
+    warn loc("copy_notify: %1", join(',',@_));
 }
 
 sub run {
     my ($self, @arg) = @_;
-    die "require SVN::Mirror" unless $self->svn_mirror;
+    die loc("cannot load SVN::Mirror") unless $self->svn_mirror;
 
     # XXX: support HEAD
-    die "argument skipto not allowed when multiple target specified"
+    die loc("argument skipto not allowed when multiple target specified")
 	if $self->{skip_to} && ($self->{sync_all} || $#arg > 0);
 
     if ($self->{sync_all}) {
@@ -42,6 +43,7 @@ sub run {
 				  repos => $target->{repos},
 				  pool => SVN::Pool->new, auth => $self->auth,
 				  cb_copy_notify => \&copy_notify,
+				  revprop => ['svk:signature'],
 				  get_source => 1, skip_to => $self->{skip_to});
 	$m->init ();
 	$m->run ($self->{torev});
@@ -53,11 +55,17 @@ sub run {
 
 =head1 NAME
 
-sync - synchronize a mirrored depotpath.
+SVK::Command::Sync - Synchronize a mirrored depotpath
 
 =head1 SYNOPSIS
 
     sync DEPOTPATH
+
+=head1 OPTIONS
+
+  -a [--all]:	Needs description
+  -t [--torev] arg:	Needs description
+  -s [--skipto] arg:	Needs description
 
 =head1 AUTHORS
 

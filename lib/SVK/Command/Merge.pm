@@ -4,9 +4,10 @@ our $VERSION = '0.11';
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
-use SVK::CommitStatusEditor;
+use SVK::I18N;
+use SVK::DelayEditor;
 use SVK::Command::Log;
-use SVK::Util qw (get_buffer_from_editor);
+use SVK::Util qw (get_buffer_from_editor find_svm_source svn_mirror);
 
 sub options {
     ($_[0]->SUPER::options,
@@ -31,19 +32,19 @@ sub run {
     my ($self, $src, $dst) = @_;
     my ($fromrev, $torev, $baserev, $cb_merged, $cb_closed);
 
-    die "different repos?" unless $src->{repospath} eq $dst->{repospath};
+    die loc("repos paths mismatch") unless $src->{repospath} eq $dst->{repospath};
     my $repos = $src->{repos};
     unless ($self->{auto}) {
-	die "revision required" unless $self->{revspec};
+	die loc("revision required") unless $self->{revspec};
 	($baserev, $torev) = $self->{revspec} =~ m/^(\d+):(\d+)$/
-	    or die "revision must be N:M";
+	    or die loc("revision must be N:M");
     }
 
     my $base_path = $src->{path};
     if ($self->{auto}) {
 	($base_path, $baserev, $fromrev, $torev) =
 	    ($self->find_merge_base ($repos, $src->{path}, $dst->{path}), $repos->fs->youngest_rev);
-	print "auto merge ($fromrev, $torev) $src->{path} -> $dst->{path} (base $base_path)\n";
+	print loc("Auto-merging (%1, %2) %3 to %4 (base %5).\n", $fromrev, $torev, $src->{path}, $dst->{path}, $base_path);
 	$cb_merged = sub { my ($editor, $baton, $pool) = @_;
 			   $editor->change_dir_prop
 			       ($baton, 'svk:merge',
@@ -63,6 +64,7 @@ sub run {
     my ($storage, %cb) = $self->get_editor ($dst);
 
     my $fs = $repos->fs;
+    $storage = SVK::DelayEditor->new ($storage);
     my $editor = SVK::MergeEditor->new
 	( anchor => $src->{path},
 	  base_anchor => $base_path,
@@ -73,7 +75,6 @@ sub run {
 	  storage => $storage,
 	  %cb,
 	);
-
     SVN::Repos::dir_delta ($fs->revision_root ($baserev),
 			   $base_path, '',
 			   $fs->revision_root ($torev), $src->{path},
@@ -89,7 +90,7 @@ sub run {
 sub log_for_merge {
     my $self = shift;
     my $buf = IO::String->new (\my $tmp);
-    SVK::Command::Log::do_log (@_, 0, 0, 0, $buf);
+    SVK::Command::Log::do_log (@_, 0, 0, 0, 1, $buf);
     return $tmp;
 }
 
@@ -100,7 +101,10 @@ sub find_merge_base {
     my $dstinfo = $self->find_merge_sources ($repos, $dst);
     my ($basepath, $baserev);
 
-    for (grep {exists $srcinfo->{$_} && exists $dstinfo->{$_}} (keys %{{%$srcinfo,%$dstinfo}})) {
+    for (
+	grep {exists $srcinfo->{$_} && exists $dstinfo->{$_}}
+	(sort keys %{ { %$srcinfo, %$dstinfo } })
+    ) {
 	my ($path) = m/:(.*)$/;
 	my $rev = $srcinfo->{$_} < $dstinfo->{$_} ? $srcinfo->{$_} : $dstinfo->{$_};
 	# XXX: shuold compare revprop svn:date instead, for old dead branch being newly synced back
@@ -108,6 +112,9 @@ sub find_merge_base {
 	    ($basepath, $baserev) = ($path, $rev);
 	}
     }
+    die loc("Can't find merge base for %1 and %2\n", $src, $dst)
+	unless $basepath;
+
     return ($basepath, $baserev, $dstinfo->{$repos->fs->get_uuid.':'.$src} || $baserev);
 }
 
@@ -123,12 +130,12 @@ sub find_merge_sources {
 	$minfo = { map {my ($uuid, $path, $rev) = split ':', $_;
 			my $m;
 			($verbatim || ($uuid eq $myuuid)) ? ("$uuid:$path" => $rev) :
-			    ($self->svn_mirror && ($m = SVN::Mirror::has_local ($repos, "$uuid:$path"))) ?
+			    (svn_mirror && ($m = SVN::Mirror::has_local ($repos, "$uuid:$path"))) ?
 				("$myuuid:$m->{target_path}" => $m->find_local_rev ($rev)) : ()
 			    } split ("\n", $minfo) };
     }
     if ($verbatim) {
-	my ($uuid, $path, $rev) = $self->resolve_svm_source ($repos, $path);
+	my ($uuid, $path, $rev) = find_svm_source ($repos, $path);
 	$minfo->{join(':', $uuid, $path)} = $rev
 	    unless $noself;
 	return $minfo;
@@ -139,7 +146,7 @@ sub find_merge_sources {
     }
 
     my %ancestors = $self->copy_ancestors ($repos, $path, $fs->youngest_rev, 1);
-    for (keys %ancestors) {
+    for (sort keys %ancestors) {
 	my $rev = $ancestors{$_};
 	$minfo->{$_} = $rev
 	    unless $minfo->{$_} && $minfo->{$_} > $rev;
@@ -172,9 +179,12 @@ sub copy_ancestors {
 	    my $uuid;
 	    ($uuid, $hpath, $hrev) = split ':', $source;
 	    if ($uuid ne $myuuid) {
-		my $m;
-		if ($self->svn_mirror && ($m = SVN::Mirror::has_local ($repos, "$uuid:$path"))) {
+		my ($m, $mpath);
+		if (svn_mirror &&
+		    (($m, $mpath) = SVN::Mirror::has_local ($repos, "$uuid:$path"))) {
 		    ($hpath, $hrev) = ($m->{target_path}, $m->find_local_rev ($hrev));
+		    # XXX: WTF? need test suite for this
+		    $hpath =~ s/\Q$mpath\E$//;
 		}
 		else {
 		    return ();
@@ -200,30 +210,6 @@ sub copy_ancestors {
     return ("$myuuid:$hpath" => $hrev, $self->copy_ancestors ($repos, $hpath, $hrev));
 }
 
-sub resolve_svm_source {
-    my ($self, $repos, $path) = @_;
-    my ($uuid, $rev, $m);
-    my $mirrored;
-    my $fs = $repos->fs;
-    my $root = $fs->revision_root ($fs->youngest_rev);
-
-    if ($self->svn_mirror) {
-	$m = eval 'SVN::Mirror::is_mirrored ($repos, $path)';
-    }
-
-    if ($m) {
-	$uuid = $root->node_prop ($path, 'svm:uuid');
-	$path = $m->{source};
-	$path =~ s/^\Q$m->{source_root}\E//;
-	$rev = $m->{fromrev};
-    }
-    else {
-	($rev, $uuid) = ($fs->youngest_rev, $fs->get_uuid);
-    }
-
-    return ($uuid, $path, $rev);
-}
-
 sub get_new_ticket {
     my ($self, $repos, $src, $dst) = @_;
 
@@ -232,13 +218,13 @@ sub get_new_ticket {
     my ($uuid, $newinfo);
 
     # bring merge history up to date as from source
-    ($uuid, $dst) = $self->resolve_svm_source ($repos, $dst);
+    ($uuid, $dst) = find_svm_source ($repos, $dst);
 
-    for (keys %{{%$srcinfo,%$dstinfo}}) {
+    for (sort keys %{ { %$srcinfo, %$dstinfo } }) {
 	next if $_ eq "$uuid:$dst";
 	no warnings 'uninitialized';
 	$newinfo->{$_} = $srcinfo->{$_} > $dstinfo->{$_} ? $srcinfo->{$_} : $dstinfo->{$_};
-	print "new merge ticket: $_:$newinfo->{$_}\n"
+	print loc("New merge ticket: %1:%2\n", $_, $newinfo->{$_})
 	    if !$dstinfo->{$_} || $newinfo->{$_} > $dstinfo->{$_};
     }
 
@@ -249,7 +235,7 @@ sub get_new_ticket {
 
 =head1 NAME
 
-merge - Apply the differences between two sources.
+SVK::Command::Merge - Apply differences between two sources
 
 =head1 SYNOPSIS
 
@@ -258,12 +244,14 @@ merge - Apply the differences between two sources.
 
 =head1 OPTIONS
 
-    -r [--revision]:        revision
-    -m message:             commit message
+    -r [--revision] rev:    revision
+    -m [--message] message: commit message
     -C [--check-only]:      don't perform actual writes
     -a [--auto]:            automatically find merge points
     -l [--log]:             brings the logs of merged revs to the message buffer
     --no-ticket:            don't associate the ticket tracking merge history
+    --force:		    Needs description
+    -s [--sign]:	    Needs description
 
 =head1 AUTHORS
 

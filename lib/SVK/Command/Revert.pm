@@ -34,11 +34,15 @@ sub run {
 
 =head1 NAME
 
-revert - Revert changes made in checkout copies.
+SVK::Command::Revert - Revert changes made in checkout copies
 
 =head1 SYNOPSIS
 
     revert PATH...
+
+=head1 OPTIONS
+
+  -R [--recursive]:	Needs description
 
 =head1 AUTHORS
 

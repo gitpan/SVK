@@ -4,10 +4,11 @@ our $VERSION = '0.09';
 use Getopt::Long qw(:config no_ignore_case);
 # XXX: Pod::Simple isn't happy with SVN::Simple::Edit, so load it first
 use SVN::Simple::Edit;
+use Pod::Simple::Text ();
 use Pod::Simple::SimpleTree ();
-use Pod::Text ();
 use File::Find ();
 use Cwd;
+use SVK::I18N;
 
 my %alias = qw( co checkout
 		up update
@@ -19,6 +20,10 @@ my %alias = qw( co checkout
 		pe propedit
 		pl proplist
 		cp copy
+		mv move
+		ren move
+		rename move
+		mi mirror
 		sm smerge
 		sy sync
 		desc describe
@@ -38,7 +43,7 @@ sub parse_arg {}
 
 sub _opt_map {
     my ($self, %opt) = @_;
-    return map {$_ => \$self->{$opt{$_}}}keys %opt;
+    return map {$_ => \$self->{$opt{$_}}} sort keys %opt;
 }
 
 sub _cmd_map {
@@ -50,28 +55,14 @@ sub _cmd_map {
 
 sub get_cmd {
     my ($pkg, $cmd) = @_;
-    $pkg = join('::', $pkg, _cmd_map ($cmd));
+    $pkg = join('::', 'SVK::Command', _cmd_map ($cmd));
     unless (eval "require $pkg; 1" && UNIVERSAL::can($pkg, 'run')) {
-	warn $@ if $@;
-	return "Command not recognized, try $0 help.\n";
+	$pkg =~ s|::|/|g;
+	warn $@ if $@ && exists $INC{"$pkg.pm"};
+	print "Command not recognized, try $0 help.\n";
+	exit 0;
     }
     $pkg->new;
-}
-
-sub help {
-    my ($pkg, $cmd) = @_;
-    unless ($cmd) {
-	my @cmd;
-	my $dir = $INC{'SVK/Command.pm'};
-	$dir =~ s/\.pm$//;
-	print "Available commands:\n";
-	File::Find::find (sub {
-			      push @cmd, $File::Find::name if m/\.pm$/;
-			  }, $dir);
-	$pkg->brief_usage ($_) for sort @cmd;
-	return;
-    }
-    get_cmd ($pkg, $cmd)->usage(1);
 }
 
 sub invoke {
@@ -86,7 +77,7 @@ sub invoke {
     my @args = $cmd->parse_arg(@ARGV);
     $cmd->lock (@args);
     my $ret = $cmd->run (@args);
-    $xd->unlock ();
+    $xd->unlock () if $xd;
     return $ret;
 }
 
@@ -98,7 +89,9 @@ sub brief_usage {
     my @rows = @{$parser->parse_file($file || $INC{"$fname.pm"})->root};
     while (my $row = shift @rows) {
         if ( ref($row) eq 'ARRAY' && $row->[0] eq 'head1' && $row->[2] eq 'NAME')  {
-            print "\t". $rows[0]->[2]."\n";
+            my $buf = $rows[0][2];
+            $buf =~ s/SVK::Command::(\w+ - .+)/loc(lcfirst($1))/eg;
+            print "   $buf\n";
             last;
         }
     }
@@ -106,13 +99,25 @@ sub brief_usage {
 
 sub usage {
     my ($self, $detail) = @_;
-    my $parser = new Pod::Text->new ();
     # XXX: the order from selected is not preserved.
     my $fname = ref($self);
     $fname =~ s|::|/|g;
-    $parser->select ( $detail ? 'NAME|SYNOPSIS|OPTIONS|DESCRIPTION' : 'SYNOPSIS|OPTIONS');
-    $parser->parse_from_file ($INC{"$fname.pm"});
-    exit 0;
+    my $parser = Pod::Simple::Text->new;
+    my $buf;
+    $parser->output_string(\$buf);
+    $parser->parse_file($INC{"$fname.pm"});
+
+    $buf =~ s/SVK::Command::(\w+)/\l$1/g;
+    $buf =~ s/^AUTHORS.*//sm;
+    $buf =~ s/^DESCRIPTION.*//sm unless $detail;
+    foreach my $line (split(/\n/, $buf, -1)) {
+	if ($line =~ /^(\s*)(.+)(\s*)$/) {
+	    print $1, loc($2), $3, "\n";
+	}
+	else {
+	    print "\n";
+	}
+    }
 }
 
 sub lock_target {
@@ -131,7 +136,7 @@ sub lock {
 sub arg_condensed {
     my ($self, @arg) = @_;
     $self->usage if $#arg < 0;
-    my ($report, $copath, @targets )= main::condense (@arg);
+    my ($report, $copath, @targets )= $self->{xd}->condense (@arg);
 
     my ($repospath, $path, $cinfo, $repos) = main::find_repos_from_co ($copath, 1);
     return { repos => $repos,
@@ -195,3 +200,31 @@ sub arg_path {
 
 1;
 
+__END__
+our $AUTOLOAD;
+
+use Sub::WrapPackages (
+        subs     => [qw(SVN::Delta::Editor::AUTOLOAD)],
+        pre      => sub {
+	    warn "my autoload is $AUTOLOAD ".caller(4);
+            warn "$SVN::Delta::Editor::AUTOLOAD called with params ".
+              join(', ', @_[1..$#_])."\n";
+        },
+        post     => sub {
+            warn "$_[0] returned $_[1]\n";
+        });
+
+=comment
+
+# workaround the svn::delta::editor problem in 1.0.x
+my $ref = \&SVN::Delta::Editor::AUTOLOAD;
+*SVN::Delta::Editor::AUTOLOAD =
+    sub { my $ret = $ref-> (@_);
+	  warn $SVN::Delta::Editor::AUTOLOAD;
+	  $ret = undef if ref ($ret) eq 'ARRAY' && $#{$ret} == -1;
+	  return $ret;
+      };
+
+=cut
+
+1;

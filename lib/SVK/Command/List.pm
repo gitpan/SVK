@@ -4,6 +4,7 @@ our $VERSION = '0.11';
 
 use base qw( SVK::Command );
 use SVK::XD;
+use SVK::I18N;
 
 sub options {
     ('r|revision=i'  => 'rev',
@@ -33,16 +34,21 @@ sub _do_list {
 	my $fs = $repos->fs;
 	my $root = $fs->revision_root ($self->{rev} || $fs->youngest_rev);
 	unless ($root->check_path ($path) == $SVN::Node::dir) {
-	    print "$path is not a versioned directory\n" unless ($root->check_path($path) == $SVN::Node::file);
+	    print loc("Path %1 is not a versioned directory\n", $path) unless ($root->check_path($path) == $SVN::Node::file);
 	    next;
 	}
 	my $entries = $root->dir_entries ($path);
 	for (sort keys %$entries) {
-	    print "\t" x ($level-1);
+	    print "\t" x ($level);
 	    print $_.($entries->{$_}->kind == $SVN::Node::dir ? '/' : '')."\n";
 	    if (($self->{recursive}) && 
 	    	($entries->{$_}->kind == $SVN::Node::dir)) {
-		_do_list($self, $level+1, "$copath/$_");
+                if (defined $copath) {
+		    _do_list($self, $level+1, "$copath/$_");
+                }
+                else {
+                    _do_list($self, $level+1, "/$path/$_");
+                }
 	    }
 	}
     }
@@ -52,7 +58,7 @@ sub _do_list {
 
 =head1 NAME
 
-list - List entries in a directory from depot.
+SVK::Command::List - List entries in a directory from depot
 
 =head1 SYNOPSIS
 
@@ -63,6 +69,7 @@ list - List entries in a directory from depot.
     options:
     -r [--revision] REV:    revision
     -R [--recursive]:       recursive
+    -v [--verbose]:	Needs description
 
 =head1 AUTHORS
 

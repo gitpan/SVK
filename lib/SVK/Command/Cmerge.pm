@@ -4,6 +4,7 @@ our $VERSION = '0.11';
 
 use base qw( SVK::Command::Merge SVK::Command::Copy SVK::Command::Propset );
 use SVK::XD;
+use SVK::I18N;
 use SVK::CombineEditor;
 
 sub options {
@@ -24,19 +25,19 @@ sub lock {
 sub run {
     my ($self, $src, $dst) = @_;
     # XXX: support checkonly
-    die "revision required" unless $self->{revspec} || $self->{chgspec};
+    die loc("revision required") unless $self->{revspec} || $self->{chgspec};
     my ($fromrev, $torev);
     if ($self->{revspec}) {
 	($fromrev, $torev) = $self->{revspec} =~ m/^(\d+):(\d+)$/
-	    or die "revision must be N:M";
+	    or die loc("revision must be N:M");
     }
 
-    die "different repos?" unless $src->{repospath} eq $dst->{repospath};
+    die loc("repos paths mismatch") unless $src->{repospath} eq $dst->{repospath};
     my $repos = $src->{repos};
     my ($base_path, $base_rev) = $self->find_merge_base ($repos, $src->{path}, $dst->{path});
 
     # find a branch target
-    die "can't find a path for tmp branch" if $base_path eq '/';
+    die loc("cannot find a path for temporary branch") if $base_path eq '/';
     my $tmpbranch = "$src->{path}-merge-$$";
 
     $self->do_copy_direct
@@ -64,10 +65,10 @@ sub run {
 	    $fromrev = $torev - 1;
 	}
 	else {
-	    die "chgspec not recognized";
+	    die loc("chgspec not recognized");
 	}
 
-	print "merging with base $base_path $base_rev applying $src->{path} $fromrev:$torev\n";
+	print loc("Merging with base %1 %2: applying %3 %4:%5.\n", $base_path, $base_rev, $src->{path}, $fromrev, $torev);
 
 	my $fs = $repos->fs;
 	my $editor = SVK::MergeEditor->new
@@ -95,7 +96,7 @@ sub run {
 				    ("file://$src->{repospath}",
 				     $tmpbranch,
 				     $ENV{USER}, "merge $self->{chgspec} from $src->{path}",
-				     sub { print "Committed revision $_[0].\n" })
+				     sub { print loc("Committed revision %1.\n", $_[0]) })
 				  ]),
 		      $fs->youngest_rev);
     my $newrev = $repos->fs->youngest_rev;
@@ -126,7 +127,7 @@ sub run {
 
 =head1 NAME
 
-smerge - Merge specific changes.
+SVK::Command::Cmerge - Merge specific changes
 
 =head1 SYNOPSIS
 
@@ -135,11 +136,15 @@ smerge - Merge specific changes.
 
 =head1 OPTIONS
 
-    -m message:             commit message
+    -m [--message] message:             commit message
     -c [--change] chgspec:  change spec to merge
     -C [--check-only]:      don't perform actual writes
     -l [--log]:             brings the logs of merged revs to the message buffer
     --no-ticket:            don't associate the ticket tracking merge history
+    -r [--revision] arg:	Needs description
+    -a [--auto]:	Needs description
+    --force:		Needs description
+    -s [--sign]:	Needs description
 
 =head1 AUTHORS
 

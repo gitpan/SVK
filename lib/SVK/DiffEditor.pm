@@ -4,7 +4,9 @@ use SVN::Delta;
 our $VERSION = '0.09';
 our @ISA = qw(SVN::Delta::Editor);
 
+use SVK::I18N;
 use IO::String;
+use SVK::Util qw( slurp_fh );
 use Text::Diff;
 
 sub set_target_revision {
@@ -33,8 +35,24 @@ sub apply_textdelta {
     $self->{info}{$path}{base} = $self->{cb_basecontent} ($path)
 	unless $self->{info}{$path}{added};
 
-    return [SVN::TxDelta::apply ($self->{info}{$path}{base},
-				 IO::String->new (\$self->{info}{$path}{new}),
+    my $new;
+    if ($self->{external}) {
+	my $tmp = File::Temp->new ( TEMPLATE => 'svk-diffXXXXX',
+				    DIR => '/tmp',
+				  );
+	slurp_fh ($self->{info}{$path}{base}, $tmp);
+	seek $tmp, 0, 0;
+	$self->{info}{$path}{base} = $tmp;
+	$self->{info}{$path}{new} = $new =
+	    File::Temp->new ( TEMPLATE => 'svk-diffXXXXX',
+			      DIR => '/tmp',
+			    );
+    }
+    else {
+	$new = IO::String->new (\$self->{info}{$path}{new});
+    }
+
+    return [SVN::TxDelta::apply ($self->{info}{$path}{base}, $new,
 				 undef, undef, $pool)];
 }
 
@@ -46,9 +64,19 @@ sub close_file {
 	my $llabel = $self->{llabel} || &{$self->{cb_llabel}} ($path);
 	my $rlabel = $self->{rlabel} || &{$self->{cb_rlabel}} ($path);
 
-	output_diff ($self->{fh} || \*STDOUT, $path, $llabel, $rlabel,
-		     $self->{lpath} || '', $self->{rpath} || '',
-		     $base, \$self->{info}{$path}{new});
+	if ($self->{external}) {
+	    # XXX: the 2nd file could be - and save some disk IO
+	    system (split (' ', $self->{external}),
+		    '-L', $llabel,
+		    $self->{info}{$path}{base}->filename,
+		    '-L', $rlabel,
+		    $self->{info}{$path}{new}->filename);
+	}
+	else {
+	    output_diff ($self->{fh} || \*STDOUT, $path, $llabel, $rlabel,
+			 $self->{lpath} || '', $self->{rpath} || '',
+			 $base, \$self->{info}{$path}{new});
+	}
     }
 
     $self->output_prop_diff ($path, $pool);
@@ -64,7 +92,7 @@ sub output_diff {
     $rtext = \<$rtext> if ref ($rtext) && ref ($rtext) ne 'SCALAR';
 
     my $showpath = ($lpath ne $rpath);
-    print $fh "Index: $path\n";
+    print $fh loc("Index: %1\n", $path);
     print $fh '=' x 66,"\n";
     print $fh "--- $path ".($showpath ? "  ($lpath)  " : '')." ($llabel)\n";
     print $fh "+++ $path ".($showpath ? "  ($rpath)  " : '')." ($rlabel)\n";
@@ -75,11 +103,11 @@ sub output_prop_diff {
     my ($self, $path, $pool) = @_;
     if ($self->{info}{$path}{prop}) {
 	my $fh = $self->{fh} || \*STDOUT;
-	print $fh "\nProperty changes on: $path\n".('_' x 67)."\n";
-	for (keys %{$self->{info}{$path}{prop}}) {
-	    print $fh "Name: $_\n";
-	    print $fh  Text::Diff::diff (\(&{$self->{cb_baseprop}} ($path, $_) || ''),
-		\$self->{info}{$path}{prop}{$_});
+	print $fh "\n", loc("Property changes on: %1\n", $path), ('_' x 67), "\n";
+	for (sort keys %{$self->{info}{$path}{prop}}) {
+	    print $fh loc("Name: %1\n", $_);
+	    print $fh Text::Diff::diff (\(&{$self->{cb_baseprop}} ($path, $_) || ''),
+		\$self->{info}{$path}{prop}{$_}, { STYLE => 'SVK::DiffEditor::NoHeader' });
 	}
     }
 }
@@ -116,6 +144,14 @@ sub change_dir_prop {
 
 sub close_edit {
     my ($self, @arg) = @_;
+}
+
+package SVK::DiffEditor::NoHeader;
+
+our @ISA = qw(Text::Diff::Unified);
+
+sub hunk_header {
+    return '';
 }
 
 =head1 AUTHORS

@@ -4,7 +4,7 @@ our $VERSION = '0.11';
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
-use SVK::CommitStatusEditor;
+use SVK::I18N;
 use SVK::Command::Log;
 use SVK::Util qw (get_buffer_from_editor);
 
@@ -20,7 +20,7 @@ sub do_mkdir_direct {
     my ($self, %arg) = @_;
     my $fs = $arg{repos}->fs;
     my $edit = $self->get_commit_editor ($fs->revision_root ($fs->youngest_rev),
-					 sub { print "Committed revision $_[0].\n" },
+					 sub { print loc("Committed revision %1.\n", $_[0]) },
 					 '/', %arg);
     # XXX: check parent, check isfile, check everything...
     $edit->open_root();
@@ -43,11 +43,18 @@ sub run {
 
 =head1 NAME
 
-mkdir - Create versioned directory.
+SVK::Command::Mkdir - Create a versioned directory
 
 =head1 SYNOPSIS
 
     mkdir DEPOTPATH
+
+=head1 OPTIONS
+
+  -m [--message] message:	Commit message
+  -C [--check-only]:	Needs description
+  -s [--sign]:	Needs description
+  --force:	Needs description
 
 =head1 AUTHORS
 
