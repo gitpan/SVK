@@ -18,18 +18,20 @@ sub lock { $_[0]->lock_none }
 
 sub run {
     my ($self, @arg) = @_;
+    my $pool = SVN::Pool->new_default;
     for (@arg) {
 	my (undef, $path, undef, undef, $repos) = $self->{xd}->find_repos_from_co_maybe ($_, 1);
-	my $pool = SVN::Pool->new_default;
+	$pool->clear;
 	my $fs = $repos->fs;
 	my $root = $fs->revision_root ($self->{rev} || $fs->youngest_rev);
 	my $stream = $root->file_contents ($path);
 	# XXX: the keyword layer interface should also have reverse
-	my $layer = SVK::XD::get_keyword_layer ($root, "$path");
-	my $io = new IO::Handle;
-	$io->fdopen(fileno(STDOUT),"w");
+	my $layer = SVK::XD::get_keyword_layer ($root, $path);
+	no strict 'refs';
+	my $io = \*{select()};
 	$layer->via ($io) if $layer;
 	slurp_fh ($stream, $io);
+	binmode $io;
     }
     return;
 }

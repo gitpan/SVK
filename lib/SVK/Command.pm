@@ -40,7 +40,7 @@ sub new {
 
 sub options { () }
 
-sub parse_arg {}
+sub parse_arg { return (undef) }
 
 sub _opt_map {
     my ($self, %opt) = @_;
@@ -56,33 +56,39 @@ sub _cmd_map {
 
 sub get_cmd {
     my ($pkg, $cmd) = @_;
+    local $@;
     $pkg = join('::', 'SVK::Command', _cmd_map ($cmd));
     unless (eval "require $pkg; 1" && UNIVERSAL::can($pkg, 'run')) {
 	$pkg =~ s|::|/|g;
 	warn $@ if $@ && exists $INC{"$pkg.pm"};
 	print "Command not recognized, try $0 help.\n";
-	exit 0;
+	die;
     }
     $pkg->new;
 }
 
 sub invoke {
-    my ($pkg, $xd, $cmd, $output, @arg) = @_;
-    my ($help, $ofh);
-    local @ARGV = @arg;
-
+    my ($pkg, $xd, $cmd, $output, @args) = @_;
+    my ($help, $ofh, $ret);
+    local @ARGV = @args;
+    my $pool = SVN::Pool->new_default;
+    $ofh = select $output if $output;
     $cmd = get_cmd ($pkg, $cmd);
     $cmd->{xd} = $xd;
     die unless GetOptions ('h|help' => \$help, _opt_map($cmd, $cmd->options));
-    $cmd->usage, return if $help;
-    my @args = $cmd->parse_arg(@ARGV);
-    $cmd->lock (@args);
-    $ofh = select $output if $output;
-    my $ret = eval { $cmd->run (@args) };
+    @args = eval { $cmd->parse_arg(@ARGV) };
+    if ($@) {
+    }
+    elsif ($help || $#args == -1) {
+	$cmd->usage;
+    }
+    else {
+	eval { $cmd->lock (@args); $ret = $cmd->run (@args) };
+	$xd->unlock if $xd;
+    }
+    print $ret if $ret;
     select $ofh if $output;
-    $xd->unlock () if $xd;
     die $@ if $@;
-    return $ret;
 }
 
 sub brief_usage {
@@ -145,7 +151,7 @@ sub lock {
 
 sub arg_condensed {
     my ($self, @arg) = @_;
-    $self->usage if $#arg < 0;
+    return if $#arg < 0;
     my ($report, $copath, @targets )= $self->{xd}->condense (@arg);
 
     my ($repospath, $path, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($copath, 1);

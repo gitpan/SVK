@@ -7,7 +7,7 @@ use SVK::I18N;
 
 sub parse_arg {
     my ($self, @arg) = @_;
-    $self->usage if $#arg < 0;
+    return if $#arg < 0;
     my $target;
     if ($#arg == 0) {
 	$target = $self->arg_co_maybe ($arg[0]);

@@ -39,34 +39,31 @@ $svk->merge ('-a', '-C', '//m', '//l');
 $svk->merge ('-a', '-C', '//l', '//m');
 
 $svk->merge ('-a', '-m', 'simple smerge from source', '//m', '//l');
-
 my ($suuid, $srev) = ($srepos->fs->get_uuid, $srepos->fs->youngest_rev);
 $svk->update ($copath);
-ok (eq_hash (SVK::XD::do_proplist ($xd,
-				   repos => $repos,
-				   copath => $copath,
-				   path => '/l',
-				   rev => $repos->fs->youngest_rev,
-				  ),
-	     {'svk:merge' => "$suuid:/A:$srev",
-	      'svm:source' => 'file://'.$srepos->path.'!/A',
-	      'svm:uuid' => $suuid }), 'simple smerge from source');
-
+is_deeply (SVK::XD::do_proplist ($xd,
+				 repos => $repos,
+				 copath => $copath,
+				 path => '/l',
+				 rev => $repos->fs->youngest_rev,
+				),
+	   {'svk:merge' => "$suuid:/A:$srev",
+	    'svm:source' => 'file://'.$srepos->path.'!/A',
+	    'svm:uuid' => $suuid }, 'simple smerge from source');
 my ($uuid, $rev) = ($repos->fs->get_uuid, $repos->fs->youngest_rev);
 
 $svk->smerge ('-m', 'simple smerge from local', '//l', '//m');
-
 $svk->sync ('//m');
 
-ok (eq_hash (SVK::XD::do_proplist ($xd,
-				   repos => $repos,
-				   path => '/m',
-				   rev => $repos->fs->youngest_rev,
-				  ),
-	     {'svk:merge' => "$uuid:/l:$rev",
-	      'svm:source' => 'file://'.$srepos->path.'!/A',
-	      'svm:uuid' => $suuid }),
-    'simple smerge back to source');
+is_deeply (SVK::XD::do_proplist ($xd,
+				 repos => $repos,
+				 path => '/m',
+				 rev => $repos->fs->youngest_rev,
+				),
+	   {'svk:merge' => "$uuid:/l:$rev",
+	    'svm:source' => 'file://'.$srepos->path.'!/A',
+	    'svm:uuid' => $suuid },
+	   'simple smerge back to source');
 
 $svk->smerge ('-C', '//m', '//l');
 $svk->smerge ('-m', 'mergedown', '//m', '//l');
@@ -94,19 +91,18 @@ append_file ("$copath/be", "modification on local\n");
 append_file ("$copath/Q/qu", "modified on local\n");
 $svk->rm ("$copath/Q/qz");
 $svk->commit ('-m', 'commit on local', $copath);
-$svk->smerge ('-C', '//m', '//l');
-is ($output, "Auto-merging (8, 11) /m to /l (base /m:8).
- U Q/qu
-   Q/qz - skipped
-C  be
-   newdir - skipped
-g  newfile
-A  newdir2
-A  newfile2
-New merge ticket: $suuid:/A:5
-Empty merge.
-1 conflict found.
-", 'smerge - added file collision');
+is_output ($svk, 'smerge', ['-C', '//m', '//l'],
+	   ['Auto-merging (8, 11) /m to /l (base /m:8).',
+	    ' U  Q/qu',
+	    '    Q/qz - skipped',
+	    'C   be',
+	    '    newdir - skipped',
+	    'g   newfile',
+	    'A   newdir2',
+	    'A   newfile2',
+	    "New merge ticket: $suuid:/A:5",
+	    'Empty merge.', '1 conflict found.'],
+	   'smerge - added file collision');
 $svk->smerge ('-C', '//m', $copath);
 $svk->smerge ('//m', $copath);
 $svk->status ($copath);

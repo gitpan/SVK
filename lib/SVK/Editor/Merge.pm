@@ -51,6 +51,10 @@ The anchor of the base tree.
 
 The root object of the base tree.
 
+=item external
+
+External tool that would be called upon textual conflicts.
+
 =item storage
 
 The editor that will receive the merged callbacks.
@@ -113,6 +117,20 @@ sub cb_for_root {
 		   return [$root->file_contents ($path, $pool),
 			   undef, $md5];
 	       },
+	     cb_dirdelta =>
+	     sub { my ($path, $base_root, $base_path, $pool) = @_;
+		   my $modified;
+		   my $editor =  SVK::Editor::Status->new
+		       ( notify => SVK::Notify->new
+			 ( cb_flush => sub {
+			       my ($path, $status) = @_;
+			       $modified->{$path} = $status->[0];
+			   }));
+		   SVN::Repos::dir_delta ($base_root, $base_path, '',
+					  $root, "$anchor/$path",
+					  $editor, undef, 0, 0, 0, 0);
+		   return $modified;
+	       },
 	   );
 }
 
@@ -125,7 +143,9 @@ sub set_target_revision {
 sub open_root {
     my ($self, $baserev) = @_;
     $self->{baserev} = $baserev;
-    $self->{notify} = SVK::Notify->new ();
+    $self->{notify} = SVK::Notify->new
+	( cb_skip => \&SVK::Notify::skip_print,
+	  cb_flush => \&SVK::Notify::flush_print);
     $self->{storage_baton}{''} =
 	$self->{storage}->open_root ($self->{cb_rev}->($self->{target}||''));
     return '';
@@ -154,6 +174,7 @@ sub open_file {
     if (defined $pdir && $self->{cb_exist}->($path)) {
 	$self->{info}{$path}{open} = [$pdir, $rev];
 	$self->{info}{$path}{fpool} = $pool;
+	$self->{notify}->node_status ($path) = '';
 	return $path;
     }
     $self->{notify}->flush ($path);
@@ -277,14 +298,14 @@ sub close_file {
         $self->{notify}->node_status ($path) = $conflict ? 'C' : 'G';
 	if ($conflict && $self->{external}) {
 	    $mfn = tmpfile ('merge', OPEN => 0);
-	    # invoking external merge tool
-	    system ($self->{external},
+	    system (split (' ', $self->{external}),
 		    "$path (YOURS)", $fh->{local}[1],
 		    "$path (BASE)", $fh->{base}[1],
 		    "$path (THEIRS)", $fh->{new}[1],
 		    $mfn,
 		    );
-	    open $mfh, $mfn;
+	    die "$path not merged" unless -e $mfn;
+	    open $mfh, '<', $mfn or die $!;
 	    $checksum = md5 ($mfh);
 	    $conflict = 0;
 	}
@@ -342,6 +363,7 @@ sub add_directory {
 	$self->{storage}->add_directory ($path, $self->{storage_baton}{$pdir},
 					 @arg);
     $self->{notify}->node_status ($path) = 'A';
+    $self->{notify}->flush ($path, 1);
     return $path;
 }
 
@@ -372,14 +394,72 @@ sub close_directory {
     $self->{storage}->close_directory ($self->{storage_baton}{$path}, $pool);
 }
 
+sub _check_delete_conflict {
+    my ($self, $path, $rpath, $kind, $pdir, $pool) = @_;
+    if ($kind == $SVN::Node::file) {
+	my $md5 = $self->{base_root}->file_md5_checksum ($rpath, $pool);
+	if (my $local = $self->{cb_localmod}->($path, $md5, $pool)) {
+	    $self->{notify}->node_status ($path) = 'C';
+	    ++$self->{conflicts};
+	    return {};
+	}
+    }
+    elsif ($kind == $SVN::Node::dir) {
+	# XXX: clean these up
+	my $dirmodified = $self->{cb_dirdelta}->($path, $self->{base_root}, $rpath);
+	my $entries = $self->{base_root}->dir_entries ($rpath);
+	my ($torm, $modified);
+	for (sort keys %$entries) {
+	    if (my $mod = $dirmodified->{$_}) {
+		if ($mod eq 'D') {
+		    $self->{notify}->node_status ("$path/$_") = 'd';
+		}
+		else {
+		    ++$modified;
+		    ++$self->{conflicts};
+		    $self->{notify}->node_status ("$path/$_") = 'C';
+		}
+	    }
+	    else {
+		my $entry = $entries->{$_};
+		if ($entry->kind == $SVN::Node::dir) {
+		    $torm->{$_} = $self->_check_delete_conflict ("$path/$_", "$rpath/$_", $entry->kind, $pdir, $pool);
+		    $modified++ if $torm->{$_};
+		}
+		else {
+		    $torm->{$_} = 1;
+		}
+	    }
+	}
+	if ($modified) {
+	    $self->{notify}->node_status ("$path/$_") = 'D'
+		for keys %$torm;
+	    return $torm;
+	}
+	return $torm if $modified;
+    }
+    return;
+}
+
 sub delete_entry {
     my ($self, $path, $revision, $pdir, @arg) = @_;
     no warnings 'uninitialized';
     return unless defined $pdir && $self->{cb_exist}->($path);
 
-    $self->{storage}->delete_entry ($path, $self->{cb_rev}->($path),
-				    $self->{storage_baton}{$pdir}, @arg);
-    $self->{notify}->node_status ($path) = 'D';
+    my $rpath = $path;
+    $rpath = "$self->{base_anchor}/$rpath" if $self->{base_anchor};
+    my $torm = $self->_check_delete_conflict ($path, $rpath,
+					      $self->{base_root}->check_path ($rpath), $pdir, @arg);
+
+    if ($torm) {
+	$self->{notify}->node_status ($path) = 'C';
+	++$self->{conflicts};
+    }
+    else {
+	$self->{storage}->delete_entry ($path, $self->{cb_rev}->($path),
+					$self->{storage_baton}{$pdir}, @arg);
+	$self->{notify}->node_status ($path) = 'D';
+    }
 }
 
 sub change_file_prop {

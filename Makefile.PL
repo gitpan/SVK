@@ -9,7 +9,7 @@ abstract	('A decentralized version control system');
 license		('perl');
 version_from	('lib/SVK.pm');
 install_script	('bin/svk');
-
+clean_files	('t/checkout');
 requires(
         'SVN::Core'   => $required_svn,
         'Algorithm::Annotate'   => '0',
@@ -17,7 +17,7 @@ requires(
         'Algorithm::Diff'       => '0',
         'YAML'                  => '0',
         'Regexp::Shellish'      => '0',
-        'Data::Hierarchy'       => '0.17',
+        'Data::Hierarchy'       => '0.18',
         'File::Temp'            => '0.14',
         'Clone'	                => '0',
         'Pod::Escapes'          => '0',
@@ -35,7 +35,7 @@ features(
 features(
     'SVN::Mirror support' => [
 	-default => 1,
-	'SVN::Mirror'    => '0.35',
+	'SVN::Mirror'    => '0.37',
     ],
 );
 

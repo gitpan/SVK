@@ -4,14 +4,12 @@ our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command );
 use SVK::XD;
 use SVK::I18N;
-use SVK::Editor::CommitStatus;
+use SVK::Editor::Status;
 use SVK::Editor::Sign;
 use SVK::Util qw(get_buffer_from_editor slurp_fh find_svm_source svn_mirror tmpfile);
 use SVN::Simple::Edit;
 
 my $target_prompt = '=== below are targets to be committed ===';
-
-my $auth;
 
 sub options {
     ('m|message=s'  => 'message',
@@ -29,16 +27,13 @@ sub parse_arg {
     return $self->arg_condensed (@arg);
 }
 
-sub lock {
-    my ($self, $arg) = @_;
-    $arg->{copath} ? $self->lock_target ($arg) : $self->lock_none;
-}
+sub lock { $_[0]->lock_target ($_[1]) }
 
 sub target_prompt { $target_prompt }
 
 sub auth {
     eval 'require SVN::Client' or die $@;
-    $auth ||= SVN::Core::auth_open
+    return SVN::Core::auth_open
 	([SVN::Client::get_simple_provider (),
 	  SVN::Client::get_ssl_server_trust_file_provider (),
 	  SVN::Client::get_username_provider ()]);
@@ -83,7 +78,7 @@ sub get_commit_message {
 }
 
 # Return the editor according to copath, path, and is_mirror (path)
-# It will be XD::Editor, repos_commit_editor, or svn::mirror merge back editor.
+# It will be Editor::XD, repos_commit_editor, or svn::mirror merge back editor.
 sub get_editor {
     my ($self, $target) = @_;
     my ($callback, $editor, %cb);
@@ -129,9 +124,11 @@ sub get_editor {
     }
 
     my $fs = $target->{repos}->fs;
-    my $root = $fs->revision_root ($fs->youngest_rev);
+    my $yrev = $fs->youngest_rev;
+    my $root = $fs->revision_root ($yrev);
 
-    $editor ||= SVN::Delta::Editor->new
+    $editor ||= $self->{check_only} ? SVN::Delta::Editor->new :
+	SVN::Delta::Editor->new
 	( SVN::Repos::get_commit_editor
 	  ( $target->{repos}, "file://$target->{repospath}",
 	    $target->{path}, $ENV{USER}, $self->{message},
@@ -141,17 +138,14 @@ sub get_editor {
 		      if $self->{sign};
 		  $callback->(@_) if $callback; }
 	  ));
-    $base_rev ||= $target->{repos}->fs->youngest_rev;
+    $base_rev ||= $yrev;
 
     if ($self->{sign}) {
 	my ($uuid, $dst) = find_svm_source ($target->{repos}, $target->{path});
 	$self->{signeditor} = $editor = SVK::Editor::Sign->new (_editor => [$editor],
-							      anchor => "$uuid:$dst"
-							     );
+								anchor => "$uuid:$dst"
+							       );
     }
-
-    $editor = SVK::XD::CheckEditor->new ($editor)
-	if $self->{check_only};
 
     %cb = SVK::Editor::Merge::cb_for_root ($root, $target->{path}, $base_rev);
 
@@ -176,13 +170,18 @@ sub run {
     print $fh "\n$target_prompt\n" if $fh;
 
     my $targets = [];
-    my $statuseditor = SVK::Editor::CommitStatus->new
-	( copath => $target->{copath},
-	  dpath => $target->{path},
-	  targets => $targets, fh => $fh);
+    my $statuseditor = SVK::Editor::Status->new
+	( notify => SVK::Notify->new
+	  ( cb_flush => sub {
+		my ($path, $status) = @_;
+		my $copath = $path ? "$target->{copath}/$path" : $target->{copath};
+		push @$targets, [$status->[0] || ($status->[1] ? 'P' : ''),
+				 $copath];
+		    no warnings 'uninitialized';
+		print $fh sprintf ("%1s%1s%1s \%s\n", @{$status}[0..2], $copath) if $fh;
+	    }));
     $self->{xd}->checkout_delta
 	( %$target,
-	  baseroot => $xdroot,
 	  xdroot => $xdroot,
 	  nodelay => 1,
 	  delete_verbose => 1,
@@ -191,17 +190,17 @@ sub run {
 	  cb_conflict => \&SVK::Editor::Status::conflict,
 	);
 
-    my $conflicts = keys %{$statuseditor->{conflict}};
+    return loc("no targets to commit\n") if $#{$targets} < 0;
+
+    my $conflicts = grep {$_->[0] eq 'C'} @$targets;
     if ($conflicts) {
 	if ($fh) {
 	    close $fh;
 	    unlink $file;
 	}
-	print loc("%*(%1,conflict) detected. Use 'svk resolved' after resolving them.\n", $conflicts);
-	return;
+	return loc("%*(%1,conflict) detected. Use 'svk resolved' after resolving them.\n", $conflicts);
     }
 
-    die loc("no targets to commit") if $#{$targets} < 0;
 
     if ($fh) {
 	close $fh;
@@ -219,33 +218,34 @@ sub run {
 
     my $committed = sub {
 	my ($rev) = @_;
-	my (undef, @datapoint) = $self->{xd}{checkout}->get ($target->{copath});
+	my (undef, $dataroot) = $self->{xd}{checkout}->get ($target->{copath});
 	my $fs = $target->{repos}->fs;
-	for (reverse @$targets) {
-	    my $store = ($_->[0] eq 'D' || -d $_->[1]) ?
-		'store_recursively' : 'store';
-	    $self->{xd}{checkout}->$store ($_->[1], { '.schedule' => undef,
-						      '.copyfrom' => undef,
-						      '.copyfrom_rev' => undef,
-						      '.newprop' => undef,
-						      $_->[0] eq 'D' ? ('.deleted' => 1) : (),
-						      scheduleanchor => undef,
-						      revision => $rev,
-						    });
-	}
 	my $oldroot = $fs->revision_root ($rev-1);
 	my $oldrev = $oldroot->node_created_rev ($target->{path});
-	for (@datapoint) {
-	    # use store_single to effectively override all the oldvalue but not others.
-	    for my $path ($self->{xd}{checkout}->find ($_, {revision => qr/.*/})) {
-		next unless $self->{xd}{checkout}->get ($path)->{revision} >= $oldrev;
-		# XXX: should be a data::hierarchy api to simply do this and remove
-		# duplicates
-		$self->{xd}{checkout}->store_override ($path, {revision => $rev});
-		$self->{xd}{checkout}->store ($path, {'.deleted' => undef});
-	    }
+	# optimize checkout map
+	for my $copath ($self->{xd}{checkout}->find ($dataroot, {revision => qr/.*/})) {
+	    my $corev = $self->{xd}{checkout}->get ($copath)->{revision};
+	    next if $corev < $oldrev;
+	    $self->{xd}{checkout}->store_override ($copath, {revision => $rev});
+	}
+	# update checkout map with new revision
+	for (reverse @$targets) {
+	    my ($action, $path) = @$_;
+	    $self->{xd}{checkout}->store_recursively
+		($path, { '.schedule' => undef,
+			  '.copyfrom' => undef,
+			  '.copyfrom_rev' => undef,
+			  '.newprop' => undef,
+			  scheduleanchor => undef
+			});
+	    $self->{xd}{checkout}->store
+		($path, { revision => $rev,
+			  $action eq 'D' ? ('.deleted' => 1) : (),
+			})
+		    unless $self->{xd}{checkout}->get ($path)->{revision} == $rev;
 	}
 	my $root = $fs->revision_root ($rev);
+	# update keyword-trnslated files
 	for (@$targets) {
 	    next if $_->[0] eq 'D';
 	    my ($action, $tpath) = @$_;
@@ -260,8 +260,9 @@ sub run {
 	    my $fname = "$cpath.svk.old";
 	    rename $cpath, $fname;
 	    open my ($newfh), ">", $cpath;
-	    $layer->via ($newfh) if $layer;
+	    $layer->via ($newfh);
 	    slurp_fh ($fh, $newfh);
+	    chmod ((stat ($fh))[2], $cpath);
 	    close $fh;
 	    unlink $fname;
 	}
@@ -274,7 +275,6 @@ sub run {
 
     $self->{xd}->checkout_delta
 	( %$target,
-	  baseroot => $xdroot,
 	  xdroot => $xdroot,
 	  absent_ignore => 1,
 	  editor => $editor,

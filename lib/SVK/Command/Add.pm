@@ -6,12 +6,12 @@ use base qw( SVK::Command );
 use SVK::XD;
 
 sub options {
-    ('N|non-recursive'	=> 'nrec');
+    ('N|non-recursive'	=> 'nrec',
+     'q|quiet'		=> 'quiet');
 }
 
 sub parse_arg {
     my ($self, @arg) = @_;
-    $self->usage if $#arg < 0;
     return $self->arg_condensed (@arg);
 }
 
@@ -24,6 +24,7 @@ sub run {
 
     $self->{xd}->do_add ( %$target,
 			  recursive => !$self->{nrec},
+			  quiet => $self->{quiet},
 			);
     return;
 }

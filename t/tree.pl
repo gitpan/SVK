@@ -20,6 +20,10 @@ END {
 
 our $output = '';
 
+for (qw/SVKMERGE SVKDIFF LC_CTYPE LC_ALL LANG LC_MESSAGES/) {
+    $ENV{$_} = '' if $ENV{$_};
+}
+
 my $pool = SVN::Pool->new_default;
 
 sub new_repos {
@@ -74,14 +78,14 @@ sub cleanup_test {
     for my $depot (sort keys %{$xd->{depotmap}}) {
 	my $path = $xd->{depotmap}{$depot};
 	print "===> depot $depot:\n";
-	undef $svk->{output};
 	$svk->log ('-v', "/$depot/");
+	print ${$svk->{output}};
     }
 }
 
 sub append_file {
     my ($file, $content) = @_;
-    open my ($fh), '>>', $file or die $!;
+    open my ($fh), '>>', $file or die "can't append $file: $!";
     print $fh $content;
     close $fh;
 }
@@ -98,6 +102,20 @@ sub is_file_content {
     open my ($fh), '<', $file or die $!;
     local $/;
     is (<$fh>, $content, $test);
+}
+
+sub is_output {
+    my ($svk, $cmd, $arg, $expected, $test) = @_;
+    $svk->$cmd (@$arg);
+    is_deeply ([split ("\n", $output)], $expected,
+	       $test || join(' ', $cmd, @$arg));
+    diag $@ if $@;
+}
+
+sub is_output_like {
+    my ($svk, $cmd, $arg, $expected, $test) = @_;
+    $svk->$cmd (@$arg);
+    ok ($output =~ m/$expected/, $test || join(' ', $cmd, @$arg));
 }
 
 require SVN::Simple::Edit;
