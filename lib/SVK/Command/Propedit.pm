@@ -1,6 +1,6 @@
 package SVK::Command::Propedit;
 use strict;
-our $VERSION = '0.14';
+our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Propset );
 use SVK::XD;
@@ -24,7 +24,7 @@ sub run {
 	(%$target, rev => $target->{repos}->fs->youngest_rev)->{$pname};
 
     $pvalue = get_buffer_from_editor ("property $pname", undef, $pvalue || '',
-				      '/tmp/svk-propXXXXX');
+				      'prop');
 
     $self->do_propset ($pname, $pvalue, $target);
 

@@ -1,10 +1,9 @@
 package SVK::Command::Import;
 use strict;
-our $VERSION = '0.14';
+our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
-use SVK::Util qw (get_buffer_from_editor);
 
 sub parse_arg {
     my $self = shift;
@@ -26,11 +25,7 @@ sub lock {
 sub run {
     my ($self, $target, $source) = @_;
 
-    unless (defined $self->{message} || $self->{check_only}) {
-	$self->{message} = get_buffer_from_editor
-	    ('log message', $self->target_prompt,
-	     "\n".$self->target_prompt."\n", "svk-commitXXXXX");
-    }
+    $self->get_commit_message () unless $self->{check_only};
 
     $self->{xd}->do_import ( %$self,
 			     %$target,

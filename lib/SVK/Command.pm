@@ -1,7 +1,7 @@
 package SVK::Command;
 use strict;
 our $VERSION = '0.09';
-use Getopt::Long qw(:config no_ignore_case);
+use Getopt::Long qw(:config no_ignore_case bundling);
 # XXX: Pod::Simple isn't happy with SVN::Simple::Edit, so load it first
 use SVN::Simple::Edit;
 use Pod::Simple::Text ();
@@ -68,12 +68,13 @@ sub get_cmd {
 
 sub invoke {
     my ($pkg, $xd, $cmd, $output, @arg) = @_;
-    my $ofh;
+    my ($help, $ofh);
     local @ARGV = @arg;
 
     $cmd = get_cmd ($pkg, $cmd);
     $cmd->{xd} = $xd;
-    die unless GetOptions ($cmd, _opt_map($cmd, $cmd->options));
+    die unless GetOptions ('h|help' => \$help, _opt_map($cmd, $cmd->options));
+    $cmd->usage, return if $help;
     my @args = $cmd->parse_arg(@ARGV);
     $cmd->lock (@args);
     $ofh = select $output if $output;
@@ -208,34 +209,5 @@ sub arg_path {
 
     return Cwd::abs_path ($arg);
 }
-
-1;
-
-__END__
-our $AUTOLOAD;
-
-use Sub::WrapPackages (
-        subs     => [qw(SVN::Delta::Editor::AUTOLOAD)],
-        pre      => sub {
-	    warn "my autoload is $AUTOLOAD ".caller(4);
-            warn "$SVN::Delta::Editor::AUTOLOAD called with params ".
-              join(', ', @_[1..$#_])."\n";
-        },
-        post     => sub {
-            warn "$_[0] returned $_[1]\n";
-        });
-
-=comment
-
-# workaround the svn::delta::editor problem in 1.0.x
-my $ref = \&SVN::Delta::Editor::AUTOLOAD;
-*SVN::Delta::Editor::AUTOLOAD =
-    sub { my $ret = $ref-> (@_);
-	  warn $SVN::Delta::Editor::AUTOLOAD;
-	  $ret = undef if ref ($ret) eq 'ARRAY' && $#{$ret} == -1;
-	  return $ret;
-      };
-
-=cut
 
 1;

@@ -1,11 +1,11 @@
-package SVK::DiffEditor;
+package SVK::Editor::Diff;
 use strict;
 use SVN::Delta;
 our $VERSION = '0.09';
 our @ISA = qw(SVN::Delta::Editor);
 
 use SVK::I18N;
-use SVK::Util qw( slurp_fh );
+use SVK::Util qw( slurp_fh tmpfile );
 use Text::Diff;
 
 sub set_target_revision {
@@ -36,17 +36,12 @@ sub apply_textdelta {
 
     my $new;
     if ($self->{external}) {
-	my $tmp = File::Temp->new ( TEMPLATE => 'svk-diffXXXXX',
-				    DIR => '/tmp',
-				  );
+	my $tmp = tmpfile ('diff');
 	slurp_fh ($self->{info}{$path}{base}, $tmp)
 	    if $self->{info}{$path}{base};
 	seek $tmp, 0, 0;
 	$self->{info}{$path}{base} = $tmp;
-	$self->{info}{$path}{new} = $new =
-	    File::Temp->new ( TEMPLATE => 'svk-diffXXXXX',
-			      DIR => '/tmp',
-			    );
+	$self->{info}{$path}{new} = $new = tmpfile ('diff');
     }
     else {
 	open $new, '>', \$self->{info}{$path}{new};
@@ -61,8 +56,8 @@ sub close_file {
     if ($self->{info}{$path}{new}) {
 	my $base = $self->{info}{$path}{added} ?
 	    \'' : $self->{cb_basecontent} ($path);
-	my $llabel = $self->{llabel} || &{$self->{cb_llabel}} ($path);
-	my $rlabel = $self->{rlabel} || &{$self->{cb_rlabel}} ($path);
+	my $llabel = $self->{llabel} || $self->{cb_llabel}->($path);
+	my $rlabel = $self->{rlabel} || $self->{cb_rlabel}->($path);
 
 	if ($self->{external}) {
 	    # XXX: the 2nd file could be - and save some disk IO
@@ -73,7 +68,7 @@ sub close_file {
 		    $self->{info}{$path}{new}->filename);
 	}
 	else {
-	    output_diff ($self->{fh} || \*STDOUT, $path, $llabel, $rlabel,
+	    output_diff ($path, $llabel, $rlabel,
 			 $self->{lpath} || '', $self->{rpath} || '',
 			 $base, \$self->{info}{$path}{new});
 	}
@@ -89,7 +84,7 @@ sub _full_label {
 }
 
 sub output_diff {
-    my ($fh, $path, $llabel, $rlabel, $lpath, $rpath, $ltext, $rtext) = @_;
+    my ($path, $llabel, $rlabel, $lpath, $rpath, $ltext, $rtext) = @_;
 
     # XXX: this slurp is dangerous. waiting for streamy svndiff routine
     local $/;
@@ -97,26 +92,25 @@ sub output_diff {
     $rtext = \<$rtext> if ref ($rtext) && ref ($rtext) ne 'SCALAR';
 
     my $showpath = ($lpath ne $rpath);
-    print $fh "=== $path\n";
-    print $fh '=' x 66,"\n";
-    print $fh "--- "._full_label ($path, $showpath ? $lpath : undef, $llabel)."\n";
-    print $fh "+++ "._full_label ($path, $showpath ? $rpath : undef, $rlabel)."\n";
-    print $fh Text::Diff::diff ($ltext, $rtext);
+    print "=== $path\n";
+    print '=' x 66,"\n";
+    print "--- "._full_label ($path, $showpath ? $lpath : undef, $llabel)."\n";
+    print "+++ "._full_label ($path, $showpath ? $rpath : undef, $rlabel)."\n";
+    print Text::Diff::diff ($ltext, $rtext);
 }
 
 sub output_prop_diff {
     my ($self, $path, $pool) = @_;
     if ($self->{info}{$path}{prop}) {
-	my $fh = $self->{fh} || \*STDOUT;
-	print $fh "\n", loc("Property changes on: %1\n", $path), ('_' x 67), "\n";
+	print "\n", loc("Property changes on: %1\n", $path), ('_' x 67), "\n";
 	for (sort keys %{$self->{info}{$path}{prop}}) {
-	    print $fh loc("Name: %1\n", $_);
+	    print loc("Name: %1\n", $_);
 	    my $baseprop;
-	    $baseprop = &{$self->{cb_baseprop}} ($path, $_)
+	    $baseprop = $self->{cb_baseprop}->($path, $_)
 		unless $self->{info}{$path}{added};
-	    print $fh Text::Diff::diff (\ ($baseprop || ''),
-					\$self->{info}{$path}{prop}{$_},
-					{ STYLE => 'SVK::DiffEditor::NoHeader' });
+	    print Text::Diff::diff (\ ($baseprop || ''),
+				    \$self->{info}{$path}{prop}{$_},
+				    { STYLE => 'SVK::Editor::Diff::NoHeader' });
 	}
 	print "\n\n";
     }
@@ -156,7 +150,7 @@ sub close_edit {
     my ($self, @arg) = @_;
 }
 
-package SVK::DiffEditor::NoHeader;
+package SVK::Editor::Diff::NoHeader;
 
 our @ISA = qw(Text::Diff::Unified);
 

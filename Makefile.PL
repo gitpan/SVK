@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-my $required_svn = '0.36.0';
+my $required_svn = '1.0.4';
 
 use inc::Module::Install;
 
@@ -39,6 +39,12 @@ features(
     ],
 );
 
+features(
+    'Patch management' => [
+	-default => 1,
+	'Compress::Zlib'    => '0',
+    ],
+);
 include('ExtUtils::AutoInstall');
 auto_install();
 

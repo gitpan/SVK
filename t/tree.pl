@@ -19,7 +19,6 @@ END {
 
 
 our $output = '';
-#select IO::Scalar->new (\$output);
 
 my $pool = SVN::Pool->new_default;
 
@@ -31,7 +30,9 @@ sub new_repos {
     while (-e $repospath) {
 	$repospath = $reposbase . '-'. (++$i);
     }
-    $repos = SVN::Repos::create("$repospath", undef, undef, undef, undef)
+    my $pool = SVN::Pool->new;
+    $repos = SVN::Repos::create("$repospath", undef, undef, undef,
+				{'fs-type' => $ENV{SVNFSTYPE} || 'bdb'})
 	or die "failed to create repository at $repospath";
     return $repospath;
 }
@@ -41,6 +42,7 @@ sub build_test {
 
     my $depotmap = {map {$_ => (new_repos())[0]} '',@depot};
     my $xd = SVK::XD->new (depotmap => $depotmap,
+			   svkpath => $depotmap->{''},
 			   checkout => Data::Hierarchy->new);
     my $svk = SVK->new (xd => $xd, output => \$output);
     push @TOCLEAN, [$xd, $svk];
@@ -133,13 +135,17 @@ sub create_basic_tree {
     $edit->add_directory ('/A/Q');
     $edit->modify_file ($edit->add_file ('/A/Q/qu'),
 			"first line in qu\n2nd line in qu\n");
+    $edit->modify_file ($edit->add_file ('/A/Q/qz'),
+			"first line in qz\n2nd line in qz\n");
     $edit->add_directory ('/C/R');
     $edit->close_edit ();
     my $tree = { child => { me => {},
 			    A => { child => { be => {},
 					      P => { child => {pe => {},
 							      }},
-					      Q => { child => {}},
+					      Q => { child => {qu => {},
+							       ez => {},
+							      }},
 					    }},
 			    B => {},
 			    C => { child => { R => { child => {}}}}

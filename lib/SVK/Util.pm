@@ -3,12 +3,12 @@ use strict;
 require Exporter;
 our @ISA       = qw(Exporter);
 our @EXPORT_OK = qw(md5 get_buffer_from_editor slurp_fh get_anchor get_prompt
-		    find_svm_source resolve_svm_source svn_mirror);
+		    find_svm_source resolve_svm_source svn_mirror tmpfile find_local_mirror);
 our $VERSION   = '0.09';
 
 use SVK::I18N;
 use Digest::MD5 qw(md5_hex);
-use File::Temp;
+use File::Temp qw(mktemp);
 use Term::ReadLine;
 my $svn_mirror = eval 'require SVN::Mirror; 1' ? 1 : 0;
 
@@ -38,9 +38,9 @@ sub get_buffer_from_editor {
     my ($what, $sep, $content, $file, $anchor, $targets_ref) = @_;
     my $fh;
     if (defined $content) {
-	($fh, $file) = mkstemps ($file, '.tmp');
+	($fh, $file) = tmpfile ($file, UNLINK => 0);
 	print $fh $content;
-	close $file;
+	close $fh;
     }
     else {
 	open $fh, $file;
@@ -99,10 +99,10 @@ sub get_anchor {
 
 sub find_svm_source {
     my ($repos, $path) = @_;
-    my ($uuid, $rev, $m, $mpath);
-    my $mirrored;
+    my ($uuid, $m, $mpath);
     my $fs = $repos->fs;
-    my $root = $fs->revision_root ($fs->youngest_rev);
+    my $rev = $fs->youngest_rev;
+    my $root = $fs->revision_root ($rev);
 
     if (svn_mirror) {
 	($m, $mpath) = SVN::Mirror::is_mirrored ($repos, $path);
@@ -113,13 +113,25 @@ sub find_svm_source {
 	$uuid = $root->node_prop ($path, 'svm:uuid');
 	$path = $m->{source}.$mpath;
 	$path =~ s/^\Q$m->{source_root}\E//;
+	$path ||= '/';
 	$rev = $m->{fromrev};
     }
     else {
-	($rev, $uuid) = ($fs->youngest_rev, $fs->get_uuid);
+	$uuid = $fs->get_uuid;
+	$rev = ($root->node_history ($path)->prev (0)->location)[1];
     }
 
     return ($uuid, $path, $rev);
+}
+
+sub find_local_mirror {
+    my ($repos, $uuid, $path, $rev) = @_;
+    my $myuuid = $repos->fs->get_uuid;
+    if ($uuid ne $myuuid && svn_mirror &&
+	(my ($m, $mpath) = SVN::Mirror::has_local ($repos, "$uuid:$path"))) {
+	return ("$m->{target_path}$mpath", $m->find_local_rev ($rev));
+    }
+    return;
 }
 
 sub resolve_svm_source {
@@ -130,6 +142,20 @@ sub resolve_svm_source {
     my ($m, $mpath) = SVN::Mirror::has_local ($repos, "$uuid:$path");
     return unless $m;
     return ("$m->{target_path}$mpath", $m);
+}
+
+sub tmpfile {
+    my ($temp, %args) = @_;
+    my $dir = $ENV{TMPDIR} || '/tmp';
+    $temp = "svk-${temp}XXXXX";
+    return mktemp ("$dir/$temp") if exists $args{OPEN} && $args{OPEN} == 0;
+    my $tmp = File::Temp->new ( TEMPLATE => $temp,
+				DIR => $dir,
+				SUFFIX => '.tmp',
+				%args
+			      );
+
+    return wantarray ? ($tmp, $tmp->filename) : $tmp;
 }
 
 1;

@@ -1,12 +1,11 @@
 package SVK::Command::Mkdir;
 use strict;
-our $VERSION = '0.14';
+our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
 use SVK::I18N;
 use SVK::Command::Log;
-use SVK::Util qw (get_buffer_from_editor);
 
 sub parse_arg {
     my ($self, @arg) = @_;

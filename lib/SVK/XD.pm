@@ -1,14 +1,14 @@
 package SVK::XD;
 use strict;
-our $VERSION = '0.14';
+our $VERSION = $SVK::VERSION;
 require SVN::Core;
 require SVN::Repos;
 require SVN::Fs;
 require SVN::Delta;
-require SVK::MergeEditor;
-use SVK::RevertEditor;
-use SVK::DelayEditor;
-use SVK::DeleteEditor;
+require SVK::Editor::Merge;
+use SVK::Editor::Revert;
+use SVK::Editor::Delay;
+use SVK::Editor::Delete;
 use SVK::I18N;
 use SVK::Util qw( slurp_fh md5 get_anchor );
 use Data::Hierarchy '0.15';
@@ -16,7 +16,6 @@ use File::Spec;
 use File::Find;
 use File::Path;
 use YAML qw(LoadFile DumpFile);
-use File::Temp qw/:mktemp/;
 use PerlIO::via::dynamic;
 
 sub new {
@@ -28,19 +27,18 @@ sub new {
 
 sub load {
     my ($self) = @_;
-    my $svkpath = "$ENV{HOME}/.svk";
     my $info;
 
     $self->giant_lock ();
 
-    if (-e "$svkpath/config") {
+    if (-e $self->{statefile}) {
 	$info = LoadFile ($self->{statefile});
     }
     else {
-	mkdir ($svkpath);
+	mkdir ($self->{svkpath});
     }
 
-    $info ||= { depotmap => {'' => "$svkpath/local" },
+    $info ||= { depotmap => {'' => "$self->{svkpath}/local" },
 	        checkout => Data::Hierarchy->new(),
 	      };
     $self->{$_} = $info->{$_} for keys %$info;
@@ -258,9 +256,10 @@ sub xd_storage_cb {
 				   unless $arg{check_only};
 			   },
 	  cb_localmod => sub { my ($path, $checksum) = @_;
-			       $arg{get_copath} ($path);
+			       my $copath = $path;
+			       $arg{get_copath} ($copath);
 			       my $base = get_fh ($arg{oldroot}, '<',
-						  "$arg{anchor}/$arg{path}", $path);
+						  "$arg{anchor}/$path", $copath);
 			       my $md5 = md5 ($base);
 			       return undef if $md5 eq $checksum;
 			       seek $base, 0, 0;
@@ -317,8 +316,8 @@ sub do_update {
 					    target => $target,
 					    update => 1);
 
-    $storage = SVK::DelayEditor->new ($storage);
-    my $editor = SVK::MergeEditor->new
+    $storage = SVK::Editor::Delay->new ($storage);
+    my $editor = SVK::Editor::Merge->new
 	(_debug => 0,
 	 fs => $fs,
 	 send_fulltext => 1,
@@ -329,11 +328,14 @@ sub do_update {
 	 storage => $storage,
 	 %cb
 	);
-
+    $editor->{external} = $ENV{SVKMERGE}
+	if $ENV{SVKMERGE} && -x $ENV{SVKMERGE} && !$self->{check_only};
     SVN::Repos::dir_delta ($xdroot->[1], $anchor, $target,
 			   $newroot, $arg{target_path},
 			   $editor, undef,
 			   1, $arg{recursive}, 0, 1);
+
+    print loc("%*(%1,conflict) found.\n", $editor->{conflicts}) if $editor->{conflicts};
 }
 
 sub do_add {
@@ -376,7 +378,7 @@ sub do_delete {
 			    absent_as_delete => 1,
 			    delete_verbose => 1,
 			    absent_verbose => 1,
-			    editor => SVK::DeleteEditor->new
+			    editor => SVK::Editor::Delete->new
 			    ( copath => $arg{copath},
 			      dpath => $arg{path},
 			      cb_delete => sub {
@@ -509,7 +511,7 @@ sub do_revert {
 				targets => $arg{targets},
 				delete_verbose => 1,
 				absent_verbose => 1,
-				editor => SVK::RevertEditor->new
+				editor => SVK::Editor::Revert->new
 				( copath => $arg{copath},
 				  dpath => $arg{path},
 				  cb_revert => $revert,
@@ -545,13 +547,14 @@ sub _delta_content {
     return unless $handle && $#{$handle} > 0;
 
     if ($arg{send_delta} && $arg{base}) {
+	my $spool = SVN::Pool->new_default ($arg{pool});
+	my $source = $arg{xdroot}->file_contents ($arg{path}, $spool);
 	my $txstream = SVN::TxDelta::new
-	    ($arg{xdroot}->file_contents ($arg{path}), $arg{fh}, $arg{pool});
-
-	SVN::TxDelta::send_txstream ($txstream, @$handle, $arg{pool});
+	    ($source, $arg{fh}, $spool);
+	SVN::TxDelta::send_txstream ($txstream, @$handle, $spool);
     }
     else {
-	SVN::TxDelta::send_stream ($arg{fh}, @$handle, $arg{pool})
+	SVN::TxDelta::send_stream ($arg{fh}, @$handle, SVN::Pool->new ($arg{pool}))
     }
 }
 
@@ -559,11 +562,11 @@ sub _delta_file {
     my ($self, %arg) = @_;
     my $pool = SVN::Pool->new_default (undef);
     $arg{add} = 1 if $arg{auto_add} && $arg{kind} == $SVN::Node::none;
-    my $rev = $arg{add} ? 0 : &{$arg{cb_rev}} ($arg{entry});
+    my $rev = $arg{add} ? 0 : $arg{cb_rev}->($arg{entry});
     my $cinfo = $arg{cinfo} || $self->{checkout}->get ($arg{copath});
     my $schedule = $cinfo->{'.schedule'} || '';
     if ($arg{cb_conflict} && $cinfo->{'.conflict'}) {
-	&{$arg{cb_conflict}} ($arg{editor}, $arg{entry}, $arg{baton});
+	$arg{cb_conflict}->($arg{editor}, $arg{entry}, $arg{baton});
     }
 
     unless (-e $arg{copath}) {
@@ -612,7 +615,7 @@ sub _delta_dir {
     my ($self, %arg) = @_;
     my $pool = SVN::Pool->new_default (undef);
     $arg{add} = 1 if $arg{auto_add} && $arg{kind} == $SVN::Node::none;
-    my $rev = $arg{add} ? 0 : &{$arg{cb_rev}} ($arg{entry} || '');
+    my $rev = $arg{add} ? 0 : $arg{cb_rev}->($arg{entry} || '');
     my $cinfo = $arg{cinfo} || $self->{checkout}->get ($arg{copath});
     my $schedule = $cinfo->{'.schedule'} || '';
 
@@ -703,7 +706,7 @@ sub _delta_dir {
 				       $arg{copath})->{'svn:ignore'}
         if $arg{kind} == $SVN::Node::dir;
     my $ignore = ignore (split ("\n", $svn_ignore || ''));
-    for (grep { !m/^\.+$/ && !exists $entries->{$_} } readdir ($dir)) {
+    for (sort grep { !m/^\.+$/ && !exists $entries->{$_} } readdir ($dir)) {
 	next if m/$ignore/;
 	my $ccinfo = $self->{checkout}->get ("$arg{copath}/$_");
 	my $sche = $ccinfo->{'.schedule'} || '';
@@ -721,13 +724,13 @@ sub _delta_dir {
 			      else {
 				  $dpath =~ s|^\Q$arg{copath}\E/||;
 			      }
-			      &{$arg{cb_unknown}} ($dpath, $File::Find::name);
+			      $arg{cb_unknown}->($dpath, $File::Find::name);
 			  },
 			  $targets->{$_} ? map {"$newco/$_"} @{$targets->{$_}}
 			                : $newco);
 		}
 		else {
-		    &{$arg{cb_unknown}} ("$arg{path}/$_", "$arg{copath}/$_")
+		    $arg{cb_unknown}->("$arg{path}/$_", "$arg{copath}/$_")
 			if $arg{cb_unknown};
 		}
 
@@ -778,7 +781,7 @@ sub checkout_delta {
     my ($self, %arg) = @_;
     my $kind = $arg{xdroot}->check_path ($arg{path});
     my $copath = $arg{copath};
-    $arg{editor} = SVK::DelayEditor->new ($arg{editor})
+    $arg{editor} = SVK::Editor::Delay->new ($arg{editor})
 	unless $arg{nodelay};
     $arg{editor} = SVN::Delta::Editor->new (_debug => 1, _editor => [$arg{editor}])
 	if $arg{debug};
@@ -787,7 +790,7 @@ sub checkout_delta {
 			   $self->_get_rev ($target);
 		       };
     $arg{kind} = $kind;
-    my $rev = &{$arg{cb_rev}} ('');
+    my $rev = $arg{cb_rev}->('');
     my $baton = $arg{editor}->open_root ($rev);
 
     if ($kind == $SVN::Node::file) {
@@ -819,13 +822,13 @@ sub checkout_delta {
 			  else {
 			      $dpath =~ s|^\Q$arg{copath}\E/||;
 			  }
-			  &{$arg{cb_unknown}} ($dpath, $File::Find::name);
+			  $arg{cb_unknown}->($dpath, $File::Find::name);
 		      },
 		      $arg{targets} ? map {"$arg{copath}/$_"} @{$arg{targets}}
 		      : $arg{copath});
 	    }
 	    else {
-		&{$arg{cb_unknown}} ($arg{path}, $arg{copath})
+		$arg{cb_unknown}->($arg{path}, $arg{copath})
 		    if $arg{cb_unknown};
 	    }
 
@@ -1017,7 +1020,7 @@ sub get_keyword_layer {
 
     return PerlIO::via::dynamic->new
 	(translate =>
-         sub { $_[1] =~ s/\$($keyword)\b[-#:\w\t \.\/]*\$/"\$$1: ".&{$kmap{$1}}($root, $path).' $'/eg },
+         sub { $_[1] =~ s/\$($keyword)\b[-#:\w\t \.\/]*\$/"\$$1: ".$kmap{$1}->($root, $path).' $'/eg },
 	 untranslate =>
 	 sub { $_[1] =~ s/\$($keyword)\b[-#:\w\t \.\/]*\$/\$$1\$/g});
 }
@@ -1065,13 +1068,11 @@ our @ISA = qw(SVN::Delta::Editor);
 sub close_edit {
     my $self = shift;
     print loc("Commit checking finished.\n");
-    print loc("%*(%1,conflict) found.\n", $self->{conflicts}) if $self->{conflicts};
     $self->{_editor}->abort_edit (@_);
 }
 
 sub abort_edit {
     my $self = shift;
-    print loc("Empty merge.\n");
     $self->{_editor}->abort_edit (@_);
 }
 
@@ -1122,8 +1123,6 @@ sub apply_textdelta {
 				 "$self->{anchor}/$path", $copath);
 	if ($checksum) {
 	    my $md5 = md5($base);
-	    use Carp;
-	    confess "bzz";
 	    die loc("source checksum mismatch") if $md5 ne $checksum;
 	    seek $base, 0, 0;
 	}
@@ -1228,6 +1227,11 @@ sub change_dir_prop {
 }
 
 sub close_edit {
+    my ($self) = @_;
+    $self->close_directory('');
+}
+
+sub abort_edit {
     my ($self) = @_;
     $self->close_directory('');
 }

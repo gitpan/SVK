@@ -1,12 +1,8 @@
-package SVK::StatusEditor;
+package SVK::Editor::Status;
 use strict;
 require SVN::Delta;
 our $VERSION = '0.05';
 our @ISA = qw(SVN::Delta::Editor);
-
-sub set_target_revision {
-    my ($self, $revision) = @_;
-}
 
 sub open_root {
     my ($self, $baserev) = @_;
@@ -104,7 +100,7 @@ sub close_directory {
 	delete $self->{conflict}{$_};
 	s|^\Q$self->{copath}\E/|$self->{rpath}|;
 
-	print sprintf ("%1s%1s \%s\n", 'C', '', $_);
+	print sprintf ("%1s%1s  \%s\n", 'C', '', $_);
     }
 
 }

@@ -1,6 +1,6 @@
 package SVK::Command::Log;
 use strict;
-our $VERSION = '0.14';
+our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command );
 use SVK::XD;
@@ -59,6 +59,7 @@ sub _get_logs {
     my $reverse = ($fromrev < $torev);
     my @revs;
     ($fromrev, $torev) = ($torev, $fromrev) if $reverse;
+    $torev = 1 if $torev < 1;
 
     my $docall = sub {
 	my ($rev) = @_;

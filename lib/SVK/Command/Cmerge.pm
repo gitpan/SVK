@@ -1,11 +1,11 @@
 package SVK::Command::Cmerge;
 use strict;
-our $VERSION = '0.14';
+our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Merge SVK::Command::Copy SVK::Command::Propset );
 use SVK::XD;
 use SVK::I18N;
-use SVK::CombineEditor;
+use SVK::Editor::Combine;
 
 sub options {
     ($_[0]->SUPER::options,
@@ -34,7 +34,8 @@ sub run {
 
     die loc("repos paths mismatch") unless $src->{repospath} eq $dst->{repospath};
     my $repos = $src->{repos};
-    my ($base_path, $base_rev) = $self->find_merge_base ($repos, $src->{path}, $dst->{path});
+    $self->{merge} = SVK::Merge->new (%$self);
+    my ($base_path, $base_rev) = $self->{merge}->find_merge_base ($repos, $src->{path}, $dst->{path});
 
     # find a branch target
     die loc("cannot find a path for temporary branch") if $base_path eq '/';
@@ -49,7 +50,7 @@ sub run {
 	) unless $self->{check_only};
 
     my $fs = $repos->fs;
-    my $ceditor = SVK::CombineEditor->new(tgt_anchor => $base_path, #$check_only ? $base_path : $tmpbranch,
+    my $ceditor = SVK::Editor::Combine->new(tgt_anchor => $base_path, #$check_only ? $base_path : $tmpbranch,
 					  base_root  => $fs->revision_root ($base_rev),
 					  pool => SVN::Pool->new,
 					 );
@@ -71,7 +72,7 @@ sub run {
 	print loc("Merging with base %1 %2: applying %3 %4:%5.\n", $base_path, $base_rev, $src->{path}, $fromrev, $torev);
 
 	my $fs = $repos->fs;
-	my $editor = SVK::MergeEditor->new
+	my $editor = SVK::Editor::Merge->new
 	    ( anchor => $src->{path},
 	      base_anchor => $src->{path},
 	      base_root => $fs->revision_root ($fromrev),
@@ -103,7 +104,7 @@ sub run {
     my $uuid = $repos->fs->get_uuid;
 
     # give ticket to src
-    my $ticket = $self->find_merge_sources ($repos, $src->{path}, 1, 1);
+    my $ticket = $self->{merge}->find_merge_sources ($repos, $src->{path}, 1, 1);
 
     $ticket .= "\n$uuid:$tmpbranch:$newrev";
 

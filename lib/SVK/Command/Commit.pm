@@ -1,13 +1,12 @@
 package SVK::Command::Commit;
 use strict;
-our $VERSION = '0.14';
+our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command );
 use SVK::XD;
 use SVK::I18N;
-use SVK::CommitStatusEditor;
-use SVK::SignEditor;
-use SVK::Util qw(get_buffer_from_editor slurp_fh find_svm_source svn_mirror);
-use File::Temp;
+use SVK::Editor::CommitStatus;
+use SVK::Editor::Sign;
+use SVK::Util qw(get_buffer_from_editor slurp_fh find_svm_source svn_mirror tmpfile);
 use SVN::Simple::Edit;
 
 my $target_prompt = '=== below are targets to be committed ===';
@@ -53,7 +52,7 @@ sub under_mirror {
 sub check_mirrored_path {
     my ($self, $target) = @_;
     if (!$self->{direct} && $self->under_mirror ($target)) {
-	print loc ("%1 is under mirrored path, use --force to override.\n",
+	print loc ("%1 is under mirrored path, use --direct to override.\n",
 		    $target->{depotpath});
 	return;
     }
@@ -79,8 +78,7 @@ sub get_commit_editor {
 sub get_commit_message {
     my ($self) = @_;
     $self->{message} = get_buffer_from_editor ('log message', $target_prompt,
-					       "\n$target_prompt\n",
-					       "/tmp/svk-commitXXXXX")
+					       "\n$target_prompt\n", 'commit')
 	unless defined $self->{message};
 }
 
@@ -123,7 +121,7 @@ sub get_editor {
 						     $self->{signeditor}{sig})
 			   if $self->{sign};
 		       $m->run ($rev);
-		       &{$callback} ($m->find_local_rev ($rev), @_)
+		       $callback->($m->find_local_rev ($rev), @_)
 			   if $callback }
 		);
 	    $base_rev = $m->{fromrev};
@@ -141,13 +139,13 @@ sub get_editor {
 		  $fs->change_rev_prop ($_[0], 'svk:signature',
 					$self->{signeditor}{sig})
 		      if $self->{sign};
-		  &{$callback} (@_) if $callback; }
+		  $callback->(@_) if $callback; }
 	  ));
     $base_rev ||= $target->{repos}->fs->youngest_rev;
 
     if ($self->{sign}) {
 	my ($uuid, $dst) = find_svm_source ($target->{repos}, $target->{path});
-	$self->{signeditor} = $editor = SVK::SignEditor->new (_editor => [$editor],
+	$self->{signeditor} = $editor = SVK::Editor::Sign->new (_editor => [$editor],
 							      anchor => "$uuid:$dst"
 							     );
     }
@@ -155,24 +153,7 @@ sub get_editor {
     $editor = SVK::XD::CheckEditor->new ($editor)
 	if $self->{check_only};
 
-    %cb = ( cb_exist => $self->{cb_exist} ||
-	    sub { my $path = $target->{path}.'/'.shift;
-		  $root->check_path ($path) != $SVN::Node::none;
-	      },
-	    cb_rev => sub { $base_rev; },
-	    cb_conflict => sub { die loc("conflict on %1", "$target->{path}/$_[0]")
-				     unless $self->{check_only};
-				 $editor->{conflicts}++;
-			     },
-	    cb_localmod => $self->{cb_localmod} ||
-	    sub { my ($path, $checksum, $pool) = @_;
-		  $path = "$target->{path}/$path";
-		  my $md5 = $root->file_md5_checksum ($path, $pool);
-		  return if $md5 eq $checksum;
-		  return [$root->file_contents ($path, $pool),
-			  undef, $md5];
-	      },
-	  );
+    %cb = SVK::Editor::Merge::cb_for_root ($root, $target->{path}, $base_rev);
 
     return ($editor, %cb, mirror => $m, callback => \$callback);
 }
@@ -189,12 +170,16 @@ sub run {
     my $xdroot = $self->{xd}->xdroot (%$target);
 
     unless (defined $self->{message}) {
-	($fh, $file) = mkstemps("svk-commitXXXXX", '.tmp');
+	($fh, $file) = tmpfile ('commit', UNLINK => 0);
     }
 
     print $fh "\n$target_prompt\n" if $fh;
 
     my $targets = [];
+    my $statuseditor = SVK::Editor::CommitStatus->new
+	( copath => $target->{copath},
+	  dpath => $target->{path},
+	  targets => $targets, fh => $fh);
     $self->{xd}->checkout_delta
 	( %$target,
 	  baseroot => $xdroot,
@@ -202,18 +187,15 @@ sub run {
 	  nodelay => 1,
 	  delete_verbose => 1,
 	  absent_ignore => 1,
-	  editor => SVK::CommitStatusEditor->new
-	  ( copath => $target->{copath},
-	    dpath => $target->{path},
-	    targets => $targets, fh => $fh),
-	  cb_conflict => \&SVK::StatusEditor::conflict,
+	  editor => $statuseditor,
+	  cb_conflict => \&SVK::Editor::Status::conflict,
 	);
 
-    my $conflicts = grep {$_->[0] eq 'C'} @$targets;
+    my $conflicts = keys %{$statuseditor->{conflict}};
     if ($conflicts) {
 	if ($fh) {
 	    close $fh;
-	    unlink $fh;
+	    unlink $file;
 	}
 	print loc("%*(%1,conflict) detected. Use 'svk resolved' after resolving them.\n", $conflicts);
 	return;

@@ -1,6 +1,6 @@
 package SVK::Command::Propset;
 use strict;
-our $VERSION = '0.14';
+our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command::Commit );
 use SVK::XD;
 use SVK::I18N;
@@ -84,7 +84,7 @@ SVK::Command::Propset - Set a property on path
   -m [--message] message:	Commit message
   -C [--check-only]:	Needs description
   -s [--sign]:	Needs description
-  -force:	Needs description
+  --force:	Needs description
 
 =head1 AUTHORS
 
