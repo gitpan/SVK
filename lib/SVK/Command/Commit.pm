@@ -1,6 +1,6 @@
 package SVK::Command::Commit;
 use strict;
-our $VERSION = $SVK::VERSION;
+use SVK::Version;  our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command );
 use constant opt_recursive => 1;
 use SVK::XD;
@@ -8,7 +8,8 @@ use SVK::I18N;
 use SVK::Editor::Status;
 use SVK::Editor::Sign;
 use SVK::Util qw( HAS_SVN_MIRROR get_buffer_from_editor slurp_fh read_file
-		  find_svm_source tmpfile abs2rel find_prev_copy );
+		  find_svm_source tmpfile abs2rel find_prev_copy from_native to_native
+		  get_encoder );
 
 sub options {
     ('m|message=s'  => 'message',
@@ -16,8 +17,9 @@ sub options {
      'C|check-only' => 'check_only',
      'S|sign'	  => 'sign',
      'P|patch=s'  => 'patch',
-     'import',	  => 'import',
-     'direct',	  => 'direct',
+     'import'	  => 'import',
+     'encoding=s' => 'encoding',
+     'direct'	  => 'direct',
     );
 }
 
@@ -65,9 +67,17 @@ sub fill_commit_message {
 sub get_commit_message {
     my ($self, $msg) = @_;
     $self->fill_commit_message;
-    return if defined $self->{message};
     $self->{message} = get_buffer_from_editor
-	(loc('log message'), $self->message_prompt, join ("\n", $msg || '', $self->message_prompt, ''), 'commit');
+	(loc('log message'), $self->message_prompt,
+	 join ("\n", $msg || '', $self->message_prompt, ''), 'commit')
+	    unless defined $self->{message};
+    $self->decode_commit_message;
+}
+
+sub decode_commit_message {
+    my $self = shift;
+    eval { from_native ($self->{message}, 'commit message', $self->{encoding}); 1 }
+	or die $@.loc("try --encoding.\n");
 }
 
 # XXX: This should just return Editor::Dynamic objects
@@ -148,7 +158,7 @@ sub get_editor {
     my $yrev = $fs->youngest_rev;
     my $root = $fs->revision_root ($yrev);
 
-    %cb = SVK::Editor::Merge::cb_for_root
+    %cb = SVK::Editor::Merge->cb_for_root
 	($root, $target->{path}, defined $base_rev ? $base_rev : $yrev);
 
     if ($self->{patch}) {
@@ -224,10 +234,12 @@ sub get_committable {
     print $fh "\n", $self->target_prompt, "\n" if $fh;
 
     my $targets = [];
+    my $encoder = get_encoder;
     my $statuseditor = SVK::Editor::Status->new
 	( notify => SVK::Notify->new
 	  ( cb_flush => sub {
 		my ($path, $status) = @_;
+		to_native ($path, 'path', $encoder);
 		my $copath = $target->copath ($path);
 		push @$targets, [$status->[0] || ($status->[1] ? 'P' : ''),
 				 $copath];
@@ -269,7 +281,7 @@ sub get_committable {
 	die loc("No targets to commit.\n") if $#{$targets} < 0;
 	unlink $file;
     }
-
+    $self->decode_commit_message;
     return [sort {$a->[1] cmp $b->[1]} @$targets];
 }
 
@@ -310,12 +322,14 @@ sub committed_commit {
 	}
 	my $root = $fs->revision_root ($rev);
 	# update keyword-translated files
+	my $encoder = get_encoder;
 	for (@$targets) {
 	    my ($action, $copath) = @$_;
 	    next if $action eq 'D' || -d $copath;
 	    my $path = $target->{path};
 	    $path = '' if $path eq '/';
 	    my $dpath = abs2rel($copath, $target->{copath} => $path, '/');
+	    from_native ($dpath, 'path', $encoder);
 	    my $prop = $root->node_proplist ($dpath);
 	    my $layer = SVK::XD::get_keyword_layer ($root, $dpath, $prop);
 	    my $eol = SVK::XD::get_eol_layer ($root, $dpath, $prop, '>');
@@ -401,7 +415,7 @@ sub run_delta {
 		my ($source_path, $source_rev) = $self->{xd}->_copy_source ($entry, $cotarget);
 		($source_path, $source_rev) = ($revtarget, $entry->{revision})
 		    unless defined $source_path;
-		return $revcache{$source_rev} if exists $revcache{corev};
+		return $revcache{$source_rev} if exists $revcache{$source_rev};
 		my $rev = ($fs->revision_root ($source_rev)->node_history ($source_path)->prev (0)->location)[1];
 		$revcache{$source_rev} = $cb{mirror}->find_remote_rev ($rev);
 	    }) : ());
@@ -426,6 +440,7 @@ SVK::Command::Commit - Commit changes to depot
  -C [--check-only]      : try operation but make no changes
  -P [--patch] arg       : instead of commit, save this change as a patch
  -S [--sign]            : sign this change
+ --encoding ENC         : treat value as being in charset encoding ENC
  --import               : import mode; automatically add and delete nodes
  --direct               : commit directly even if the path is mirrored
 

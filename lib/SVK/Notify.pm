@@ -1,6 +1,6 @@
 package SVK::Notify;
 use SVK::I18N;
-use SVK::Util qw( abs2rel $SEP );
+use SVK::Util qw( abs2rel $SEP to_native get_encoding);
 use strict;
 
 =head1 NAME
@@ -25,7 +25,8 @@ sub flush_print {
     my ($path, $status, $extra) = @_;
     no warnings 'uninitialized';
     $extra = " - $extra" if $extra;
-    print sprintf ("%1s%1s%1s \%s\%s\n", @{$status}[0..2], $path || '.', $extra);
+    print sprintf ("%1s%1s%1s \%s\%s\n", @{$status}[0..2],
+		   length $path ? $path : '.', $extra);
 }
 
 sub skip_print {
@@ -35,7 +36,14 @@ sub skip_print {
 
 sub print_report {
     my ($print, $is_copath, $report, $target) = @_;
-    return $print unless defined $report;
+    my $enc = Encode::find_encoding (get_encoding);
+    # XXX: $report should already be in native encoding, so this is wrong
+    my $print_native = $enc->name eq 'utf8'
+	? $print
+	: sub { to_native ($_[0]);
+		goto \&$print;
+	    };
+    return $print_native unless defined $report;
     sub {
 	my $path = shift;
 	if ($target) {
@@ -46,13 +54,15 @@ sub print_report {
 		$path = abs2rel($path, $target => undef, $is_copath ? () : '/');
 	    }
 	}
-	$print->((
-	    $path ? $is_copath ? SVK::Target->copath ($report, $path)
-			       : $report ? "$report/$path"
-					 : $path
-		  : $is_copath ? SVK::Target->copath('', $report || '.')
-			       : ($report || '.')
-	), @_);
+	if (length $path) {
+	    $print_native->($is_copath ? SVK::Target->copath ($report, $path)
+			               : length $report ? "$report/$path" : $path, @_);
+	}
+	else {
+	    my $r = length $report ? $report : '.';
+	    $print_native->($is_copath ? SVK::Target->copath('', $r) : $r,
+			    @_);
+	}
     };
 }
 

@@ -1,11 +1,11 @@
 package SVK::Command::Checkout;
 use strict;
-our $VERSION = $SVK::VERSION;
+use SVK::Version;  our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Update );
 use SVK::XD;
 use SVK::I18N;
-use SVK::Util qw( get_anchor abs_path move_path splitdir $SEP );
+use SVK::Util qw( get_anchor abs_path move_path splitdir $SEP get_encoding );
 use File::Path;
 
 sub options {
@@ -61,6 +61,7 @@ sub run {
 
     $self->{xd}{checkout}->store_recursively ( $copath,
 					       { depotpath => $target->{depotpath},
+						 encoding => get_encoding,
 						 revision => 0,
 						 '.schedule' => undef,
 						 '.newprop' => undef,
@@ -117,7 +118,9 @@ use SVK::I18N;
 
 sub parse_arg {
     my ($self, @arg) = @_;
-    return @arg >= 2 ? @arg : ('', @arg);
+    die loc("Do you mean svk switch %1?\n", $arg[0]) if @arg == 1;
+    return if @arg > 2;
+    return @arg;
 }
 
 sub lock { ++$_[0]->{hold_giant} }
@@ -168,7 +171,7 @@ sub parse_arg {
 
 sub lock { ++$_[0]->{hold_giant} }
 
-sub _remove_entry { {depotpath => undef, revision => undef} }
+sub _remove_entry { (depotpath => undef, revision => undef, encoding => undef) }
 
 sub run {
     my ($self, $path) = @_;
@@ -178,7 +181,7 @@ sub run {
 
     my $checkout = $self->{xd}{checkout};
     foreach my $copath (sort @copath) {
-        $checkout->store ($copath, _remove_entry);
+        $checkout->store_recursively ($copath, {_remove_entry, $self->_schedule_empty});
         print loc("Checkout path '%1' detached.\n", $copath);
     }
 
@@ -198,7 +201,7 @@ SVK::Command::Checkout - Checkout the depotpath
  checkout DEPOTPATH [PATH]
  checkout --list
  checkout --detach [DEPOTPATH | PATH]
- checkout --relocate [DEPOTPATH | PATH] PATH
+ checkout --relocate DEPOTPATH|PATH PATH
 
 =head1 OPTIONS
 

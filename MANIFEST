@@ -63,6 +63,7 @@ lib/SVK/Editor/Status.pm
 lib/SVK/Editor/Translate.pm
 lib/SVK/Editor/XD.pm
 lib/SVK/Help/Index.pod
+lib/SVK/Help/Intro.pod
 lib/SVK/Help/zh_cn/Index.pod
 lib/SVK/Help/zh_tw/Index.pod
 lib/SVK/I18N.pm
@@ -87,6 +88,7 @@ lib/SVK/Resolve/XXDiff.pm
 lib/SVK/Target.pm
 lib/SVK/Target/Universal.pm
 lib/SVK/Util.pm
+lib/SVK/Version.pm
 lib/SVK/XD.pm
 Makefile.PL
 MANIFEST
@@ -122,6 +124,7 @@ t/07smerge-mixanchor.t
 t/07smerge-moved.t
 t/07smerge-multi.t
 t/07smerge-prop.t
+t/07smerge-relayed.t
 t/07smerge-to-from.t
 t/07smerge-upload.t
 t/07smerge.t
@@ -156,10 +159,10 @@ t/50dav.t
 t/70symlink.t
 t/71autovivify.t
 t/72sign.t
+t/73i18n.t
 t/svk-sec.gpg
 t/svk.gpg
 t/tree.pl
-TODO
 utils/extract-docs
 utils/extract-message-catalog
 utils/svk-ediff.el

@@ -1,27 +1,22 @@
 package SVK::XD;
 use strict;
-our $VERSION = $SVK::VERSION;
+use SVK::Version;  our $VERSION = $SVK::VERSION;
 require SVN::Core;
 require SVN::Repos;
 require SVN::Fs;
-require SVN::Delta;
-require SVK::Merge;
-use SVK::Editor::Status;
-use SVK::Editor::Delay;
-use SVK::Editor::XD;
 use SVK::I18N;
 use SVK::Util qw( get_anchor abs_path abs2rel splitdir catdir splitpath $SEP
 		  HAS_SYMLINK is_symlink is_executable mimetype mimetype_is_text
-		  md5_fh get_prompt traverse_history make_path dirname );
-use Data::Hierarchy 0.21;
-use File::Spec;
-use File::Find;
-use File::Path;
-use YAML qw(LoadFile DumpFile);
+		  md5_fh get_prompt traverse_history make_path dirname
+		  from_native to_native get_encoder );
+use autouse 'File::Find' => qw(find);
+use autouse 'File::Path' => qw(rmtree);
+use autouse 'YAML'	 => qw(LoadFile DumpFile);
+use autouse 'Regexp::Shellish' => qw( compile_shellish ) ;
 use PerlIO::eol 0.10 qw( NATIVE LF );
 use PerlIO::via::dynamic;
 use PerlIO::via::symlink;
-use Regexp::Shellish qw( compile_shellish ) ;
+
 
 =head1 NAME
 
@@ -545,8 +540,11 @@ L<SVK::Editor::Merge> when called in array context.
 sub get_editor {
     my ($self, %arg) = @_;
     my ($copath, $path) = @arg{qw/copath path/};
+    my $encoding = $self->{checkout}->get ($copath)->{encoding};
     $path = '' if $path eq '/';
-    $arg{get_copath} = sub { $_[0] = SVK::Target->copath ($copath,  $_[0]) };
+    $encoding = Encode::find_encoding($encoding) if $encoding;
+    $arg{get_copath} = sub { to_native ($_[0], 'path', $encoding) if $encoding;
+			     $_[0] = SVK::Target->copath ($copath,  $_[0]) };
     $arg{get_path} = sub { $_[0] = "$path/$_[0]" };
     my $storage = SVK::Editor::XD->new (%arg, xd => $self);
 
@@ -580,7 +578,7 @@ sub auto_prop {
     my $prop;
     $prop->{'svn:executable'} = '*' if is_executable($copath);
     # auto mime-type
-    open my $fh, '<', $copath or die "$copath: $!";
+    open my $fh, '<', $copath or Carp::confess "$copath: $!";
     if (my $type = mimetype($fh)) {
 	# add only binary mime types or text/* but not text/plain
 	$prop->{'svn:mime-type'} = $type
@@ -1083,13 +1081,15 @@ sub _delta_dir {
     # XXX: Merge this with @direntries so we have single entry to descendents
     for my $entry (sort keys %$entries) {
 	my $newtarget;
+	my $copath = $entry;
+	to_native ($copath, 'path', $arg{encoder});
 	if (defined $targets) {
-	    next unless exists $targets->{$entry};
-	    $newtarget = delete $targets->{$entry};
+	    next unless exists $targets->{$copath};
+	    $newtarget = delete $targets->{$copath};
 	}
 	my $kind = $entries->{$entry}->kind;
 	my $unchanged = ($kind == $SVN::Node::file && $signature && !$signature->changed ($entry));
-	my $copath = SVK::Target->copath ($arg{copath}, $entry);
+	$copath = SVK::Target->copath ($arg{copath}, $copath);
 	my $ccinfo = $self->{checkout}->get ($copath);
 	next if $unchanged && !$ccinfo->{'.schedule'} && !$ccinfo->{'.conflict'};
 	lstat ($copath);
@@ -1128,16 +1128,29 @@ sub _delta_dir {
     # if we are at somewhere arg{copath} not exist, $arg{type} is empty
     if ($arg{type} && !(defined $targets && !keys %$targets)) {
 	opendir my ($dir), $arg{copath} or die "$arg{copath}: $!";
-	@direntries = sort grep { !m/^\.+$/ && !exists $entries->{$_} } readdir ($dir);
+	for (readdir($dir)) {
+	    if (eval {from_native($_, 'path', $arg{encoder}); 1}) {
+		push @direntries, $_;
+	    }
+	    elsif ($arg{auto_add}) { # fatal for auto_add
+		die "$_: $@";
+	    }
+	    else {
+		print "$_: $@";
+	    }
+	}
+	@direntries = sort grep { !m/^\.+$/ && !exists $entries->{$_} } @direntries;
     }
 
-    for my $entry (@direntries) {
+    for my $copath (@direntries) {
+	my $entry = $copath;
+	to_native ($copath, 'path', $arg{encoder});
 	my $newtarget;
 	if (defined $targets) {
-	    next unless exists $targets->{$entry};
-	    $newtarget = delete $targets->{$entry};
+	    next unless exists $targets->{$copath};
+	    $newtarget = delete $targets->{$copath};
 	}
-	my %newpaths = ( copath => SVK::Target->copath ($arg{copath}, $entry),
+	my %newpaths = ( copath => SVK::Target->copath ($arg{copath}, $copath),
 			 entry => defined $arg{entry} ? "$arg{entry}/$entry" : $entry,
 			 path => $arg{path} eq '/' ? "/$entry" : "$arg{path}/$entry",
 			 base_path => $arg{base_path} eq '/' ? "/$entry" : "$arg{base_path}/$entry",
@@ -1207,6 +1220,7 @@ sub checkout_delta {
     my ($self, %arg) = @_;
     $arg{base_root} ||= $arg{xdroot};
     $arg{base_path} ||= $arg{path};
+    $arg{encoder} = get_encoder;
     my $kind = $arg{base_kind} = $arg{base_root}->check_path ($arg{base_path});
     $arg{kind} = $arg{base_root} eq $arg{xdroot} ? $kind : $arg{xdroot}->check_path ($arg{path});
     die "checkout_delta called with non-dir node"
@@ -1254,17 +1268,19 @@ sub do_resolved {
 }
 
 sub get_eol_layer {
-    my ($root, $path, $prop, $mode) = @_;
+    my ($root, $path, $prop, $mode, $checkle) = @_;
     my $k = $prop->{'svn:eol-style'} or return ':raw';
     # short-circuit no-op write layers on lf platforms
     if (NATIVE eq LF) {
 	return ':raw' if $mode eq '>' && ($k eq 'native' or $k eq 'LF');
     }
     if ($k eq 'native') {
-        return ':raw:eol(LF!-Native!)';
+	$checkle = $checkle ? '!' : '';
+        return ":raw:eol(LF$checkle-Native!)";
     }
     elsif ($k eq 'CRLF' or $k eq 'CR' or $k eq 'LF') {
-        return ":raw:eol($k!)";
+	$k .= '!' if $checkle || $mode eq '>';
+        return ":raw:eol($k)";
     }
     else {
         return ':raw'; # unsupported
@@ -1370,7 +1386,7 @@ Returns a file handle with keyword translation and line-ending layers attached.
 =cut
 
 sub get_fh {
-    my ($root, $mode, $path, $fname, $prop, $layer, $eol) = @_;
+    my ($root, $mode, $path, $fname, $prop, $layer, $eol, $checkle) = @_;
     {
 	local $@;
 	$prop ||= eval { $root->node_proplist ($path) };
@@ -1379,7 +1395,7 @@ sub get_fh {
 	if HAS_SYMLINK and ( defined $prop->{'svn:special'} || ($mode eq '<' && is_symlink($fname)) );
     if (keys %$prop) {
 	$layer ||= get_keyword_layer ($root, $path, $prop);
-	$eol ||= get_eol_layer($root, $path, $prop, $mode);
+	$eol ||= get_eol_layer($root, $path, $prop, $mode, $checkle);
     }
     $eol ||= ':raw';
     open my ($fh), $mode.$eol, $fname or die "can't open $fname: $!\n";

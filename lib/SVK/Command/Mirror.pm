@@ -1,6 +1,6 @@
 package SVK::Command::Mirror;
 use strict;
-our $VERSION = $SVK::VERSION;
+use SVK::Version;  our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Commit );
 use SVK::I18N;
@@ -111,18 +111,24 @@ sub run {
     my @depots = (defined($_[1])) ? @_[1..$#_] : sort keys %{$self->{xd}{depotmap}};
     foreach my $depot (@depots) {
 	$depot =~ s{/}{}g;
-	$target = $self->arg_depotpath ("/$depot/");
+	$target = eval { $self->arg_depotpath ("/$depot/") };
+	if ($@) {
+	    warn loc ("Depot /%1/ not loadable.\n", $depot);
+	    next;
+	}
 	my @paths = SVN::Mirror::list_mirror ($target->{repos});
 	my $fs = $target->{repos}->fs;
 	my $root = $fs->revision_root ($fs->youngest_rev);
 	my $name = $target->depotname;
 	foreach my $path (@paths) {
+	    eval {
 	    my $m = SVN::Mirror->new(
                     target_path => $path,
                     repos => $target->{repos},
                     get_source => 1
                 );
 	    printf $fmt, "/$name$path", $m->{source};
+	    };
 	}
     }
     return;
@@ -200,7 +206,7 @@ sub recover_headrev {
 
     $self->command(
         propset => { direct  => 1, revprop => 1 },
-    )->run($_ => $props->{$_}, $target) for sort keys %$props;
+    )->run($_ => $props->{$_}, $target) for sort grep {m/^sv[nm]/} keys %$props;
 
     print loc("Mirror state successfully recovered.\n");
     return;

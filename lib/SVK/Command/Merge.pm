@@ -1,6 +1,6 @@
 package SVK::Command::Merge;
 use strict;
-our $VERSION = $SVK::VERSION;
+use SVK::Version;  our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
@@ -80,6 +80,7 @@ sub get_commit_message {
     $self->{message} = defined $self->{message} ?
 	join ("\n", grep {length $_} ($self->{message}, $log))
 	    : $self->SUPER::get_commit_message ($log);
+    $self->decode_commit_message;
 }
 
 sub run {

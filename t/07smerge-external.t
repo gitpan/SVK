@@ -1,12 +1,12 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests => 16;
+use Test::More tests => 25;
 BEGIN { require 't/tree.pl' };
 
 our ($answer, $output);
 
 my ($xd, $svk) = build_test();
-my ($copath, $corpath) = get_copath ('smerge');
+my ($copath, $corpath) = get_copath ('smerge-external');
 
 $answer = 's'; # skip
 
@@ -14,6 +14,7 @@ $svk->mkdir ('-m', 'the trunk', '//trunk');
 $svk->co ('//trunk', $copath);
 overwrite_file ("$copath/test.pl", "#!/usr/bin/perl -w\nsub { 'this is sub' }\n#common\n#common2\n\n\n");
 $svk->add ("$copath/test.pl");
+$svk->ps ("svn:eol-style", "native", "$copath/test.pl");
 $svk->commit ('-m', 'test.pl', $copath);
 
 $svk->cp ('-m', 'local branch of trunk', '//trunk', '//local');
@@ -33,21 +34,34 @@ $answer = 't'; # yours
 $svk->sm ('//trunk', $copath);
 is_output ($svk, 'diff', ["$copath/test.pl"],
 	   [__"=== $copath/test.pl",
-            __"==================================================================",
+            "==================================================================",
             __"--- $copath/test.pl  (revision 5)",
             __"+++ $copath/test.pl  (local)",
             __('@@ -1,5 +1,5 @@'),
-            __"-#!/usr/bin/perl -w",
-            __"-sub { 'this is sub on trunk' }",
-            __"+#!/usr/bin/perl -T -w",
-            __"+sub { 'this is sub on local' }",
-            __" #common",
-            __" ",
-            __" sub newsub { undef }",
+            "-#!/usr/bin/perl -w",
+            "-sub { 'this is sub on trunk' }",
+            "+#!/usr/bin/perl -T -w",
+            "+sub { 'this is sub on local' }",
+            " #common",
+            " ",
+            " sub newsub { undef }",
            ], 'svk-merge mine');
 
 $answer = 't'; # theirs
 $svk->sm ('-m', 'merge from trunk to local', '//trunk', '//local');
+# TODO: Don't stuff up line endings (currently problematic on Win32)
+is_output ($svk, 'diff', ["//trunk/test.pl", "//local/test.pl"],
+	   [__"=== test.pl",
+	    "==================================================================",
+	    "--- test.pl   (/trunk/test.pl)   (revision 6)",
+	    "+++ test.pl   (/local/test.pl)   (revision 6)",
+	    __('@@ -6,3 +6,5 @@'),
+	    " #common2",
+	    " ",
+	    " ",
+	    "+#trunk",
+	    "+trunk additions (do not kill!)",
+	   ], 'svk-merge mine');
 is_output ($svk, 'up', ["$copath"],
 	   ["Syncing //local(/local) in $corpath to 6.",
 	    __"g   $copath/test.pl"], 'svk-merge theirs');
@@ -165,3 +179,75 @@ is_output_like ($svk, 'sm', ['-m', 'merge to local again', '//trunk', '//local']
 $svk->up($copath);
 is_file_content ("$copath/test.pl", "merged\n");
 
+# merge deleted files interactive
+$svk->switch ('//trunk', $copath);
+$svk->up($copath);
+overwrite_file ("$copath/foo", "trunk\n");
+$svk->add ("$copath/foo");
+$svk->commit ('-m', 'foo', $copath);
+$svk->sm ('-m', 'merge from trunk to local', '//trunk', '//local');
+$svk->delete ('-m', 'delete foo in trunk', '//trunk/foo');
+$svk->switch ('//local', $copath);
+$svk->up($copath);
+overwrite_file ("$copath/foo", "local\n");
+$svk->commit ('-m', 'change on local', $copath);
+
+$ENV{SVKRESOLVE} = 't'; # thiers
+is_output ($svk, 'sm', ['-C', '//trunk', '//local'],
+	   ['Auto-merging (16, 18) /trunk to /local (base /trunk:16).',
+	    'C   foo',
+	    qr'New merge ticket:',
+	    'Empty merge.',
+	    '1 conflict found.']);
+is_output ($svk, 'sm', ['-m', 'merge to local again', '//trunk', '//local'],
+	   ['Auto-merging (16, 18) /trunk to /local (base /trunk:16).',
+	    'D   foo',
+	    qr'New merge ticket:',
+	    'Committed revision 20.']);
+
+$svk->switch ('//trunk', $copath);
+$svk->up($copath);
+overwrite_file ("$copath/foo", "trunk\n");
+$svk->add ("$copath/foo");
+$svk->commit ('-m', 'foo', $copath);
+$svk->sm ('-m', 'merge from trunk to local', '//trunk', '//local');
+$svk->delete ('-m', 'delete foo in trunk', '//trunk/foo');
+$svk->switch ('//local', $copath);
+$svk->up($copath);
+overwrite_file ("$copath/foo", "local\n");
+$svk->commit ('-m', 'change on local', $copath);
+
+$ENV{SVKRESOLVE} = 'y'; # thiers
+is_output_like ($svk, 'sm', ['-C', '//trunk', '//local'],
+		qr|1 conflict found.|);
+is_output_like ($svk, 'sm', ['-m', 'merge to local again', '//trunk', '//local'],
+		qr|G   foo|);
+is_file_content ("$copath/foo", "local\n");
+$svk->delete ('-m', 'delete foo in local(cleanup)', '//local/foo');
+
+$svk->switch ('//trunk', $copath);
+$svk->up($copath);
+overwrite_file ("$copath/foo", "trunk\n");
+$svk->add ("$copath/foo");
+$svk->commit ('-m', 'foo', $copath);
+$svk->sm ('-m', 'merge from trunk to local', '//trunk', '//local');
+$svk->delete ('-m', 'delete foo in trunk', '//trunk/foo');
+$svk->switch ('//local', $copath);
+$svk->up($copath);
+overwrite_file ("$copath/foo", "local\n");
+$svk->commit ('-m', 'change on local', $copath);
+
+$ENV{SVKRESOLVE} = 'e'; # thiers
+$answer = 'a';
+set_editor(<< "TMP");
+\$_ = shift;
+open _, ">\$_" or die $!;
+print _ "merged\\n";
+TMP
+is_output_like ($svk, 'sm', ['-C', '//trunk', '//local'],
+		qr|1 conflict found.|);
+is_output_like ($svk, 'sm', ['-m', 'merge to local again', '//trunk', '//local'],
+		qr|G   foo|);
+$svk->up($copath);
+is_file_content ("$copath/foo", "merged\n");
+$svk->delete ('-m', 'delete foo in local(cleanup)', '//local/foo');
