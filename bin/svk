@@ -154,7 +154,8 @@ if ($0 eq __FILE__) {
     }
 
     if ($cmd eq 'help') {
-	SVK::Command->help ($info, @ARGV);
+	SVK::Command->help (@ARGV);
+	exit 0;
     }
 
     _init();
