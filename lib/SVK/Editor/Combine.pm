@@ -51,14 +51,15 @@ sub callbacks {
     my $self = shift;
     ( cb_exist => sub { $self->cb_exist (@_) },
       cb_localmod => sub { $self->cb_localmod (@_) },
+      cb_localprop => sub { $self->cb_localmod (@_) },
     );
 }
 
 sub cb_exist {
     my ($self, $path) = @_;
-    return 1 if exists $self->{files}{$path};
+    return $SVN::Node::file if exists $self->{files}{$path};
     $path = $self->{tgt_anchor}.'/'.$path;;
-    $self->{base_root}->check_path ($path) != $SVN::Node::none;
+    return $self->{base_root}->check_path ($path);
 }
 
 sub cb_localmod {
@@ -71,9 +72,15 @@ sub cb_localmod {
     }
 
     $path = $self->{tgt_anchor}.'/'.$path;;
-    my $md5 = $self->{base_root}->file_md5_checksum ($path);
+    my $md5 = $self->{base_root}->file_md5_checksum ($path, $pool);
     return if $md5 eq $checksum;
     return [$self->{base_root}->file_contents ($path, $self->{pool}), undef, $md5];
+}
+
+sub cb_localprop {
+    my ($self, $path, $propname, $pool) = @_;
+    $path = $self->{tgt_anchor}.'/'.$path;
+    return $self->{base_root}->node_prop ($path, $propname, $pool);
 }
 
 sub add_file {

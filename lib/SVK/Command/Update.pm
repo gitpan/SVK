@@ -3,15 +3,16 @@ use strict;
 our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command );
+use constant opt_recursive => 1;
 use SVK::XD;
 use SVK::I18N;
 use SVK::Util qw( HAS_SVN_MIRROR );
 
 sub options {
     ('r|revision=i'    => 'rev',
-     'N|non-recursive' => 'nonrecursive',
      's|sync'          => 'sync',
      'm|merge'         => 'merge',
+     'q|quiet'         => 'quiet',
      'I|incremental'   => 'incremental', # -- XXX unsafe -- undocumented XXX --
     );
 }
@@ -42,21 +43,14 @@ sub run {
 	      copath => undef
 	    );
 
-        # Because merging under the copath anchor is unsafe,
-        # we always merge to the copath root.
-        my $entry = $self->{xd}{checkout}->get ($target->{copath});
-        my $merge_target = $self->arg_depotpath ($entry->{depotpath});
-        my $sync_target = $merge_target;
+        # Because merging under the copy anchor is unsafe, we always merge
+        # to the most immediate copy anchor under copath root.
+        my ($merge_target, $copied_from) = $self->find_checkout_anchor (
+            $target, $self->{merge}, $self->{sync}
+        );
 
-        if ($self->{merge}) {
-            my $copied_from = $merge_target->copied_from($self->{sync});
-            if ($copied_from) {
-                $sync_target = $copied_from;
-            }
-            else {
-                delete $self->{merge};
-            }
-        }
+        my $sync_target = $copied_from || $merge_target;
+        delete $self->{merge} if !$copied_from;
 
         if ($self->{sync}) {
             die loc("cannot load SVN::Mirror") unless HAS_SVN_MIRROR;
@@ -114,9 +108,10 @@ sub do_update {
 
     my $notify = SVK::Notify->new_with_report
 	($report, $cotarget->{targets}[0], 1);
+    $notify->{quiet}++ if $self->{quiet};
     my $merge = SVK::Merge->new
 	(repos => $cotarget->{repos}, base => $base, base_root => $xdroot,
-	 no_recurse => $self->{nonrecursive}, notify => $notify, nodelay => 1,
+	 no_recurse => !$self->{recursive}, notify => $notify, nodelay => 1,
 	 src => $update_target, dst => $cotarget,
 	 xd => $self->{xd}, check_only => $self->{check_only});
     $merge->run ($self->{xd}->get_editor (copath => $copath, path => $path,
@@ -146,6 +141,7 @@ SVK::Command::Update - Bring changes from repository to checkout copies
  -N [--non-recursive]   : do not descend recursively
  -s [--sync]            : synchronize mirrored sources before update
  -m [--merge]           : smerge from copied sources before update
+ -q [--quiet]           : quiet mode
 
 =head1 DESCRIPTION
 

@@ -13,7 +13,7 @@ use SVK::I18N;
 use SVK::Util qw( get_anchor abs_path abs2rel splitdir catdir splitpath $SEP
 		  HAS_SYMLINK is_symlink is_executable mimetype mimetype_is_text
 		  md5_fh  traverse_history );
-use Data::Hierarchy 0.18;
+use Data::Hierarchy 0.21;
 use File::Spec;
 use File::Find;
 use File::Path;
@@ -417,7 +417,16 @@ sub xd_storage_cb {
     my ($self, %arg) = @_;
     # translate to abs path before any check
     return
-	( cb_exist => sub { $_ = shift; $arg{get_copath} ($_); -e $_ || is_symlink($_) },
+	( cb_exist => sub { my $copath = shift; my $path = $copath;
+			    $arg{get_copath} ($copath);
+			    lstat ($copath);
+			    return $SVN::Node::none unless -e _;
+			    $arg{get_path} ($path);
+			    return (is_symlink || -f _) ? $SVN::Node::file : $SVN::Node::dir
+				if $self->{checkout}->get ($copath)->{'.schedule'} or
+				    $arg{oldroot}->check_path ($path);
+			    return $SVN::Node::unknown;
+			},
 	  cb_rev => sub { $_ = shift; $arg{get_copath} ($_);
 			  $self->{checkout}->get ($_)->{revision} },
 	  cb_conflict => sub { $_ = shift; $arg{get_copath} ($_);
@@ -435,6 +444,12 @@ sub xd_storage_cb {
 			       return undef if $md5 eq $checksum;
 			       seek $base, 0, 0;
 			       return [$base, undef, $md5];
+			   },
+	  cb_localprop => sub { my ($path, $propname) = @_;
+				my $copath = $path;
+				$arg{get_copath} ($copath);
+				$arg{get_path} ($path);
+				return $self->get_props ($arg{oldroot}, $path, $copath)->{$propname};
 			   },
 	  cb_dirdelta => sub { my ($path, $base_root, $base_path, $pool) = @_;
 			       my $copath = $path;
@@ -940,7 +955,10 @@ sub _delta_file {
 
 sub _delta_dir {
     my ($self, %arg) = @_;
-    return if defined $arg{depth} && $arg{depth} == 0;
+    if ($arg{entry} && $arg{exclude} && exists $arg{exclude}{$arg{entry}}) {
+	$arg{cb_exclude}->($arg{path}, $arg{copath}) if $arg{cb_exclude};
+	return;
+    }
     my $pool = SVN::Pool->new_default (undef);
     my $cinfo = $arg{cinfo} ||= $self->{checkout}->get ($arg{copath});
     my $schedule = $cinfo->{'.schedule'} || '';
@@ -960,6 +978,8 @@ sub _delta_dir {
 	    $targets->{$file} = undef;
 	}
     }
+    # don't use depth when we are still traversing through targets
+    my $descend = defined $targets || !(defined $arg{depth} && $arg{depth} == 0);
     $arg{cb_conflict}->($arg{editor}, $arg{entry}, $arg{baton})
 	if $arg{cb_conflict} && $cinfo->{'.conflict'};
 
@@ -980,6 +1000,12 @@ sub _delta_dir {
     $baton ||= $arg{root} ? $arg{baton}
 	: $arg{editor}->open_directory ($arg{entry}, $arg{baton},
 					$arg{cb_rev}->($arg{entry}), $pool);
+
+    # check scheduled addition
+    # XXX: does this work with copied directory?
+    my ($newprops, $fullprops) = $self->_node_props (%arg);
+
+    if ($descend) {
 
     my $signature;
     if ($self->{signature} && $arg{xdroot} eq $arg{base_root}) {
@@ -1013,7 +1039,7 @@ sub _delta_dir {
 			type => $type,
 			# if copath exist, we have base only if they are of the same type
 			base => !$obs,
-			depth => $arg{depth} ? $arg{depth} - 1: undef,
+			depth => defined $arg{depth} ? defined $targets ? $arg{depth} : $arg{depth} - 1: undef,
 			entry => defined $arg{entry} ? "$arg{entry}/$entry" : $entry,
 			kind => $arg{xdroot} eq $arg{base_root} ? $kind : $arg{xdroot}->check_path ($newpath),
 			base_kind => $kind,
@@ -1031,10 +1057,6 @@ sub _delta_dir {
 	$signature->flush;
 	undef $signature;
     }
-
-    # check scheduled addition
-    # XXX: does this work with copied directory?
-    my ($newprops, $fullprops) = $self->_node_props (%arg);
     my $ignore = ignore (split ("\n", $fullprops->{'svn:ignore'} || ''));
 
     my @direntries;
@@ -1081,6 +1103,7 @@ sub _delta_dir {
 	$self->$delta ( %arg, %newpaths, add => 1, baton => $baton,
 			root => 0, base => 0, cinfo => $ccinfo,
 			type => $type,
+			depth => defined $arg{depth} ? defined $targets ? $arg{depth} : $arg{depth} - 1: undef,
 			$copyfrom ?
 			( base => 1,
 			  in_copy => $arg{expand_copy},
@@ -1090,13 +1113,14 @@ sub _delta_dir {
 		      );
     }
 
-    unless (defined $targets) {
-	$arg{editor}->change_dir_prop ($baton, $_, ref ($newprops->{$_}) ? undef : $newprops->{$_}, $pool)
-	    for sort keys %$newprops;
     }
 
     if (defined $targets) {
 	print loc ("Unknown target: %1.\n", $_) for sort keys %$targets;
+    }
+    else {
+	$arg{editor}->change_dir_prop ($baton, $_, ref ($newprops->{$_}) ? undef : $newprops->{$_}, $pool)
+	    for sort keys %$newprops;
     }
 
     $arg{editor}->close_directory ($baton, $pool)
@@ -1117,10 +1141,10 @@ sub checkout_delta {
     die "checkout_delta called with non-dir node"
 	unless $kind == $SVN::Node::dir;
     my ($copath, $repospath) = @arg{qw/copath repospath/};
-    $arg{editor} = SVK::Editor::Delay->new ($arg{editor})
-	unless $arg{nodelay};
     $arg{editor} = SVN::Delta::Editor->new (_debug => 1, _editor => [$arg{editor}])
 	if $arg{debug};
+    $arg{editor} = SVK::Editor::Delay->new ($arg{editor})
+	unless $arg{nodelay};
     $arg{cb_rev} ||= sub { $self->_get_rev (SVK::Target->copath ($copath, $_[0])) };
     # XXX: translate $repospath to use '/'
     $arg{cb_copyfrom} ||= $arg{expand_copy} ? sub { (undef, -1) }

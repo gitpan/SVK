@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 11;
+use Test::More tests => 13;
 use strict;
 require 't/tree.pl';
 
@@ -10,8 +10,8 @@ my ($copath, $corpath) = get_copath ('cleanup');
 my ($repospath) = $xd->find_repos ('//');
 
 $xd->{svkpath} = $repospath;
-$xd->{statefile} = "$repospath/svk.config";
-$xd->{giantlock} = "$repospath/svk.giant";
+$xd->{statefile} = __("$repospath/svk.config");
+$xd->{giantlock} = __("$repospath/svk.giant");
 
 $xd->giant_lock;
 is_file_content ($xd->{giantlock}, $$, 'giant locked');
@@ -35,5 +35,13 @@ is_output_like ($svk, 'update', [$copath],
 chdir ($copath);
 is_output_like ($svk, 'cleanup', [], qr'Cleaned up stalled lock');
 is ($xd->{checkout}->get ($corpath)->{lock}, undef,  'unlocked');
+
 eval { $xd->giant_lock };
 ok ($@ =~ qr'another svk', 'command not allowed when giant locked');
+
+$xd->{checkout}->store ($corpath, {lock => $$+1});
+$xd->store;
+$xd->load;
+is_output_like ($svk, 'cleanup', ['-a'], qr'Cleaned up all stalled lock');
+is_output ($svk, 'update', [],
+	   ["Syncing //(/) in $corpath to 0."]);

@@ -8,7 +8,7 @@ use SVK::Target;
 use Pod::Simple::Text ();
 use Pod::Simple::SimpleTree ();
 use File::Find ();
-use SVK::Util qw( get_prompt abs_path is_uri catdir bsd_glob $SEP IS_WIN32 HAS_SVN_MIRROR );
+use SVK::Util qw( get_prompt abs2rel abs_path is_uri catdir bsd_glob $SEP IS_WIN32 HAS_SVN_MIRROR );
 use SVK::I18N;
 
 =head1 NAME
@@ -182,11 +182,19 @@ additional %opt getopt options.
 
 =cut
 
+use constant opt_recursive => undef;
+
 sub getopt {
     my ($self, $argv, %opt) = @_;
     local *ARGV = $argv;
+    my $recursive = $self->opt_recursive;
+    my $toggle = 0;
+    $opt{$recursive ? 'N||non-recursive' : 'R|recursive'} = \$toggle
+	if defined $recursive;
     die loc ("Unknown options.\n")
 	unless GetOptions (%opt, $self->_opt_map ($self->options));
+    $self->{recursive} = ($recursive + $toggle) % 2
+	if defined $recursive;
 }
 
 =head2 Instance Methods
@@ -203,6 +211,11 @@ C<$self>.
 
 Subclasses should override this to add their own options.  Defaults to
 an empty list.
+
+=head3 opt_recursive
+
+Defines if the command needs the recursive flag and its default.  The
+value will be stored in C<recursive>.
 
 =cut
 
@@ -725,6 +738,38 @@ sub rebless {
     my ($self, $command, $args) = @_;
     return $self->command($command, $args, 1);
 }
+
+sub find_checkout_anchor {
+    my ($self, $target, $track_merge, $track_sync) = @_;
+
+    my $entry = $self->{xd}{checkout}->get ($target->{copath});
+    my $anchor_target = $self->arg_depotpath ($entry->{depotpath});
+
+    return ($anchor_target, undef) unless $track_merge;
+
+    my @rel_path = split(
+        '/',
+        abs2rel ($target->{path}, $anchor_target->{path}, undef, '/')
+    );
+
+    my $copied_from;
+    while (!$copied_from) {
+        $copied_from = $anchor_target->copied_from ($track_sync);
+
+        if ($copied_from) {
+            return ($anchor_target, $copied_from);
+            last;
+        }
+        elsif (@rel_path) {
+            $anchor_target->descend (shift (@rel_path));
+        }
+        else {
+            return ($self->arg_depotpath ($entry->{depotpath}), undef);
+            last;
+        }
+    }
+}
+
 
 1;
 

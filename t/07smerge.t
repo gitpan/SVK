@@ -7,7 +7,7 @@ eval { require SVN::Mirror; 1 } or do {
     plan skip_all => "SVN::Mirror not installed";
     exit;
 };
-plan tests => 25;
+plan tests => 27;
 
 # build another tree to be mirrored ourself
 my ($xd, $svk) = build_test('test', 'client2');
@@ -51,6 +51,9 @@ is_output ($svk, 'smerge', ['-C', '//m/be', '//l/'],
 	   ["Can't merge different types of nodes"]);
 
 }
+
+is_output_like ($svk, 'smerge', ['-C', '//l', '//'],
+		qr/contains mirror/);
 
 is_output_like ($svk, 'smerge', ['-C', '//m/Q', '//l/'],
 		qr/find merge base/);
@@ -134,7 +137,7 @@ $svk->update ($copath);
 overwrite_file ("$copath/newfile", "new file added on source\n");
 overwrite_file ("$copath/newfile2", "new file added on source\nalso on local\n");
 mkdir ("$copath/newdir");
-$svk->add ("$copath/newfile", "$copath/newdir");
+$svk->add ("$copath/newfile");
 append_file ("$copath/be", "modification on local\n");
 append_file ("$copath/Q/qu", "modified on local\n");
 $svk->rm ("$copath/Q/qz");
@@ -144,7 +147,8 @@ is_output ($svk, 'smerge', ['-C', '//m', '//l'],
 	    ' U  Q/qu',
 	    '    Q/qz - skipped',
 	    'C   be',
-	    '    newdir - skipped',
+	    'A   newdir',
+	    'A   newdir/deepnewfile',
 	    'g   newfile',
 	    'A   newdir2',
 	    'A   newfile2',
@@ -160,17 +164,29 @@ is_output ($svk, 'smerge', ['//m', $copath],
 	    __"    $copath/newdir - skipped",
 	    __"g   $copath/newfile",
 	    __"A   $copath/newdir2",
-	    __"C   $copath/newfile2",
+	    __"    $copath/newfile2 - skipped",
 	    "New merge ticket: $suuid:/A:5",
-	    '2 conflicts found.']);
-$svk->status ($copath);
+	    '1 conflict found.']);
+$svk->revert ('-R', $copath);
+# XXX: newdir is not removed after revert
+rmtree ["$copath/newdir2"];
+$svk->add ("$copath/newdir");
+is_output ($svk, 'smerge', ['//m', $copath],
+	   ['Auto-merging (6, 9) /m to /l (base /l:7).',
+	    __" U  $copath/Q/qu",
+	    __"    $copath/Q/qz - skipped",
+	    __"C   $copath/be",
+	    __"A   $copath/newdir/deepnewfile",
+	    __"G   $copath/newdir",
+	    __"g   $copath/newfile",
+	    __"A   $copath/newdir2",
+	    __"    $copath/newfile2 - skipped",
+	    "New merge ticket: $suuid:/A:5",
+	    '1 conflict found.'], 'scheduled dir merged with add');
 is_output ($svk, 'commit', ['-m', 'commit with conflict state', $copath],
 	   ["1 conflict detected. Use 'svk resolved' after resolving them."],
 	   'forbid commit with conflict state');
 $svk->revert ("$copath/be");
-$svk->resolved ("$copath/be");
-# XXX: newfile2 conflicted but not added
-$svk->status ($copath);
 is_output ($svk, 'commit', ['-m', 'merge down committed from checkout', $copath],
 	   ['Committed revision 11.']);
 rmdir "$copath/newdir";
@@ -197,7 +213,6 @@ is_output ($svk, 'smerge', ['-m', 'merge down prop only', '/client2/m-all/A', '/
 
 is_output ($svk, 'smerge', ['-m', 'merge down prop only', '/client2/m-all/A', '/client2/m-all/A-cp'],
 	   ['Auto-merging (8, 8) /m-all/A to /m-all/A-cp (base /m-all/A:8).',
-	    "Merging back to mirror source $uri.",
 	    'Empty merge.'], 'empty merge');
 
 $svk->ps ('-m', 'prop on A/be', 'proponly', 'proponly', '/test/A/be');

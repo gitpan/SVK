@@ -3,13 +3,10 @@ use strict;
 our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command );
+use constant opt_recursive => 0;
 use SVK::XD;
 use SVK::Util qw( slurp_fh is_symlink );
 use SVK::I18N;
-
-sub options {
-    ('R|recursive'	=> 'rec');
-}
 
 sub parse_arg {
     my $self = shift;
@@ -27,14 +24,19 @@ sub run {
     my ($self, $target) = @_;
     my $xdroot = $self->{xd}->xdroot (%$target);
 
-    if ($self->{rec}) {
 	$self->{xd}->checkout_delta
 	    ( %$target,
 	      xdroot => $xdroot,
+	      depth => $self->{recursive} ? undef : 0,
 	      delete_verbose => 1,
 	      absent_verbose => 1,
 	      nodelay => 1,
 	      cb_conflict => \&SVK::Editor::Status::conflict,
+	      cb_unknown => sub {
+		  my ($path, $copath) = @_;
+		  print loc("%1 is not versioned; ignored.\n", $copath);
+		  return;
+	      },
 	      editor => SVK::Editor::Status->new
 	      ( notify => SVK::Notify->new
 		( cb_flush => sub {
@@ -51,34 +53,12 @@ sub run {
                           # Check that we are not reverting parents
                           $target->contains_copath ($copath) or return;
                       }
-
                       $self->do_unschedule($copath);
 		  },
 		),
 	      ));
-    }
-    elsif ($target->{targets}) {
-	$self->revert_item($target->copath ($_), "$target->{path}/$_", $xdroot)
-	    for @{$target->{targets}};
-    }
-    else {
-	$self->revert_item($target->{copath}, $target->{path}, $xdroot);
-    }
+
     return;
-}
-
-sub revert_item {
-    my ($self, $copath, $dpath, $xdroot) = @_;
-
-    my $schedule = $self->{xd}{checkout}->get ($copath)->{'.schedule'};
-
-    if ($schedule and $schedule ne 'delete') {
-	$self->do_unschedule($copath);
-    }
-    else {
-	# XXX - Should inhibit the "Reverted %1" message if nothing changed
-	$self->do_revert($copath, $dpath, $xdroot);
-    }
 }
 
 sub do_revert {
@@ -86,10 +66,6 @@ sub do_revert {
 
     # XXX: need to respect copied resources
     my $kind = $xdroot->check_path ($dpath);
-    if ($kind == $SVN::Node::none) {
-	print loc("%1 is not versioned; ignored.\n", $copath);
-	return;
-    }
     if ($kind == $SVN::Node::dir) {
 	mkdir $copath unless -e $copath;
     }

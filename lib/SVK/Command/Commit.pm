@@ -2,6 +2,7 @@ package SVK::Command::Commit;
 use strict;
 our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command );
+use constant opt_recursive => 1;
 use SVK::XD;
 use SVK::I18N;
 use SVK::Editor::Status;
@@ -163,7 +164,7 @@ sub get_editor {
 	die loc ("Illegal patch name: %1.\n", $self->{patch})
 	    if $self->{patch} =~ m!/!;
 	my $patch = SVK::Patch->new ($self->{patch}, $self->{xd},
-				     $target->depotname, $source, $target);
+				     $target->depotname, $source, $target->new (targets => undef));
 	$patch->{ticket} = SVK::Merge->new (xd => $self->{xd})->merge_info ($source)->add_target ($source)->as_string
 	    if $source;
 	$patch->{log} = $self->{message};
@@ -205,9 +206,18 @@ sub get_editor {
     }
 
     return ($editor, %cb, mirror => $m, callback => \$callback,
-	    send_fulltext => !$cb{mirror});
+	    send_fulltext => !$m);
 }
 
+sub exclude_mirror {
+    my ($self, $target) = @_;
+    return () if $self->{direct} or !HAS_SVN_MIRROR;
+
+    ( exclude => {
+	map { substr ($_, length($target->{path})) => 1 }
+	    $target->contains_mirror },
+    );
+}
 
 sub get_committable {
     my ($self, $target, $root) = @_;
@@ -231,6 +241,8 @@ sub get_committable {
 	    }));
     $self->{xd}->checkout_delta
 	( %$target,
+	  depth => $self->{recursive} ? undef : 0,
+	  $self->exclude_mirror ($target),
 	  xdroot => $root,
 	  nodelay => 1,
 	  delete_verbose => 1,
@@ -282,7 +294,8 @@ sub committed_commit {
 	# update checkout map with new revision
 	for (reverse @$targets) {
 	    my ($action, $path) = @$_;
-	    $self->{xd}{checkout}->store_recursively ($path, { $self->_schedule_empty });
+	    my $store = $self->{recursive} ? 'store_recursively' : 'store';
+	    $self->{xd}{checkout}->$store ($path, { $self->_schedule_empty });
             if (($action eq 'D') and $self->{xd}{checkout}->get ($path)->{revision} == $rev ) {
                 # Fully merged, remove the special node
                 $self->{xd}{checkout}->store (
@@ -364,11 +377,14 @@ sub run_delta {
     my %revcache;
     $self->{xd}->checkout_delta
 	( %$target,
-	  error => $self->{error},
+	  depth => $self->{recursive} ? undef : 0,
 	  xdroot => $xdroot,
 	  editor => $editor,
 	  send_delta => !$cb{send_fulltext},
 	  nodelay => $cb{send_fulltext},
+	  $self->exclude_mirror ($target),
+	  cb_exclude => sub { print loc ("%1 is a mirrored path, please commit separately.\n",
+					 abs2rel ($_[1], $target->{copath} => $target->{report})) },
 	  $self->{import} ?
 	  ( auto_add => 1,
 	    obstruct_as_replace => 1,
@@ -384,10 +400,13 @@ sub run_delta {
 		my $revtarget = shift;
 		my $cotarget = $target->copath ($revtarget);
 		$revtarget = $revtarget ? "$target->{path}/$revtarget" : $target->{path};
-		my $corev = $self->{xd}{checkout}->get($cotarget)->{revision};
-		return $revcache{$corev} if exists $revcache{corev};
-		my $rev = ($fs->revision_root ($corev)->node_history ($revtarget)->prev (0)->location)[1];
-		$revcache{$corev} = $cb{mirror}->find_remote_rev ($rev);
+		my $entry = $self->{xd}{checkout}->get($cotarget);
+		my ($source_path, $source_rev) = $self->{xd}->_copy_source ($entry, $cotarget);
+		($source_path, $source_rev) = ($revtarget, $entry->{revision})
+		    unless defined $source_path;
+		return $revcache{$source_rev} if exists $revcache{corev};
+		my $rev = ($fs->revision_root ($source_rev)->node_history ($source_path)->prev (0)->location)[1];
+		$revcache{$source_rev} = $cb{mirror}->find_remote_rev ($rev);
 	    }) : ());
     return;
 }
@@ -408,6 +427,7 @@ SVK::Command::Commit - Commit changes to depot
 
  -m [--message] arg     : specify commit message ARG
  -C [--check-only]      : try operation but make no changes
+ -P [--patch] arg       : instead of commit, save this change as a patch
  -S [--sign]            : sign this change
  --import               : import mode; automatically add and delete nodes
  --direct               : commit directly even if the path is mirrored

@@ -63,6 +63,7 @@ sub handle_co_item {
     die loc ("Path %1 already exists.\n", $dst->{copath})
 	if -e $dst->{copath};
     my ($copath, $report) = @{$dst}{qw/copath report/};
+    $src->normalize;
     $src->anchorify; $dst->anchorify;
     # if SVK::Merge could take src being copath to do checkout_delta
     # then we have 'svk cp copath... copath' for free.
@@ -165,6 +166,7 @@ sub run {
 
     if (my $copath = $self->{_checkout_path}) {
         my $checkout = $self->command ('checkout');
+	$checkout->getopt ([]);
         my @arg = $checkout->parse_arg ($dst->{report}, $copath);
         $checkout->lock (@arg);
         $checkout->run (@arg);
@@ -191,6 +193,7 @@ SVK::Command::Copy - Make a versioned copy
  -r [--revision] arg    : act on revision ARG instead of the head revision
  -m [--message] arg     : specify commit message ARG
  -p [--parent]          : create intermediate directories as required
+ -P [--patch] arg       : instead of commit, save this change as a patch
  -C [--check-only]      : try operation but make no changes
  -S [--sign]            : sign this change
 

@@ -5,6 +5,7 @@ use SVK::I18N;
 use SVK::Editor::Merge;
 use SVK::Editor::Rename;
 use SVK::Editor::Translate;
+use List::Util qw(min);
 
 =head1 NAME
 
@@ -115,7 +116,7 @@ sub find_merge_base {
     for (grep {exists $srcinfo->{$_} && exists $dstinfo->{$_}}
 	 (sort keys %{ { %$srcinfo, %$dstinfo } })) {
 	my ($path) = m/:(.*)$/;
-	my $rev = $srcinfo->{$_} < $dstinfo->{$_} ? $srcinfo->{$_} : $dstinfo->{$_};
+	my $rev = min ($srcinfo->{$_}, $dstinfo->{$_});
 	# XXX: should compare revprop svn:date instead, for old dead branch being newly synced back
 	($basepath, $baserev, $baseentry) = ($path, $rev, $_)
 	    if !$basepath || $rev > $baserev;
@@ -382,8 +383,22 @@ sub run {
 	  allow_conflicts => $is_copath,
 	  resolve => $self->resolver,
 	  open_nonexist => $self->{track_rename},
-	  ticket => $self->{ticket} ?
-	      sub { $self->get_new_ticket ($self->merge_info ($src)->add_target ($src)) } : undef,
+	  # XXX: make the prop resolver more pluggable
+	  $self->{ticket} ?
+	  ( prop_resolver => { 'svk:merge' =>
+			  sub { my ($path, $prop) = @_;
+				return (undef, undef, 1)
+				    if $path eq $target;
+				return ('G', SVK::Merge::Info->new
+					($prop->{new})->union
+					(SVK::Merge::Info->new ($prop->{local}))->as_string);
+			    }
+			},
+	    ticket => 
+	    sub { $self->get_new_ticket ($self->merge_info ($src)->add_target ($src)) }
+	  ) :
+	  ( prop_resolver => { 'svk:merge' => sub { ('G', undef, 1)} # skip
+			     }),
 	  %cb,
 	);
     SVK::XD->depot_delta
@@ -413,7 +428,7 @@ sub new {
 
     my $minfo = { map { my ($uuid, $path, $rev) = m/(.*?):(.*):(\d+$)/;
 			("$uuid:$path" => SVK::Target::Universal->new ($uuid, $path, $rev))
-		    } split ("\n", $merge || '') };
+		    } grep { length $_ } split (/\n/, $merge || '') };
     bless $minfo, $class;
     return $minfo;
 }
