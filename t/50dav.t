@@ -14,6 +14,7 @@ BEGIN {
     eval { require Apache::Test;
 	   $Apache::Test::VERSION >= 1.18 }
 	or plan (skip_all => "Apache::Test 1.18 required for testing dav");
+    plan (skip_all => "Test does not work with BDB") if $ENV{SVNFSTYPE} eq 'bdb';
 }
 
 use Apache::TestConfig;
@@ -35,7 +36,8 @@ my $cfg = Apache::TestConfig->new
       t_dir => $apache_root,
       apxs => $apxs,
  )->httpd_config;
-unless ($cfg->find_and_load_module ('mod_dav.so') &&
+unless ($cfg->can('find_and_load_module') and
+	$cfg->find_and_load_module ('mod_dav.so') and
 	$cfg->find_and_load_module ('mod_dav_svn.so')) {
     plan skip_all => "Can't find mod_dav_svn";
 }

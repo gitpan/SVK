@@ -2,6 +2,7 @@ package SVK::Target;
 use strict;
 our $VERSION = $SVK::VERSION;
 use SVK::XD;
+use SVK::I18N;
 use SVK::Util qw( get_anchor catfile abs2rel HAS_SVN_MIRROR IS_WIN32 );
 use SVK::Target::Universal;
 use Clone;
@@ -168,11 +169,11 @@ sub descend {
     $self->{path} .= "/$entry";
 
     if (defined $self->{copath}) {
-        $self->{report} = catfile ($self->{report}, $entry);
-        $self->{copath} = catfile ($self->{copath}, $entry);
+	$self->{report} = catfile ($self->{report}, $entry);
+	$self->{copath} = catfile ($self->{copath}, $entry);
     }
     else {
-        $self->{report} = "$self->{report}/$entry";
+	$self->{report} = "$self->{report}/$entry";
     }
 }
 
@@ -188,7 +189,7 @@ sub universal {
 
 sub contains_copath {
     my ($self, $copath) = @_;
-    foreach my $base (@{$self->{targets}}) {
+    foreach my $base (@{$self->{targets} || []}) {
 	if ($copath ne abs2rel ($copath, $self->copath ($base))) {
 	    return 1;
 	}
@@ -220,42 +221,173 @@ sub depotname {
     return $1;
 }
 
+# depotpath only for now
+# cache revprop:
+# svk:copy_cache
+
+# svk:copy_cache_prev points to the revision in the depot that the
+# previous copy happens.
+
+sub copy_ancestors {
+    my $self = shift;
+    my $fs = $self->{repos}->fs;
+    my $t = $self->new;
+    warn "==> ".$t->path;
+    while (my ($copyto, $copyfrom_rev, $copyfrom_path) = $t->nearest_copy) {
+	$t->{path} = $copyfrom_path;
+	$t->{revision} = $copyfrom_rev;
+	warn "==> . ".$t->path." @ $t->{revision}";
+    }
+}
+
+use List::Util qw(min);
+
+# given a root object and a path, returns the revision where it's ancestor
+# is from another path.
+sub nearest_copy {
+    my ($root, $path) = @_;
+    if (ref ($root) eq __PACKAGE__) {
+	($root, $path) = ($root->root, $root->path);
+    }
+    # normalize;
+    my $histself = $root->node_history ($path)->prev(0);
+    my $rev = ($histself->location)[1];
+
+    my $fs = $root->fs;
+    while (1) {
+	# Find history_prev revision, if the path is different, bingo.
+	my ($hppath, $hprev);
+	if (my $hist = $histself->prev(1)) {
+	    ($hppath, $hprev) = $hist->location;
+	    if ($hppath ne $path) {
+		return ($rev, $hprev, $hppath);
+	    }
+	}
+
+	# Find nearest copy of the current revision (up to but *not*
+	# including the revision itself). If the copy contains us, bingo.
+	my ($prev, $copy) = _find_prev_copy ($fs, $rev-1);
+	if ($copy && (my ($fromrev, $frompath) = _copies_contain_path ($copy, $path))) {
+	    return ($prev, $fromrev, $frompath);
+	}
+	# Continue testing on min (history_prev, prev_copy), provided
+	# it's still a related to the current node.
+	$rev = min (grep defined, $prev, $hprev) or last;
+
+	# Reset the hprev root to this earlier revision to avoid infinite looping
+	$root = $fs->revision_root ($rev);
+	if ($root->check_path ($path) == $SVN::Node::none) {
+	    last;
+	}
+	$histself = $root->node_history ($path)->prev(0);
+    }
+    return;
+}
+
+sub _copies_contain_path {
+    my ($copy, $path) = @_;
+    my ($match) = grep { index ("$path/", "$_/") == 0 }
+	sort { length $b <=> length $a } keys %$copy;
+    return unless $match;
+    $path =~ s/^\Q$match\E/$copy->{$match}[1]/;
+    return ($copy->{$match}[0], $path);
+}
+
+sub _copies_in_rev {
+    my ($fs, $rev) = @_;
+    my $copies;
+    my $root = $fs->revision_root ($rev);
+    my $changed = $root->paths_changed;
+    for (keys %$changed) {
+	next if $changed->{$_}->change_kind == $SVN::Fs::PathChange::delete;
+	my ($copyfrom_rev, $copyfrom_path) = $root->copied_from ($_);
+	$copies->{$_} = [$copyfrom_rev, $copyfrom_path]
+	    if defined $copyfrom_path;
+    }
+    return $copies;
+}
+
+sub _find_prev_copy {
+    my ($fs, $endrev) = @_;
+    my $pool = SVN::Pool->new_default;
+    my $rev = $endrev;
+    while ($rev > 0) {
+	$pool->clear;
+	if (my $cache = $fs->revision_prop ($rev, 'svk:copy_cache_prev')) {
+	    $rev = $cache;
+	}
+	if (my $copy = _copies_in_rev ($fs, $rev)) {
+	    $fs->change_rev_prop ($_, 'svk:copy_cache_prev', $rev)
+		for $rev..$endrev;
+	    return ($rev, $copy);
+	}
+	--$rev;
+    }
+    return undef;
+}
+
+=head2 related_to
+
+Check if C<$self> is related to another target.
+
+=cut
+
+sub related_to {
+    my ($self, $other) = @_;
+    # XXX: when two related paths are mirrored separatedly, need to
+    # use hooks or merge tickets to decide if they are related.
+    return SVN::Fs::check_related
+	($self->root->node_id ($self->path),
+	 $other->root->node_id ($other->path));
+}
+
+=head2 copied_from ($want_mirror)
+
+Return the nearest copy target that still exists.  If $want_mirror is true,
+only return one that was mirrored from somewhere.
+
+=cut
+
 sub copied_from {
     my ($self, $want_mirror) = @_;
-    my $merge = SVK::Merge->new (%$self);
 
-    # evil trick to take the first element from the array
-    my @ancestors = $merge->copy_ancestors (@{$self}{qw( repos path revision )}, 1);
-    while (my $ancestor = shift(@ancestors)) {
-        shift(@ancestors);
+    my $target = $self->new;
+    $target->{report} = '';
+    $target->as_depotpath;
 
-        my $path = (split (/:/, $ancestor))[1];
-        my $target = $self->new (
-            path => $path,
-            depotpath => '/' . $self->depotname . $path,
-            revision => undef,
-            report => '',
-        );
+    my $root = $target->root;
 
-        # make a depot path
-        $target->as_depotpath;
+    while ((undef, $target->{revision}, $target->{path}) = $target->nearest_copy) {
+	# Check for existence.
+	if ($root->check_path ($target->{path}) == $SVN::Node::none) {
+	    next;
+	}
 
-        next if $target->root->check_path (
-            $target->{path}
-        ) == $SVN::Node::none;
+	# Check for mirroredness.
+	if ($want_mirror and HAS_SVN_MIRROR) {
+	    my ($m, $mpath) = SVN::Mirror::is_mirrored (
+		$target->{repos}, $target->{path}
+	    );
+	    $m->{source} or next;
+	}
 
-        if ($want_mirror and HAS_SVN_MIRROR) {
-            my ($m, $mpath) = SVN::Mirror::is_mirrored (
-                $target->{repos},
-                $target->{path}
-            );
-            $m->{source} or next;
-        }
+	# It works!  Let's update it to the latest revision and return
+	# it as a fresh depot path.
+	$target->{depotpath} = '/' . $target->depotname . $target->path;
+	$target->refresh_revision;
+	$target->as_depotpath;
 
-        return $target;
+	delete $target->{targets};
+	return $target;
     }
 
     return undef;
+}
+
+sub report_copath {
+    my ($self, $copath) = @_;
+    my $report = length ($self->{report}) ? $self->{report} : undef;
+    abs2rel ($copath, $self->{copath} => $report);
 }
 
 =head1 AUTHORS

@@ -169,7 +169,8 @@ sub get_buffer_from_editor {
 	    qr/^[aec]/,
 	);
 	last if $ans =~ /^c/;
-	die loc("Aborted.\n") if $ans =~ /^a/;
+	# XXX: save the file somewhere
+	unlink ($file), die loc("Aborted.\n") if $ans =~ /^a/;
     }
 
     open $fh, $file or die $!;
@@ -357,7 +358,7 @@ sub mimetype {
 
     # On fallback, use the same logic as File::MimeInfo to detect text
     if ($type eq 'application/octet-stream') {
-        substr($data, 0, 10) =~ m/[\x00-\x07\x09\x0B-\x0C\x0E-\x1F]/
+        substr($data, 0, 32) =~ m/[\x00-\x07\x0B\x0E-\x1A\x1C-\x1F]/
             or return 'text/plain';
     }
 
