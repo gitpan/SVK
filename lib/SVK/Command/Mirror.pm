@@ -1,25 +1,31 @@
 package SVK::Command::Mirror;
 use strict;
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 
 use base qw( SVK::Command::Commit );
 use SVK::I18N;
 
 sub parse_arg {
-    my ($self, @arg) = @_;
-    return ($self->arg_depotpath ($arg[0]), $arg[1]);
+    my ($self, $path, @arg) = @_;
+    return ($self->arg_depotpath ($path), @arg);
 }
 
 sub lock { $_[0]->lock_none }
 
 sub run {
-    my ($self, $target, $source) = @_;
+    my ($self, $target, $source, @options) = @_;
     die loc("cannot load SVN::Mirror") unless $self->svn_mirror;
 
-    my $m = SVN::Mirror->new (target_path => $target->{path}, target => $target->{repospath},
+    my $m = SVN::Mirror->new (target_path => $target->{path},
+			      source => $source,
+			      repospath => $target->{repospath},
 			      repos => $target->{repos},
+			      options => \@options,
 			      pool => SVN::Pool->new, auth => $self->auth,
-			      source => $source, target_create => 1);
+			      # XXX: remove in next svn::mirror release
+			      target => $target->{repospath},
+			     );
+
     $m->init;
     return;
 }
@@ -34,7 +40,11 @@ SVK::Command::Mirror - Initialize a mirrored depotpath
 
 =head1 SYNOPSIS
 
-    mirror DEPOTPATH SOURCEURL
+    mirror DEPOTPATH [http|svn]://server.host/path
+    mirror DEPOTPATH cvs::pserver:user@host:/cvsroot:module/...
+    mirror DEPOTPATH p4:user@host:1666://depot/module/...
+
+=head1 DESCRIPTION
 
 =head1 OPTIONS
 

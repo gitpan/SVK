@@ -1,6 +1,6 @@
 package SVK::Command::Commit;
 use strict;
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 use base qw( SVK::Command );
 use SVK::XD;
 use SVK::I18N;
@@ -18,7 +18,8 @@ sub options {
     ('m|message=s'  => 'message',
      'C|check-only' => 'check_only',
      's|sign'	  => 'sign',
-     'force',	  => 'force'
+     'force',	  => 'force',
+     'direct',	  => 'direct',
     );
 }
 
@@ -44,13 +45,19 @@ sub auth {
 	  SVN::Client::get_username_provider ()]);
 }
 
-sub path_is_mirrored {
-    my ($self, $repos, $path) = @_;
-    my $fs = $repos->fs;
-    my $root = $fs->revision_root ($fs->youngest_rev);
+sub under_mirror {
+    my ($self, $target) = @_;
+    svn_mirror && SVN::Mirror::is_mirrored ($target->{repos}, $target->{path});
+}
 
-    my $rev = (($root->node_history ($path)->prev (0)->location)[1]);
-    return (grep {m/^svm:headrev:/} sort keys %{$fs->revision_proplist ($rev)});
+sub check_mirrored_path {
+    my ($self, $target) = @_;
+    if (!$self->{direct} && $self->under_mirror ($target)) {
+	print loc ("%1 is under mirrored path, use --force to override.\n",
+		    $target->{depotpath});
+	return;
+    }
+    return 1;
 }
 
 sub get_commit_editor {
@@ -88,6 +95,7 @@ sub get_editor {
 	my $xdroot = $self->{xd}->xdroot (%$target);
 	($editor, %cb) = $self->{xd}->get_editor
 	    ( %$target,
+	      quiet => 1,
 	      oldroot => $xdroot,
 	      newroot => $xdroot,
 	      anchor => $target->{path},
@@ -98,7 +106,8 @@ sub get_editor {
 
     my ($base_rev, $m, $mpath);
 
-    if (svn_mirror && (($m, $mpath) = SVN::Mirror::is_mirrored ($target->{repos}, $target->{path}))) {
+    if (!$self->{direct} && svn_mirror &&
+	(($m, $mpath) = SVN::Mirror::is_mirrored ($target->{repos}, $target->{path}))) {
 	print loc("Merging back to SVN::Mirror source %1.\n", $m->{source});
 	if ($self->{check_only}) {
 	    print loc("Checking against mirrored directory locally.\n");
@@ -172,9 +181,7 @@ sub get_editor {
 sub run {
     my ($self, $target) = @_;
 
-    my $is_mirrored;
-    $is_mirrored = $self->path_is_mirrored ($target->{repos}, $target->{path})
-	if svn_mirror;
+    my $is_mirrored = $self->under_mirror ($target);
     print loc("Commit into mirrored path: merging back directly.\n")
 	if $is_mirrored;
 
@@ -236,8 +243,11 @@ sub run {
 	    my $store = ($_->[0] eq 'D' || -d $_->[1]) ?
 		'store_recursively' : 'store';
 	    $self->{xd}{checkout}->$store ($_->[1], { '.schedule' => undef,
+						      '.copyfrom' => undef,
+						      '.copyfrom_rev' => undef,
 						      '.newprop' => undef,
 						      $_->[0] eq 'D' ? ('.deleted' => 1) : (),
+						      scheduleanchor => undef,
 						      revision => $rev,
 						    });
 	}
@@ -276,7 +286,7 @@ sub run {
     };
 
     die loc("unexpected error: commit to mirrored path but no mirror object")
-	if $is_mirrored && !$cb{mirror};
+	if $is_mirrored && !$self->{direct} && !$cb{mirror};
 
     ${$cb{callback}} = $committed;
 
@@ -322,6 +332,7 @@ SVK::Command::Commit - Commit changes to depot
     -s [--sign]:           sign the commit
     -C [--check-only]:	Needs description
     --force:	Needs description
+    --direct:	Commit directly even if the path is mirrored
 
 =head1 AUTHORS
 

@@ -1,6 +1,6 @@
 package SVK::XD;
 use strict;
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 require SVN::Core;
 require SVN::Repos;
 require SVN::Fs;
@@ -187,10 +187,12 @@ sub condense {
 	    $anchor = $_;
 	    $report = $_[0]
 	}
-	my $schedule = $self->{checkout}->get ($anchor)->{'.schedule'} || '';
-	if ($anchor ne $_ || -f $anchor ||
+	my $cinfo = $self->{checkout}->get ($anchor);
+	my $schedule = $cinfo->{'.schedule'} || '';
+	if ($anchor ne $_ || -f $anchor || $cinfo->{scheduleanchor} ||
 	    $schedule eq 'add' || $schedule eq 'delete') {
-	    while ($anchor.'/' ne substr ($_, 0, length($anchor)+1)) {
+	    while ($anchor.'/' ne substr ($_, 0, length($anchor)+1) ||
+		   $self->{checkout}->get ($anchor)->{scheduleanchor}) {
 		($anchor, $report) = get_anchor (0, $anchor, $report);
 	    }
 	}
@@ -331,7 +333,7 @@ sub do_update {
     SVN::Repos::dir_delta ($xdroot->[1], $anchor, $target,
 			   $newroot, $arg{target_path},
 			   $editor, undef,
-			   1, 1, 0, 1);
+			   1, $arg{recursive}, 0, 1);
 }
 
 sub do_add {
@@ -347,13 +349,17 @@ sub do_add {
 				unknown_verbose => 1,
 				cb_unknown => sub {
 				    $self->{checkout}->store ($_[1], { '.schedule' => 'add' });
-				    print "A  $_[1]\n" unless $arg{quiet};
+				    print "A  $arg{report}$_[0]\n" unless $arg{quiet};
 				},
 			      );
     }
     else {
-	$self->{checkout}->store ($arg{copath}, { '.schedule' => 'add' });
-	print "A  $arg{copath}\n" unless $arg{quiet};
+	die "do_add with targets and non-recursive not handled" if $arg{targets};
+	$self->{checkout}->store ($arg{copath}, { '.schedule' => 'add',
+						  '.copyfrom' => $arg{copyfrom},
+						  '.copyfrom_rev' => $arg{copyfrom_rev},
+						});
+	print "A  $arg{report}\n" unless $arg{quiet};
     }
 }
 
@@ -362,6 +368,7 @@ sub do_delete {
     my $xdroot = $self->xdroot (%arg);
     my @deleted;
 
+    # XXX: this needs to be refactored
     # check for if the file/dir is modified.
     $self->checkout_delta ( %arg,
 			    baseroot => $xdroot,
@@ -453,6 +460,7 @@ sub do_revert {
     my $xdroot = $self->xdroot (%arg);
 
     my $revert = sub {
+	# XXX: need to repsect copied resources
 	my $kind = $xdroot->check_path ($_[0]);
 	if ($kind == $SVN::Node::none) {
 	    print loc("%1 is not versioned; ignored.\n", $_[1]);
@@ -468,7 +476,11 @@ sub do_revert {
 	    close $fh;
 	}
 	$self->{checkout}->store ($_[1],
-				  {'.schedule' => undef});
+				  {'.schedule' => undef,
+				   scheduleanchor => undef,
+				   '.copyfrom' => undef,
+				   '.copyfrom_rev' => undef,
+				  });
 	print loc("Reverted %1\n", $_[1]);
     };
 
@@ -476,6 +488,9 @@ sub do_revert {
 	my $sche = $self->{checkout}->get ($_[1])->{'.schedule'};
 	$self->{checkout}->store ($_[1],
 				  {'.schedule' => undef,
+				   scheduleanchor => undef,
+				   '.copyfrom' => undef,
+				   '.copyfrom_rev' => undef,
 				   '.newprop' => undef});
 	-d $_[1] ? rmtree ([$_[1]]) : unlink($_[1])
 	    if $sche eq 'add';
@@ -529,7 +544,7 @@ sub _delta_content {
     my $handle = $arg{editor}->apply_textdelta ($arg{baton}, undef, $arg{pool});
     return unless $handle && $#{$handle} > 0;
 
-    if ($arg{send_delta} && !$arg{add}) {
+    if ($arg{send_delta} && $arg{base}) {
 	my $txstream = SVN::TxDelta::new
 	    ($arg{xdroot}->file_contents ($arg{path}), $arg{fh}, $arg{pool});
 
@@ -543,10 +558,10 @@ sub _delta_content {
 sub _delta_file {
     my ($self, %arg) = @_;
     my $pool = SVN::Pool->new_default (undef);
+    $arg{add} = 1 if $arg{auto_add} && $arg{kind} == $SVN::Node::none;
     my $rev = $arg{add} ? 0 : &{$arg{cb_rev}} ($arg{entry});
     my $cinfo = $arg{cinfo} || $self->{checkout}->get ($arg{copath});
     my $schedule = $cinfo->{'.schedule'} || '';
-
     if ($arg{cb_conflict} && $cinfo->{'.conflict'}) {
 	&{$arg{cb_conflict}} ($arg{editor}, $arg{entry}, $arg{baton});
     }
@@ -566,28 +581,37 @@ sub _delta_file {
     my $mymd5 = md5($fh);
     my $md5;
 
-    return unless $schedule || $arg{add}
+    return unless $schedule || $arg{add} || $arg{base}
 	|| $mymd5 ne ($md5 = $arg{xdroot}->file_md5_checksum ($arg{path}));
 
     my $baton = $arg{add} ?
-	$arg{editor}->add_file ($arg{entry}, $arg{baton}, undef, -1, $pool) :
-	$arg{editor}->open_file ($arg{entry}, $arg{baton}, $rev, $pool);
+	$arg{editor}->add_file ($arg{entry}, $arg{baton},
+				$cinfo->{'.copyfrom'} ?
+				"file://$arg{repospath}$cinfo->{'.copyfrom'}" : undef,
+				$cinfo->{'.copyfrom_rev'} ||  -1, $pool) :
+				    undef;
 
     my $newprop = $cinfo->{'.newprop'};
+    $baton ||= $arg{editor}->open_file ($arg{entry}, $arg{baton}, $rev, $pool)
+	if keys %$newprop;
+
     $arg{editor}->change_file_prop ($baton, $_, $newprop->{$_}, $pool)
 	for sort keys %$newprop;
 
-    if ($arg{add} || $mymd5 ne ($md5 ||= $arg{xdroot}->file_md5_checksum ($arg{path}))) {
+    if (!$arg{base} ||
+	$mymd5 ne ($md5 ||= $arg{xdroot}->file_md5_checksum ($arg{path}))) {
 	seek $fh, 0, 0;
+	$baton ||= $arg{editor}->open_file ($arg{entry}, $arg{baton}, $rev, $pool);
 	$self->_delta_content (%arg, baton => $baton, fh => $fh, pool => $pool);
     }
 
-    $arg{editor}->close_file ($baton, $mymd5, $pool);
+    $arg{editor}->close_file ($baton, $mymd5, $pool) if $baton;
 }
 
 sub _delta_dir {
     my ($self, %arg) = @_;
     my $pool = SVN::Pool->new_default (undef);
+    $arg{add} = 1 if $arg{auto_add} && $arg{kind} == $SVN::Node::none;
     my $rev = $arg{add} ? 0 : &{$arg{cb_rev}} ($arg{entry} || '');
     my $cinfo = $arg{cinfo} || $self->{checkout}->get ($arg{copath});
     my $schedule = $cinfo->{'.schedule'} || '';
@@ -626,7 +650,7 @@ sub _delta_dir {
 	if ($arg{delete_verbose}) {
 	    for ($self->{checkout}->find
 		 ($arg{copath}, {'.schedule' => 'delete'})) {
-		s|^$arg{copath}/?||;
+		s|^\Q$arg{copath}\E/?||;
 		$arg{editor}->delete_entry ("$arg{entry}/$_", $rev, $arg{baton}, $pool)
 		    if $_;
 	    }
@@ -635,13 +659,17 @@ sub _delta_dir {
     }
     elsif ($arg{add}) {
 	$baton = $arg{root} ? $arg{baton} :
-	    $arg{editor}->add_directory ($arg{entry}, $arg{baton}, undef, -1, $pool);
+	    $arg{editor}->add_directory ($arg{entry}, $arg{baton},
+					 $arg{copyfrom} ?
+					 ("file://$arg{repospath}$arg{copyfrom}",
+					  $cinfo->{'.copyfrom_rev'}) : (undef, -1), $pool);
     }
-    else {
+
+    if ($arg{base}) {
 	$entries = $arg{xdroot}->dir_entries ($arg{path})
 	    if $arg{kind} == $SVN::Node::dir;
-	$baton = $arg{root} ? $arg{baton} : $arg{editor}->open_directory ($arg{entry}, $arg{baton}, $rev, $pool);
     }
+    $baton ||= $arg{root} ? $arg{baton} : $arg{editor}->open_directory ($arg{entry}, $arg{baton}, $rev, $pool);
 
     if ($schedule eq 'prop' || $arg{add}) {
 	my $newprop = $cinfo->{'.newprop'};
@@ -653,6 +681,8 @@ sub _delta_dir {
 	my $kind = $entries->{$_}->kind;
 	my $delta = ($kind == $SVN::Node::file) ? \&_delta_file : \&_delta_dir;
 	$self->$delta ( %arg,
+			add => 0,
+			base => 1,
 		   entry => $arg{entry} ? "$arg{entry}/$_" : $_,
 		   kind => $kind,
 		   targets => $targets->{$_},
@@ -677,7 +707,7 @@ sub _delta_dir {
 	next if m/$ignore/;
 	my $ccinfo = $self->{checkout}->get ("$arg{copath}/$_");
 	my $sche = $ccinfo->{'.schedule'} || '';
-	unless ($sche || ($arg{auto_add} && $arg{add})) {
+	unless ($sche || $arg{auto_add}) {
 	    if ($arg{cb_unknown} &&
 		(!defined $arg{targets} || exists $targets->{$_})) {
 		if ($arg{unknown_verbose}) {
@@ -685,7 +715,12 @@ sub _delta_dir {
 		    find (sub {
 			      return if m/$ignore/;
 			      my $dpath = $File::Find::name;
-			      $dpath =~ s/^$arg{copath}/$arg{path}/;
+			      if ($arg{entry}) {
+				  $dpath =~ s/^\Q$arg{copath}\E/$arg{entry}/;
+			      }
+			      else {
+				  $dpath =~ s|^\Q$arg{copath}\E/||;
+			      }
 			      &{$arg{cb_unknown}} ($dpath, $File::Find::name);
 			  },
 			  $targets->{$_} ? map {"$newco/$_"} @{$targets->{$_}}
@@ -700,16 +735,20 @@ sub _delta_dir {
 	    next;
 	}
 	my $delta = (-d "$arg{copath}/$_") ? \&_delta_dir : \&_delta_file;
+	my $kind = $ccinfo->{'.copyfrom'} ?
+	    $arg{xdroot}->check_path ($ccinfo->{'.copyfrom'}) : $SVN::Node::none;
 	$self->$delta ( %arg,
-		   add => 1,
-		   entry => $arg{entry} ? "$arg{entry}/$_" : $_,
-		   kind => $SVN::Node::none,
-		   baton => $baton,
-		   targets => $targets->{$_},
-		   root => 0,
-		   path => "$arg{path}/$_",
-		   cinfo => $ccinfo,
-		   copath => "$arg{copath}/$_")
+			add => 1,
+			base => exists $ccinfo->{'.copyfrom'},
+			entry => $arg{entry} ? "$arg{entry}/$_" : $_,
+			kind => $kind,
+			baton => $baton,
+			targets => $targets->{$_},
+			root => 0,
+			path => $ccinfo->{'.copyfrom'} || "$arg{path}/$_",
+			copyfrom => $ccinfo->{'.copyfrom'},
+			cinfo => $ccinfo,
+			copath => "$arg{copath}/$_")
 	    if !defined $arg{targets} || exists $targets->{$_};
 
     }
@@ -752,10 +791,10 @@ sub checkout_delta {
     my $baton = $arg{editor}->open_root ($rev);
 
     if ($kind == $SVN::Node::file) {
-	$self->_delta_file (%arg, baton => $baton);
+	$self->_delta_file (%arg, baton => $baton, base => 1);
     }
     elsif ($kind == $SVN::Node::dir) {
-	$self->_delta_dir (%arg, baton => $baton, root => 1);
+	$self->_delta_dir (%arg, baton => $baton, root => 1, base => 1);
     }
     else {
 	my $delta = (-d $arg{copath}) ? \&_delta_dir : \&_delta_file;
@@ -769,11 +808,17 @@ sub checkout_delta {
 		       root => 1);
 	}
 	else {
+	    # XXX: duplicated with _delta_dir
 	    if ($arg{unknown_verbose}) {
 		find (sub {
 #			  return if m/$ignore/;
 			  my $dpath = $File::Find::name;
-			  $dpath =~ s/^$arg{copath}/$arg{path}/;
+			  if ($dpath eq $arg{copath}) {
+			      $dpath = '';
+			  }
+			  else {
+			      $dpath =~ s|^\Q$arg{copath}\E/||;
+			  }
 			  &{$arg{cb_unknown}} ($dpath, $File::Find::name);
 		      },
 		      $arg{targets} ? map {"$arg{copath}/$_"} @{$arg{targets}}
@@ -845,7 +890,9 @@ sub do_import {
 	    "file://$arg{repospath}",
 	    $arg{path}, $ENV{USER},
 	    $arg{message},
-	    sub { print loc("Directory %1 imported to depotpath %2 as revision %3.\n", $arg{copath}, $arg{depotpath}, $_[0]) }));
+	    sub { $yrev = $_[0];
+		  print loc("Directory %1 imported to depotpath %2 as revision %3.\n",
+			    $arg{copath}, $arg{depotpath}, $yrev) }));
 
     $editor = SVK::XD::CheckEditor->new ($editor)
 	if $arg{check_only};
@@ -853,19 +900,22 @@ sub do_import {
     my $baton = $editor->open_root ($yrev);
 
     if (exists $self->{checkout}->get ($arg{copath})->{depotpath}) {
-	die loc("Import source cannot be a checkout path");
+	$arg{is_checkout}++;
+	die loc("Import source cannot be a checkout path")
+	    unless $arg{force};
+    }
+    else {
+	# XXX: check the entry first
+	$self->{checkout}->store ($arg{copath},
+				  {depotpath => $arg{depotpath},
+				   '.newprop' => undef,
+				   '.conflict' => undef,
+				   revision =>0});
     }
 
-    # XXX: check the entry first
-    $self->{checkout}->store ($arg{copath},
-			      {depotpath => $arg{depotpath},
-			       '.newprop' => undef,
-			       '.conflict' => undef,
-			       revision =>0});
-
-    $self->_delta_dir (%arg,
-		add => 1,
+    $self->_delta_dir ( %arg,
 	        auto_add => 1,
+		base => 1,
 		cb_rev => sub { $yrev },
 		editor => $editor,
 		baseroot => $root,
@@ -879,12 +929,21 @@ sub do_import {
 
     $editor->close_edit ();
 
-    $self->{checkout}->store ($arg{copath},
-			      {depotpath => undef,
-			       revision => undef,
-			       '.schedule' => undef});
-
-
+    if ($arg{is_checkout}) {
+	my (undef, $path) = $self->find_repos_from_co ($arg{copath}, 0);
+	$self->{checkout}->store_recursively ($arg{copath},
+					      {revision => $yrev,
+					       '.copyfrom' => undef,
+					       '.copyfrom_rev' => undef,
+					       '.schedule' => undef})
+	    if $path eq $arg{path};
+    }
+    else {
+	$self->{checkout}->store ($arg{copath},
+				  {depotpath => undef,
+				   revision => undef,
+				   '.schedule' => undef})
+    }
 }
 
 sub get_keyword_layer {
@@ -1089,7 +1148,10 @@ sub close_file {
 	delete $self->{base}{$path};
     }
     elsif (!$self->{update} && !$self->{check_only}) {
-	$self->{xd}->do_add (copath => $copath, quiet => 1);
+	my $report = $path;
+	$report =~ s/^\Q$self->{target}\E/$self->{report}/;
+	$self->{xd}->do_add (report => $report,
+			     copath => $copath, quiet => $self->{quiet});
     }
     $self->{checkout}->store ($copath, {revision => $self->{revision}})
 	if $self->{update};
@@ -1102,7 +1164,10 @@ sub add_directory {
     my $copath = $path;
     $self->{get_copath}($copath);
     mkdir ($copath) unless $self->{check_only};
-    $self->{xd}->do_add (copath => $copath, quiet => 1)
+    my $report = $path;
+    $report =~ s/^\Q$self->{target}\E/$self->{report}/;
+    $self->{xd}->do_add (report => $report,
+			 copath => $copath, quiet => $self->{quiet})
 	if !$self->{update} && !$self->{check_only};
     return $path;
 }

@@ -1,6 +1,6 @@
 package SVK::Command::Propset;
 use strict;
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 use base qw( SVK::Command::Commit );
 use SVK::XD;
 use SVK::I18N;
@@ -50,6 +50,7 @@ sub do_propset {
 	    );
     }
     else {
+	return unless $self->check_mirrored_path ($target);
 	$self->get_commit_message ();
 	$self->do_propset_direct ( author => $ENV{USER},
 				   %$target,

@@ -28,6 +28,7 @@ my %alias = qw( co checkout
 		sy sync
 		desc describe
 		st status
+		stat status
 		ver version
 		ls list
 	      );
@@ -66,17 +67,18 @@ sub get_cmd {
 }
 
 sub invoke {
-    my $pkg = shift;
-    my $xd = shift;
-    my $cmd = shift;
-    local @ARGV = @_;
+    my ($pkg, $xd, $cmd, $output, @arg) = @_;
+    my $ofh;
+    local @ARGV = @arg;
 
     $cmd = get_cmd ($pkg, $cmd);
     $cmd->{xd} = $xd;
     die unless GetOptions ($cmd, _opt_map($cmd, $cmd->options));
     my @args = $cmd->parse_arg(@ARGV);
     $cmd->lock (@args);
+    $ofh = select $output if $output;
     my $ret = eval { $cmd->run (@args) };
+    select $ofh if $output;
     $xd->unlock () if $xd;
     die $@ if $@;
     return $ret;
@@ -164,6 +166,7 @@ sub arg_co_maybe {
 	     repospath => $repospath,
 	     depotpath => $cinfo->{depotpath} || $arg,
 	     copath => $copath,
+	     report => $arg,
 	     path => $path,
 	   };
 }
@@ -174,6 +177,7 @@ sub arg_copath {
     my ($repospath, $path, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($arg, 1);
     return { repos => $repos,
 	     repospath => $repospath,
+	     report => $arg,
 	     copath => Cwd::abs_path ($arg),
 	     path => $path,
 	     cinfo => $cinfo,

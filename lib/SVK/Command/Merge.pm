@@ -1,6 +1,6 @@
 package SVK::Command::Merge;
 use strict;
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
@@ -91,6 +91,7 @@ sub log_for_merge {
     my $self = shift;
     open my $buf, '>', \(my $tmp);
     SVK::Command::Log::do_log (@_, 0, 0, 0, 1, $buf);
+    $tmp =~ s/^/ /mg;
     return $tmp;
 }
 

@@ -1,6 +1,6 @@
 package SVK::Command::Status;
 use strict;
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 
 use base qw( SVK::Command );
 use SVK::XD;
@@ -30,7 +30,7 @@ sub run {
 	  cb_conflict => \&SVK::StatusEditor::conflict,
 	  cb_unknown =>
 	  sub { $_[1] =~ s|^\Q$target->{copath}\E/|$target->{report}|;
-		print "?  $_[1]\n" }
+		print "?   $_[1]\n" }
 	);
     return;
 }

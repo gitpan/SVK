@@ -1,6 +1,6 @@
 package SVK::Command::Mkdir;
 use strict;
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 
 use base qw( SVK::Command::Commit );
 use SVK::XD;
@@ -31,6 +31,7 @@ sub do_mkdir_direct {
 
 sub run {
     my ($self, $target) = @_;
+    return unless $self->check_mirrored_path ($target);
     $self->get_commit_message ();
     $self->do_mkdir_direct ( author => $ENV{USER},
 			     %$target,
