@@ -189,7 +189,7 @@ sub getopt {
     local *ARGV = $argv;
     my $recursive = $self->opt_recursive;
     my $toggle = 0;
-    $opt{$recursive ? 'N||non-recursive' : 'R|recursive'} = \$toggle
+    $opt{$recursive ? 'N|non-recursive' : 'R|recursive'} = \$toggle
 	if defined $recursive;
     die loc ("Unknown options.\n")
 	unless GetOptions (%opt, $self->_opt_map ($self->options));
@@ -302,6 +302,18 @@ sub arg_condensed {
     s{[/\Q$SEP\E]$}{}o for @arg; # XXX band-aid
 
     my ($report, $copath, @targets )= $self->{xd}->condense (@arg);
+
+    if ($self->{recursive}) {
+	# remove redundant targets when doing recurisve
+	# if have '' in targets then it means everything
+	my @newtarget = @targets;
+	for my $anchor (sort {length $a <=> length $b} @targets) {
+	    @newtarget = grep { length $anchor ? $_ eq $anchor || index ($_, "$anchor/") != 0
+				               : 0} @newtarget;
+	}
+	@targets = @newtarget;
+    }
+
     my ($repospath, $path, undef, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($copath, 1);
     my $target = SVK::Target->new
 	( repos => $repos,
@@ -335,8 +347,10 @@ sub arg_uri_maybe {
     is_uri($arg) or return $self->arg_depotpath($arg);
     HAS_SVN_MIRROR or die loc("cannot load SVN::Mirror");
 
+    $arg =~ s{/?$}{/}; # add a trailing slash at the end
+
     require URI;
-    my $uri = URI->new("$arg/")->canonical or die loc("%1 is not a valid URI.\n", $arg);
+    my $uri = URI->new($arg)->canonical or die loc("%1 is not a valid URI.\n", $arg);
     my $map = $self->{xd}{depotmap};
     foreach my $depot (sort keys %$map) {
         local $@;
@@ -758,14 +772,12 @@ sub find_checkout_anchor {
 
         if ($copied_from) {
             return ($anchor_target, $copied_from);
-            last;
         }
         elsif (@rel_path) {
             $anchor_target->descend (shift (@rel_path));
         }
         else {
             return ($self->arg_depotpath ($entry->{depotpath}), undef);
-            last;
         }
     }
 }

@@ -2,7 +2,7 @@ package SVK::Command::Copy;
 use strict;
 our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command::Mkdir );
-use SVK::Util qw( get_anchor get_prompt abs2rel );
+use SVK::Util qw( get_anchor get_prompt abs2rel splitdir );
 use SVK::I18N;
 
 sub options {
@@ -23,13 +23,25 @@ sub parse_arg {
         $dst = $target;
     }
     else {
-        $self->{_checkout_path} = $dst;
-        my $path = get_prompt(loc("Enter a depot path to copy into (under // if no leading '/'): "));
+        # Asking the user for copy destination.
+        # In this case, first magically promote ourselves to "cp -p".
+        # (otherwise it hurts when user types //deep/directory/name)
+        $self->{parent} = 1;
+
+        my $path = get_prompt(loc("Enter a depot path to copy into (under // if no leading '/'): ")) || '//A';
         $path =~ s{^//+}{};
         $path =~ s{//+}{/};
         $path = "//$path" unless $path =~ m!^/!;
-        $path = "$path/" unless $path =~ m!/\z!;
-        $dst = $self->arg_depotpath($path);
+        $path =~ s{/$}{};
+
+        if ($dst =~ /^\.?$/) {
+            $self->{_checkout_path} = (splitdir($path))[-1];
+        }
+        else {
+            $self->{_checkout_path} = $dst;
+        }
+
+        $dst = $self->arg_depotpath("$path/");
     }
 
     return (@src, $dst);
@@ -38,20 +50,6 @@ sub parse_arg {
 sub lock {
     my $self = shift;
     $_[-1]->{copath} ? $self->lock_target ($_[-1]) : $self->lock_none;
-}
-
-sub do_copy_direct {
-    # OBSOLETED
-    my ($self, %arg) = @_;
-    my $fs = $arg{repos}->fs;
-    my $edit = $self->get_commit_editor ($fs->revision_root ($fs->youngest_rev),
-					 sub { print loc("Committed revision %1.\n", $_[0]) },
-					 '/', %arg);
-    # XXX: check parent, check isfile, check everything...
-    $edit->open_root();
-    $edit->copy_directory ($arg{dpath}, "file://$arg{repospath}$arg{path}",
-			   $arg{revision});
-    $edit->close_edit();
 }
 
 sub handle_co_item {
@@ -99,7 +97,8 @@ sub handle_direct_item {
 
 sub _unmodified {
     my ($self, $target) = @_;
-    $target->anchorify;
+    # Use condensed to do proper anchorification.
+    $target = $self->arg_condensed ($target->copath);
     $self->{xd}->checkout_delta
 	( %$target,
 	  xdroot => $target->root ($self->{xd}),
@@ -164,7 +163,7 @@ sub run {
 	$self->finalize_dynamic_editor ($editor);
     }
 
-    if (my $copath = $self->{_checkout_path}) {
+    if (defined( my $copath = $self->{_checkout_path} )) {
         my $checkout = $self->command ('checkout');
 	$checkout->getopt ([]);
         my @arg = $checkout->parse_arg ($dst->{report}, $copath);
@@ -186,7 +185,7 @@ SVK::Command::Copy - Make a versioned copy
 =head1 SYNOPSIS
 
  copy DEPOTPATH1 DEPOTPATH2
- copy DEPOTPATH PATH
+ copy DEPOTPATH [PATH]
 
 =head1 OPTIONS
 

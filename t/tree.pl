@@ -1,5 +1,9 @@
 #!/usr/bin/perl
+
+my $pid = $$;
+
 END {
+    return unless $$ == $pid;
     rm_test($_) for @TOCLEAN;
 }
 
@@ -10,7 +14,8 @@ require SVN::Repos;
 require SVN::Fs;
 use File::Path;
 use File::Temp;
-use SVK::Util qw( dirname catdir tmpdir can_run abs_path $SEP $EOL IS_WIN32 );
+use SVK::Util qw( dirname catdir tmpdir can_run abs_path $SEP $EOL IS_WIN32 HAS_SVN_MIRROR );
+use Test::More;
 
 # Fake standard input
 our $answer = 's'; # skip
@@ -23,12 +28,21 @@ BEGIN {
     chdir catdir( dirname(__FILE__), '..' );
 }
 
+sub plan_svm {
+    unless (HAS_SVN_MIRROR) {
+	plan skip_all => "SVN::Mirror not installed";
+	exit;
+    };
+    plan @_;
+}
+
 use Carp;
 use SVK;
 use SVK::XD;
 
 our @TOCLEAN;
 END {
+    return unless $$ == $pid;
     $SIG{__WARN__} = sub { 1 };
     cleanup_test($_) for @TOCLEAN;
 }
@@ -36,7 +50,7 @@ END {
 our $output = '';
 our $copath;
 
-for (qw/SVKRESOLVE SVKMERGE SVKDIFF LC_CTYPE LC_ALL LANG LC_MESSAGES/) {
+for (qw/SVKRESOLVE SVKMERGE SVKDIFF SVKPGP LC_CTYPE LC_ALL LANG LC_MESSAGES/) {
     $ENV{$_} = '' if $ENV{$_};
 }
 $ENV{LANGUAGE} = $ENV{LANGUAGES} = 'i-default';
@@ -163,7 +177,7 @@ sub is_output {
     $svk->$cmd (@$arg);
     my $cmp = (grep {ref ($_) eq 'Regexp'} @$expected)
 	? \&is_deeply_like : \&is_deeply;
-    @_ = ([split (/\r?\n/, $output)], $expected, $test || join(' ', $cmd, @$arg));
+    @_ = ([split (/\r?\n/, $output)], $expected, $test || join(' ', map { / / ? qq("$_") : $_ } $cmd, @$arg));
     goto &$cmp;
 }
 
@@ -374,6 +388,7 @@ sub replace_file {
 }
 
 END {
+    return unless $$ == $pid;
     unlink $_ for @unlink;
 }
 
