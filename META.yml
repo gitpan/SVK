@@ -1,5 +1,5 @@
 name: SVK
-version: 0.16
+version: 0.17
 abstract: A decentralized version control system
 author: Chia-liang Kao <clkao@clkao.org>
 license: perl
@@ -21,4 +21,4 @@ requires:
 no_index:
   directory:
     - inc
-generated_by: Module::Install version 0.330
+generated_by: Module::Install version 0.34

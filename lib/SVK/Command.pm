@@ -1,9 +1,10 @@
 package SVK::Command;
 use strict;
-our $VERSION = '0.09';
+our $VERSION = $SVK::VERSION;
 use Getopt::Long qw(:config no_ignore_case bundling);
 # XXX: Pod::Simple isn't happy with SVN::Simple::Edit, so load it first
 use SVN::Simple::Edit;
+use SVK::Target;
 use Pod::Simple::Text ();
 use Pod::Simple::SimpleTree ();
 use File::Find ();
@@ -73,19 +74,20 @@ sub invoke {
     local @ARGV = @args;
     my $pool = SVN::Pool->new_default;
     $ofh = select $output if $output;
-    $cmd = get_cmd ($pkg, $cmd);
-    $cmd->{xd} = $xd;
-    die unless GetOptions ('h|help' => \$help, _opt_map($cmd, $cmd->options));
-    @args = eval { $cmd->parse_arg(@ARGV) };
-    if ($@) {
-    }
-    elsif ($help || $#args == -1) {
-	$cmd->usage;
-    }
-    else {
-	eval { $cmd->lock (@args); $ret = $cmd->run (@args) };
-	$xd->unlock if $xd;
-    }
+    eval {
+	$cmd = get_cmd ($pkg, $cmd);
+	$cmd->{xd} = $xd;
+	die unless GetOptions ('h|help' => \$help, _opt_map($cmd, $cmd->options));
+	@args = $cmd->parse_arg(@ARGV);
+	if ($help || $#args == -1) {
+	    $cmd->usage;
+	}
+	else {
+	    eval { $cmd->lock (@args); $ret = $cmd->run (@args) };
+	    $xd->unlock if $xd;
+	    die $@ if $@;
+	}
+    };
     print $ret if $ret;
     select $ofh if $output;
     die $@ if $@;
@@ -155,13 +157,13 @@ sub arg_condensed {
     my ($report, $copath, @targets )= $self->{xd}->condense (@arg);
 
     my ($repospath, $path, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($copath, 1);
-    return { repos => $repos,
-	     repospath => $repospath,
-	     copath => $copath,
-	     path => $path,
-	     report => $report,
-	     targets => @targets ? \@targets : undef,
-	   };
+    return SVK::Target->new
+	( repos => $repos,
+	  repospath => $repospath,
+	  copath => $copath,
+	  path => $path,
+	  report => $report,
+	  targets => @targets ? \@targets : undef );
 }
 
 sub arg_co_maybe {
@@ -169,39 +171,41 @@ sub arg_co_maybe {
 
     my ($repospath, $path, $copath, $cinfo, $repos) =
 	$self->{xd}->find_repos_from_co_maybe ($arg, 1);
-    return { repos => $repos,
-	     repospath => $repospath,
-	     depotpath => $cinfo->{depotpath} || $arg,
-	     copath => $copath,
-	     report => $arg,
-	     path => $path,
-	   };
+    return SVK::Target->new
+	( repos => $repos,
+	  repospath => $repospath,
+	  depotpath => $cinfo->{depotpath} || $arg,
+	  copath => $copath,
+	  report => $arg,
+	  path => $path,
+	);
 }
 
 sub arg_copath {
     my ($self, $arg) = @_;
 
     my ($repospath, $path, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($arg, 1);
-    return { repos => $repos,
-	     repospath => $repospath,
-	     report => $arg,
-	     copath => Cwd::abs_path ($arg),
-	     path => $path,
-	     cinfo => $cinfo,
-	     depotpath => $cinfo->{depotpath},
-	   };
+    return SVK::Target->new
+	( repos => $repos,
+	  repospath => $repospath,
+	  report => $arg,
+	  copath => Cwd::abs_path ($arg),
+	  path => $path,
+	  cinfo => $cinfo,
+	  depotpath => $cinfo->{depotpath},
+	);
 }
 
 sub arg_depotpath {
     my ($self, $arg) = @_;
-
     my ($repospath, $path, $repos) = $self->{xd}->find_repos ($arg, 1);
 
-    return { repos => $repos,
-	     repospath => $repospath,
-	     path => $path,
-	     depotpath => $arg,
-	   };
+    return SVK::Target->new
+	( repos => $repos,
+	  repospath => $repospath,
+	  path => $path,
+	  depotpath => $arg,
+	);
 }
 
 sub arg_depotname {
@@ -217,3 +221,158 @@ sub arg_path {
 }
 
 1;
+
+__DATA__
+
+=head1 NAME
+
+SVK::Command - Base class for SVK commands
+
+=head1 SYNOPSIS
+
+  use SVK::Command;
+  # invoking commands
+  SVK::Command->invoke ($xd, $cmd, $output, @arg);
+
+=head1 DESCRIPTION
+
+=head2 Invoking commands
+
+Use C<SVK::Command-E<gt>invoke>. The arguments in order are the
+L<SVK::XD> object, the command name, the output scalar ref, and the
+arguments for the command. The command name is translated with the
+C<%alias> map.
+
+=head2 Implementing svk commands
+
+C<SVK::Command-E<gt>invoke> loads the corresponding class
+C<SVK::Command::I<$name>>, so that's the class you want to implement
+the following methods in:
+
+=head3 options
+
+Returns a hash where the keys are L<Getopt::Long> specs and the values
+are a string that will be the keys storing the parsed option in
+C<$self>.
+
+=head3 parse_arg
+
+Given the array of command arguments, use C<arg_*> methods to return a
+more meaningful array of arguments.
+
+=head3 lock
+
+Use the C<lock_*> methods to lock the L<SVK::XD> object. The arguments
+will be what is returned from C<parse_arg>.
+
+=head3 run
+
+Actually process the command. The arguments will be what is returned
+from C<parse_arg>.
+
+Returned undef on success. Return a string message to notify the
+caller errors.
+
+=head1 METHODS
+
+=head2 Methods for C<parse_arg>
+
+=over
+
+=item arg_depotname
+
+Argument is a name of depot. such as '' or 'test' that is being used
+normally between two slashes.
+
+=item arg_path
+
+Argument is a plain path in the filesystem.
+
+=item arg_copath
+
+Argument is a checkout path.
+
+=item arg_depotpath
+
+Argument is a depotpath, including the slashes and depot name.
+
+=item arg_co_maybe
+
+Argument might be a checkout path or a depotpath.
+
+=item arg_condensed
+
+Argument is a number of checkout paths.
+
+=back
+
+All the methods except C<arg_depotname> returns a L<SVK::Target>
+object, which is a hash with the following keys:
+
+=over
+
+=item cinfo
+
+=item copath
+
+=item depotpath
+
+=item path
+
+=item repos
+
+=item repospath
+
+=item report
+
+=item targets
+
+=back
+
+The hashes are handy to pass to many other functions.
+
+=head2 Methods for C<lock>
+
+=over
+
+=item lock_none
+
+=item lock_target
+
+=back
+
+=head2 Others
+
+=over
+
+=item brief_usage
+
+Display an one-line brief usage of the command. Optionally a file
+could be given to extract the usage from the pod.
+
+=item usage
+
+Display usage. An optional argument is to display detail or not.
+
+=back
+
+=head1 TODO
+
+=head1 SEE ALSO
+
+L<SVK>, L<SVK::XD>, C<SVK::Command::*>
+
+=head1 AUTHORS
+
+Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2003-2004 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
+
+This program is free software; you can redistribute it and/or modify it
+under the same terms as Perl itself.
+
+See L<http://www.perl.com/perl/misc/Artistic.html>
+
+=cut

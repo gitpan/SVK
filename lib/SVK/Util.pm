@@ -4,7 +4,7 @@ require Exporter;
 our @ISA       = qw(Exporter);
 our @EXPORT_OK = qw(md5 get_buffer_from_editor slurp_fh get_anchor get_prompt
 		    find_svm_source resolve_svm_source svn_mirror tmpfile find_local_mirror);
-our $VERSION   = '0.09';
+our $VERSION = $SVK::VERSION;
 
 use SVK::I18N;
 use Digest::MD5 qw(md5_hex);
@@ -72,8 +72,11 @@ sub get_buffer_from_editor {
     unlink $file;
     return $ret[0] unless wantarray;
 
+    # compare targets in commit message
+    # XXX: test suites for this
     my $old_targets = (split (/\n\Q$sep\E\n/, $content, 2))[1];
-    my @new_targets = map [split(/\s+/, $_, 2)], grep /\S/, split(/\n+/, $ret[1]);
+    my @new_targets = map {s/^\s+//; # proponly change will have leading spacs
+			   [split(/\s+/, $_, 2)]} grep /\S/, split(/\n+/, $ret[1]);
     if ($old_targets ne $ret[1]) {
 	@$targets_ref = map $_->[1], @new_targets;
 	s|^\Q$anchor\E/|| for @$targets_ref;
@@ -99,11 +102,11 @@ sub get_anchor {
 }
 
 sub find_svm_source {
-    my ($repos, $path) = @_;
-    my ($uuid, $m, $mpath);
+    my ($repos, $path, $rev) = @_;
     my $fs = $repos->fs;
-    my $rev = $fs->youngest_rev;
+    $rev ||= $fs->youngest_rev;
     my $root = $fs->revision_root ($rev);
+    my ($uuid, $m, $mpath);
 
     if (svn_mirror) {
 	($m, $mpath) = SVN::Mirror::is_mirrored ($repos, $path);

@@ -10,7 +10,7 @@ SVK::Notify - svk entry status notification
 
     $notify = SVK::Notify->new;
     $notify->node_status ('foo/bar', 'M');
-    $notify->prop_status_('foo/bar', 'M');
+    $notify->prop_status ('foo/bar', 'M');
     $notify->flush ('foo/bar');
     $notify->flush_dir ('foo');
 
@@ -31,6 +31,15 @@ sub skip_print {
     print "    ", loc("%1 - skipped\n", $path);
 }
 
+sub flush_print_report {
+    my $report = shift;
+    return \&flush_print unless defined $report;
+    sub {
+	my $path = $_[0] ? "$report$_[0]" : '.';
+	flush_print ($path, $_[1]);
+    };
+}
+
 sub new {
     my ($class, @arg) = @_;
     my $self = bless {}, $class;
@@ -38,20 +47,23 @@ sub new {
     return $self;
 }
 
-sub node_status : lvalue {
-    my ($self, $path) = @_;
-    $self->{status}{$path}[0];
+sub node_status {
+    my ($self, $path, $s) = @_;
+    $self->{status}{$path}[0] = $s if defined $s;
+    return $self->{status}{$path}[0];
 }
 
-sub prop_status : lvalue {
-    my ($self, $path) = @_;
-    exists $self->{status}{$path} && $self->{status}{$path}[0] ne 'A' ?
-	$self->{status}{$path}[1] : $self->{tmp};
+sub prop_status {
+    my ($self, $path, $s) = @_;
+    $self->{status}{$path}[1] = $s if defined $s
+	&& exists $self->{status}{$path}[0] && $self->{status}{$path}[0] ne 'A';
+    return $self->{status}{$path}[1];
 }
 
-sub hist_status : lvalue {
-    my ($self, $path) = @_;
-    $self->{status}{$path}[2];
+sub hist_status {
+    my ($self, $path, $s) = @_;
+    $self->{status}{$path}[2] = $s if defined $s;
+    return $self->{status}{$path}[2];
 }
 
 sub flush {

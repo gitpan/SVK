@@ -18,12 +18,92 @@ use File::Path;
 use YAML qw(LoadFile DumpFile);
 use PerlIO::via::dynamic;
 
+=head1 NAME
+
+SVK::XD - svk depot and checkout handling.
+
+=head1 SYNOPSIS
+
+  use SVK::XD;
+  $xd = SVK::XD->new
+      (depotmap => { '' => '/path/to/repos'},
+       checkout => Data::Hierarchy->new);
+
+=head1 DESCRIPTION
+
+=head1 TERMINOLOGY
+
+=over
+
+=item depot
+
+A repository referred by a name. The default depot is '' (the empty string).
+
+=item depotpath
+
+A path referred by a depot name and the path inside the depot. For
+example, F<//foo/bar> means F</foo/bar> in the default depot '', and
+F</test/foo/bar> means F</foo/bar> in the depot B<test>.
+
+=item copath
+
+Checkout path. A path in the file system that has a checked out
+version of a certain depotpath.
+
+=back
+
+=head1 CONSTRUCTOR
+
+Options to C<new>:
+
+=over
+
+=item depotmap
+
+A hash reference for depot name and repository path mapping.
+
+=item checkout
+
+A L<Data::Hierarchy> object for checkout paths mapping.
+
+=item giantlock
+
+A filename for global locking.
+
+=item statefile
+
+Filename for serializing C<SVK::XD> object.
+
+=item svkpath
+
+Directory name of C<giantlock> and C<statefile>.
+
+=back
+
+=cut
+
 sub new {
     my $class = shift;
     my $self = bless {}, $class;
     %$self = @_;
+    $self->{signature} ||= SVK::XD::Signature->new (root => "$self->{svkpath}/cache")
+	if $self->{svkpath};
     return $self;
 }
+
+=head1 METHODS
+
+=head2 Serialization and locking
+
+=over
+
+=item load
+
+Load the serialized C<SVK::XD> data from statefile. Initialize C<$self>
+if there's nothing to load. The giant lock is acquired when calling
+C<load>.
+
+=cut
 
 sub load {
     my ($self) = @_;
@@ -42,6 +122,15 @@ sub load {
 	        checkout => Data::Hierarchy->new() };
     $self->{$_} = $info->{$_} for keys %$info;
 }
+
+=item store
+
+Serialize C<$self> to the statefile. If giant lock is still ours,
+overwrite the file directly. Otherwise load the file again and merge
+the paths we locked into the new state file. After C<store> is called,
+giant is unlocked.
+
+=cut
 
 sub _store_self {
     my ($self, $hash) = @_;
@@ -68,6 +157,14 @@ sub store {
     $self->giant_unlock ();
 }
 
+=item lock
+
+Lock the given checkout path, store the state with the lock info to
+prevent other instances from modifying locked paths. The giant lock is
+released afterward.
+
+=cut
+
 sub lock {
     my ($self, $path) = @_;
     if ($self->{checkout}->get ($path)->{lock}) {
@@ -82,12 +179,25 @@ sub lock {
     $self->giant_unlock ();
 }
 
+=item unlock
+
+Unlock All the checkout paths that was locked by this instance.
+
+=cut
+
 sub unlock {
     my ($self) = @_;
     my @paths = $self->{checkout}->find ('/', {lock => $$});
     $self->{checkout}->store ($_, {lock => undef})
 	for @paths;
 }
+
+=item giant_lock
+
+Lock the statefile globally. No other instances need to wait for the
+lock before they can do anything.
+
+=cut
 
 sub giant_lock {
     my ($self) = @_;
@@ -105,6 +215,14 @@ sub giant_lock {
     $self->{giantlocked} = 1;
 }
 
+=item giant_unlock
+
+Release the giant lock.
+
+=back
+
+=cut
+
 sub giant_unlock {
     my ($self) = @_;
     return unless $self->{giantlock};
@@ -112,13 +230,28 @@ sub giant_unlock {
     delete $self->{giantlocked};
 }
 
+=head2 Depot and path translation
+
+=over
+
+=cut
+
 my %REPOS;
 my $REPOSPOOL = SVN::Pool->new;
 
-sub open_repos {
+sub _open_repos {
     my ($repospath) = @_;
     $REPOS{$repospath} ||= SVN::Repos::open ($repospath, $REPOSPOOL);
 }
+
+=item find_repos
+
+Given depotpath and an option about if the repository should be
+opened. Returns an array of repository path, the path inside
+repository, and the C<SVN::Repos> object if caller wants the
+repository to be opened.
+
+=cut
 
 sub find_repos {
     my ($self, $depotpath, $open) = @_;
@@ -128,8 +261,17 @@ sub find_repos {
 
     my $repospath = $self->{depotmap}{$depot} or die loc("no such depot: %1", $depot);
 
-    return ($repospath, $path, $open && open_repos ($repospath));
+    return ($repospath, $path, $open && _open_repos ($repospath));
 }
+
+=item find_repos_from_co
+
+Given the checkout path and an optiona bout if the repository should
+be opened. Returns an array of repository path, the path inside
+repository, the absolute checkout path, the checkout info, and the
+C<SVN::Repos> object if caller wants the repository to be opened.
+
+=cut
 
 sub find_repos_from_co {
     my ($self, $copath, $open) = @_;
@@ -150,6 +292,13 @@ sub find_repos_from_co {
 	    $cinfo, $repos);
 }
 
+=item find_repos_from_co_maybe
+
+Like C<find_repos_from_co>, but falls back to see if the given path is
+a depotpath. In that case, the checkout paths returned iwll be undef.
+
+=cut
+
 sub find_repos_from_co_maybe {
     my ($self, $target, $open) = @_;
     my ($repospath, $path, $copath, $cinfo, $repos);
@@ -160,6 +309,10 @@ sub find_repos_from_co_maybe {
     }
     return ($repospath, $path, $copath, $cinfo, $repos);
 }
+
+=item find_depotname
+
+=cut
 
 sub find_depotname {
     my ($self, $target, $can_be_co) = @_;
@@ -173,6 +326,12 @@ sub find_depotname {
     $self->find_repos ($target, 0);
     return ($target =~ m|^/(.*?)/|);
 }
+
+=item condense
+
+=back
+
+=cut
 
 sub condense {
     my $self = shift;
@@ -200,8 +359,7 @@ sub condense {
 }
 
 sub xdroot {
-    my ($txn, $root) = create_xd_root (@_);
-    bless [$txn, $root], 'SVK::XD::Root';
+    SVK::XD::Root->new (create_xd_root (@_));
 }
 
 sub create_xd_root {
@@ -236,6 +394,12 @@ sub create_xd_root {
     return ($txn, $root);
 }
 
+=head2 Checkout handling
+
+=over
+
+=cut
+
 sub translator {
     my ($target) = @_;
     $target .= '/' if $target;
@@ -256,6 +420,7 @@ sub xd_storage_cb {
 			   },
 	  cb_localmod => sub { my ($path, $checksum) = @_;
 			       my $copath = $path;
+			       # XXX: make use of the signature here too
 			       $arg{get_copath} ($copath);
 			       my $base = get_fh ($arg{oldroot}, '<',
 						  "$arg{anchor}/$path", $copath);
@@ -294,6 +459,14 @@ sub xd_storage_cb {
 	);
 }
 
+=item get_editor
+
+Returns the L<SVK::XD::Editor> object. Apply target translation if
+target is given in options. Also returns the callback hash used by
+L<SVK::Editor::Merge> when called in array context.
+
+=cut
+
 sub get_editor {
     my ($self, %arg) = @_;
     my $t = translator($arg{target});
@@ -313,21 +486,21 @@ sub do_update {
     my $fs = $arg{repos}->fs;
 
     my $xdroot = $self->xdroot (%arg);
-    my ($anchor, $target) = ($arg{path}, '');
+    my ($anchor, $target, $report) = ($arg{path}, '', $arg{report});
     $arg{target_path} ||= $arg{path};
     my ($tanchor, $ttarget) = ($arg{target_path}, '');
 
     print loc("Syncing %1(%2) in %3 to %4.\n", @arg{qw( depotpath path copath rev )});
     unless ($xdroot->check_path ($arg{path}) == $SVN::Node::dir) {
-	($anchor, $target, $tanchor, $ttarget) =
-	    get_anchor (1, $arg{path}, $arg{target_path});
+	($anchor, $target, $tanchor, $ttarget, $report) =
+	    get_anchor (1, $arg{path}, $arg{target_path}, $arg{report});
     }
     else {
 	# no anchor
 	mkdir ($arg{copath})
 	    unless $arg{check_only};
     }
-
+    # XXX: use SVK::Merge
     my $newroot = $fs->revision_root ($arg{rev});
     my ($storage, %cb) = $self->get_editor (%arg,
 					    oldroot => $xdroot,
@@ -337,7 +510,9 @@ sub do_update {
 					    update => 1);
 
     $storage = SVK::Editor::Delay->new ($storage);
+    $report .= '/' if $report ne '' && substr($report, -1, 1) ne '/';
     my $editor = SVK::Editor::Merge->new (send_fulltext => 1,
+					  report => $report,
 					  anchor => $tanchor,
 					  target => $ttarget,
 					  base_anchor => $anchor,
@@ -346,10 +521,9 @@ sub do_update {
 					  %cb);
     $editor->{external} = $ENV{SVKMERGE}
 	if $ENV{SVKMERGE} && -x $ENV{SVKMERGE} && !$self->{check_only};
-    SVN::Repos::dir_delta ($xdroot->[1], $anchor, $target,
-			   $newroot, $arg{target_path},
-			   $editor, undef,
-			   1, $arg{recursive}, 0, 1);
+    $self->depot_delta (oldroot => $xdroot, newroot => $newroot,
+			oldpath => [$anchor, $target], newpath => $arg{target_path},
+			editor => $editor, no_recurse => !$arg{recursive});
 
     print loc("%*(%1,conflict) found.\n", $editor->{conflicts}) if $editor->{conflicts};
 }
@@ -500,86 +674,83 @@ sub fix_permission {
     chmod ($mode, $copath)
 }
 
-sub do_revert {
+=item depot_delta
+
+Generate C<SVN::Delta::Editor> calls to represent the changes between
+C<(oldroot, oldpath)> and C<(newroot, newpath)>. oldpath is a array
+ref for anchor and target, newpath is just a string.
+
+Options:
+
+=over
+
+=item editor
+
+The editor receiving delta calls.
+
+=item no_textdelta
+
+Don't generate text deltas in C<apply_textdelta> calls.
+
+=item no_recurse
+
+=item notice_ancestry
+
+=back
+
+=cut
+
+sub depot_delta {
     my ($self, %arg) = @_;
-    my $xdroot = $self->xdroot (%arg);
-    my $storeundef = {'.schedule' => undef,
-		      scheduleanchor => undef,
-		      '.copyfrom' => undef,
-		      '.copyfrom_rev' => undef,
-		      '.newprop' => undef};
-
-    my $unschedule = sub {
-	$self->{checkout}->store ($_[1], $storeundef);
-	print loc("Reverted %1\n", $_[1]);
-    };
-    my $revert = sub {
-	# XXX: need to repsect copied resources
-	my $kind = $xdroot->check_path ($_[0]);
-	if ($kind == $SVN::Node::none) {
-	    print loc("%1 is not versioned; ignored.\n", $_[1]);
-	    return;
-	}
-	if ($kind == $SVN::Node::dir) {
-	    mkdir $_[1] unless -e $_[1];
-	}
-	else {
-	    my $fh = get_fh ($xdroot, '>', $_[0], $_[1]);
-	    my $content = $xdroot->file_contents ($_[0]);
-	    slurp_fh ($content, $fh);
-	    close $fh;
-	}
-	$unschedule->(@_);
-    };
-
-    my $revert_item = sub {
-	exists $self->{checkout}->get ($_[1])->{'.schedule'} ?
-	    &$unschedule (@_) : &$revert (@_);
-    };
-
-    if ($arg{recursive}) {
-	$self->checkout_delta ( %arg,
-				xdroot => $xdroot,
-				targets => $arg{targets},
-				delete_verbose => 1,
-				absent_verbose => 1,
-				editor => SVK::Editor::Status->new
-				( notify => SVK::Notify->new
-				  ( cb_flush => sub {
-					my ($path, $status) = @_;
-					my $st = $status->[0];
-					my $dpath = $path ? "$arg{path}/$path" : $arg{path};
-					my $copath = $path ? "$arg{copath}/$path" : $arg{copath};
-					if ($st eq 'M' || $st eq 'D' || $st eq '!' || $st eq 'R') {
-					    $revert->($dpath, $copath);
-					}
-					else {
-					    $unschedule->($dpath, $copath);
-					}
-				    },
-				  ),
-				));
-    }
-    else {
-	if ($arg{targets}) {
-	    &$revert_item ("$arg{path}/$_", "$arg{copath}/$_")
-		for @{$arg{targets}};
-	}
-	else {
-	    &$revert_item ($arg{path}, $arg{copath});
-	}
-    }
+    my @root = map {$_->isa ('SVK::XD::Root') ? $_->[1] : $_} @arg{qw/oldroot newroot/};
+    SVN::Repos::dir_delta ($root[0], @{$arg{oldpath}},
+			   $root[1], $arg{newpath},
+			   $arg{editor}, undef,
+			   $arg{no_textdelta} ? 0 : 1,
+			   $arg{no_recurse} ? 0 : 1,
+			   0, # we never need entry props
+			   $arg{notice_ancestry} ? 0 : 1);
 }
+
+=item checkout_delta
+
+Generate C<SVN::Delta::Editor> calls to represent the local changes
+made to the checked out revision.
+
+Options:
+
+=over
+
+=item delete_verbose
+
+Generate delete_entry calls for sub-entries within deleted entry.
+
+=item absent_verbose
+
+Generate absent_* calls for sub-entries within absent entry.
+
+=item unknown_verbose
+
+generate cb_unknown calls for sub-entries within absent entry.
+
+=item absent_ignore
+
+Don't generate absent_* calls.
+
+=back
+
+=cut
 
 use Regexp::Shellish qw( :all ) ;
 # XXX: checkout_delta is getting too complicated and too many options
+my %ignore_cache;
 
 sub ignore {
     no warnings;
     my @ignore = qw/*.o #*# .#* *.lo *.la .*.rej *.rej .*~ *~ .DS_Store
 		    svk-commit*.tmp/;
 
-    return join('|', map {compile_shellish $_} (@ignore, @_));
+    return join('|', map {$ignore_cache{$_} ||= compile_shellish $_} (@ignore, @_));
 }
 
 sub _delta_content {
@@ -603,7 +774,9 @@ sub _delta_content {
 sub _unknown_verbose {
     my ($self, %arg) = @_;
     my $ignore = ignore;
-    find (sub {
+    find ({ preprocess => sub { sort @_ },
+	    wanted =>
+	    sub {
 	      return if m/$ignore/;
 	      my $dpath = $File::Find::name;
 	      my $copath = $dpath;
@@ -621,7 +794,7 @@ sub _unknown_verbose {
 		  }
 	      }
 	      $arg{cb_unknown}->($dpath, $File::Find::name);
-	  }, defined $arg{targets} ?
+	  }}, defined $arg{targets} ?
 	  map {"$arg{copath}/$_"} @{$arg{targets}} : $arg{copath});
 }
 
@@ -668,22 +841,24 @@ sub _delta_file {
     my $pool = SVN::Pool->new_default (undef);
     my $cinfo = $arg{cinfo} ||= $self->{checkout}->get ($arg{copath});
     my $schedule = $cinfo->{'.schedule'} || '';
+    my $modified;
     $arg{add} = 1 if $arg{auto_add} && $arg{kind} == $SVN::Node::none ||
 	$schedule eq 'replace';
     my $rev = $arg{cb_rev}->($arg{entry});
     if ($arg{cb_conflict} && $cinfo->{'.conflict'}) {
+	++$modified;
 	$arg{cb_conflict}->($arg{editor}, $arg{entry}, $arg{baton});
     }
 
-    return if $self->_node_deleted_or_absent (%arg, pool => $pool, rev => $rev,
-					      type => 'file');
+    return 1 if $self->_node_deleted_or_absent (%arg, pool => $pool, rev => $rev,
+						type => 'file');
 
     $rev = 0 if $arg{add};
     my $fh = get_fh ($arg{xdroot}, '<', $arg{path}, $arg{copath});
     my $mymd5 = md5($fh);
     my $md5;
 
-    return unless $schedule || $arg{add} ||
+    return $modified unless $schedule || $arg{add} ||
 	($arg{base} && $mymd5 ne ($md5 = $arg{base_root}->file_md5_checksum ($arg{base_path})));
 
     my $baton = $arg{add} ?
@@ -692,7 +867,6 @@ sub _delta_file {
 				"file://$arg{repospath}$cinfo->{'.copyfrom'}" : undef,
 				$cinfo->{'.copyfrom_rev'} ||  -1, $pool) :
 				    undef;
-
     my $newprop = $cinfo->{'.newprop'};
     $baton ||= $arg{editor}->open_file ($arg{entry}, $arg{baton}, $rev, $pool)
 	if keys %$newprop;
@@ -708,6 +882,7 @@ sub _delta_file {
     }
 
     $arg{editor}->close_file ($baton, $mymd5, $pool) if $baton;
+    return 1;
 }
 
 sub _delta_dir {
@@ -744,12 +919,9 @@ sub _delta_dir {
 					  $cinfo->{'.copyfrom_rev'}) : (undef, -1), $pool);
     }
 
-    $arg{base} = 0 if $schedule eq 'replace';
+    $entries = $arg{base_root}->dir_entries ($arg{base_path})
+	if $arg{base} && $arg{kind} == $SVN::Node::dir;
 
-    if ($arg{base}) {
-	$entries = $arg{base_root}->dir_entries ($arg{base_path})
-	    if $arg{kind} == $SVN::Node::dir;
-    }
     $baton ||= $arg{root} ? $arg{baton} : $arg{editor}->open_directory ($arg{entry}, $arg{baton}, $rev, $pool);
 
     if (($schedule eq 'prop' || $arg{add}) && (!defined $targets)) {
@@ -758,35 +930,48 @@ sub _delta_dir {
 	    for sort keys %$newprop;
     }
 
-    for (sort keys %{$entries}) {
-	my $kind = $entries->{$_}->kind;
+    my $signature;
+    if ($self->{signature} && $arg{xdroot} eq $arg{base_root}) {
+	$signature = $self->{signature}->load ($arg{copath});
+    }
+
+    # XXX: Merge this with @direntries so we have single entry to descendents
+    for my $entry (sort keys %$entries) {
+	next if defined $targets && !exists $targets->{$entry};
+	my $kind = $entries->{$entry}->kind;
+	my $ccinfo = $self->{checkout}->get ("$arg{copath}/$entry");
+	my $sche = $ccinfo->{'.schedule'} || '';
+	next if $kind == $SVN::Node::file && $signature && !$signature->changed ($entry)
+	    && !$sche;
 	my $delta = ($kind == $SVN::Node::file) ? \&_delta_file : \&_delta_dir;
 	$self->$delta ( %arg,
 			add => 0,
 			base => 1,
 			depth => $arg{depth} ? $arg{depth} - 1: undef,
-			entry => $arg{entry} ? "$arg{entry}/$_" : $_,
+			entry => $arg{entry} ? "$arg{entry}/$entry" : $entry,
 			kind => $kind,
-			targets => $targets ? $targets->{$_} : undef,
+			targets => $targets ? $targets->{$entry} : undef,
 			baton => $baton,
 			root => 0,
 			cinfo => undef,
-			base_path => "$arg{base_path}/$_",
-			path => "$arg{path}/$_",
-			copath => "$arg{copath}/$_")
-	    if !defined $targets || exists $targets->{$_};
+			base_path => "$arg{base_path}/$entry",
+			path => $arg{path} eq '/' ? "/$entry" : "$arg{path}/$entry",
+			copath => "$arg{copath}/$entry") and ($signature && $signature->invalidate ($entry));
     }
 
+    $signature->flush ($arg{copath}) if $signature;
+
     # check scheduled addition
-    opendir my ($dir), $arg{copath};
+    my $ignore = ignore ($arg{add} ? () :
+			 split ("\n", $self->get_props
+				($arg{xdroot}, $arg{path},
+				 $arg{copath})->{'svn:ignore'} || ''));
 
-    if ($dir) {
+    opendir my ($dir), $arg{copath} or die "$arg{copath}: $!";
+    my @direntries = sort grep { !m/^\.+$/ && !exists $entries->{$_} } readdir ($dir);
+    closedir $dir;
 
-    my $svn_ignore = $self->get_props ($arg{xdroot}, $arg{path},
-				       $arg{copath})->{'svn:ignore'}
-        if $arg{kind} == $SVN::Node::dir;
-    my $ignore = ignore (split ("\n", $svn_ignore || ''));
-    for (sort grep { !m/^\.+$/ && !exists $entries->{$_} } readdir ($dir)) {
+    for (@direntries) {
 	next if m/$ignore/;
 	my $ccinfo = $self->{checkout}->get ("$arg{copath}/$_");
 	my $sche = $ccinfo->{'.schedule'} || '';
@@ -821,35 +1006,25 @@ sub _delta_dir {
 			kind => $kind,
 			baton => $baton,
 			root => 0,
-			path => $ccinfo->{'.copyfrom'} || "$arg{path}/$_",
+			path => $ccinfo->{'.copyfrom'} ||
+			($arg{path} eq '/' ? "/$_" : "$arg{path}/$_"),
 			# XXX: what shold base_path be when there's copyfrom?
 			base_path => $ccinfo->{'.copyfrom'} || "$arg{base_path}/$_",
 			copyfrom => $ccinfo->{'.copyfrom'},
 			cinfo => $ccinfo )
 	    if !defined $targets || exists $targets->{$_};
-
-    }
-
-    closedir $dir;
-
     }
 
     # chekc prop diff
     $arg{editor}->close_directory ($baton, $pool)
 	unless $arg{root} || $schedule eq 'delete';
+    return 0;
 }
 
 sub _get_rev {
     my ($self, $path) = @_;
     $self->{checkout}->get($path)->{revision};
 }
-
-
-# options:
-#  delete_verbose: generate delete_entry calls for subdir within deleted entry
-#  absent_verbose: generate absent_* calls for subdir within absent entry
-#  unknown_verbose: generate cb_unknown calls for subdir within absent entry
-#  absent_ignore: don't generate absent_* calls.
 
 sub checkout_delta {
     my ($self, %arg) = @_;
@@ -918,91 +1093,6 @@ sub do_resolved {
     }
     else {
 	$self->resolved_entry ($arg{copath});
-    }
-}
-
-sub do_import {
-    my ($self, %arg) = @_;
-    my $fs = $arg{repos}->fs;
-    my $yrev = $fs->youngest_rev;
-    my $root = $fs->revision_root ($yrev);
-    my $kind = $root->check_path ($arg{path});
-
-    die loc("import destination cannot be a file") if $kind == $SVN::Node::file;
-
-    if ($kind == $SVN::Node::none) {
-	my $edit = SVN::Simple::Edit->new
-	    (_editor => [SVN::Repos::get_commit_editor($arg{repos},
-					    "file://$arg{repospath}",
-					    '/', $ENV{USER},
-					    "directory for svk import",
-					    sub { print loc("Import path %1 initialized.\n", $arg{path}) })],
-	     missing_handler => &SVN::Simple::Edit::check_missing ($root));
-
-	$edit->open_root ($yrev);
-	$edit->add_directory ($arg{path});
-	$edit->close_edit;
-	$yrev = $fs->youngest_rev;
-	$root = $fs->revision_root ($yrev);
-    }
-
-    my $editor = $arg{check_only} ? SVN::Delta::Editor->new :
-	SVN::Delta::Editor->new
-	( SVN::Repos::get_commit_editor
-	  ( $arg{repos},
-	    "file://$arg{repospath}",
-	    $arg{path}, $ENV{USER},
-	    $arg{message},
-	    sub { $yrev = $_[0];
-		  print loc("Directory %1 imported to depotpath %2 as revision %3.\n",
-			    $arg{copath}, $arg{depotpath}, $yrev) }));
-
-    my $baton = $editor->open_root ($yrev);
-
-    if (exists $self->{checkout}->get ($arg{copath})->{depotpath}) {
-	$arg{is_checkout}++;
-	die loc("Import source cannot be a checkout path")
-	    unless $arg{force};
-    }
-    else {
-	# XXX: check the entry first
-	$self->{checkout}->store ($arg{copath},
-				  {depotpath => $arg{depotpath},
-				   '.newprop' => undef,
-				   '.conflict' => undef,
-				   revision =>0});
-    }
-
-    $self->_delta_dir ( %arg,
-	        auto_add => 1,
-		base => 1,
-		cb_rev => sub { $yrev },
-		editor => $editor,
-		base_root => $root,
-		base_path => $arg{path},
-		xdroot => $root,
-		kind => $SVN::Node::dir,
-		absent_as_delete => 1,
-		baton => $baton, root => 1);
-
-    $editor->close_directory ($baton);
-
-    $editor->close_edit ();
-
-    if ($arg{is_checkout}) {
-	my (undef, $path) = $self->find_repos_from_co ($arg{copath}, 0);
-	$self->{checkout}->store_recursively ($arg{copath},
-					      {revision => $yrev,
-					       '.copyfrom' => undef,
-					       '.copyfrom_rev' => undef,
-					       '.schedule' => undef})
-	    if $path eq $arg{path};
-    }
-    else {
-	$self->{checkout}->store ($arg{copath},
-				  {depotpath => undef,
-				   revision => undef,
-				   '.schedule' => undef})
     }
 }
 
@@ -1118,6 +1208,111 @@ sub DESTROY {
     $self->store ();
 }
 
+package SVK::XD::Signature;
+
+sub new {
+    my ($class, @arg) = @_;
+    my $self = bless {}, __PACKAGE__;
+    %$self = @arg;
+    mkdir ($self->{root}) unless -e $self->{root};
+    return $self;
+}
+
+sub load {
+    my ($factory, $path) = @_;
+    my $spath = $path;
+    $spath =~ s{/}{_}g;
+    my $self = bless { root => $factory->{root},
+		       path => $path, spath => $spath }, __PACKAGE__;
+    $self->read;
+    return $self;
+}
+
+sub path {
+    my $self = shift;
+    return "$self->{root}/$self->{spath}";
+}
+
+sub lock_path {
+    my $self = shift;
+    return $self->path.'_lock';
+}
+
+sub lock {
+    my ($self) = @_;
+    my $path = $self->lock_path;
+    return if -e $path;
+    open my $fh, '>', $path;
+    print $fh $$;
+    $self->{locked} = 1;
+}
+
+sub unlock {
+    my ($self) = @_;
+    my $path = $self->lock_path;
+    unlink $path if -e $path;
+    $self->{locked} = 0;
+}
+
+sub read {
+    my ($self) = @_;
+    my $path = $self->path;
+    if (-s $path) {
+        open my $fh, '<', $path or die $!;
+        $self->{signature} =  { <$fh> };
+    }
+    else {
+        $self->{signature} = {};
+    }
+
+    $self->{newsignature} = {};
+}
+
+sub write {
+    my ($self) = @_;
+    my $path = $self->path;
+    # nothing to write
+    return unless keys %{$self->{newsignature}};
+    # not first time file and no entry changed
+    return if -s $path && !keys %{$self->{signature}};
+
+    $self->lock;
+    return unless $self->{locked};
+    my ($hash, $file) = @_;
+    open my $fh, '>', $path or die $!;
+    print {$fh} %{ $self->{newsignature} };
+    $self->unlock;
+}
+
+sub changed {
+    my ($self, $entry) = @_;
+    my $file = "$self->{path}/$entry";
+    # inode, mtime, size
+    my @sig = (stat ($file))[1,7,9] or return 1;
+
+    my ($key, $value) = (quotemeta($entry)."\n", "@sig\n");
+    $self->{newsignature}{$key} = $value;
+    return 1 unless exists $self->{signature}{$key};
+
+    return 1 if $self->{signature}{$key} ne $self->{newsignature}{$key};
+    # remove from ->{signature} if unchanged
+    delete $self->{signature}{$key};
+
+    return 0;
+}
+
+sub invalidate {
+    my ($self, $entry) = @_;
+    use Carp;
+    confess unless $entry;
+    delete $self->{newsignature}{quotemeta($entry)."\n"};
+}
+
+sub flush {
+    my ($self) = @_;
+    $self->write;
+}
+
 package SVK::XD::Root;
 use SVK::I18N;
 
@@ -1129,6 +1324,12 @@ sub AUTOLOAD {
     no strict 'refs';
     my $self = shift;
     $self->[1]->$func (@_);
+}
+
+sub new {
+    my ($class, @arg) = @_;
+    unshift @arg, undef if $#arg == 0;
+    bless [@arg], $class;
 }
 
 # XXX: workaround some stalled refs in svn/perl
