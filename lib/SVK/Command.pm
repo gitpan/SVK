@@ -77,6 +77,7 @@ sub invoke {
     $ofh = select $output if $output;
     eval {
 	$cmd = get_cmd ($pkg, $cmd, $xd);
+	$cmd->{svnconfig} = $xd->{svnconfig} if $xd;
 	die loc ("Unknown options.\n")
 	    unless GetOptions ('h|help' => \$help, _opt_map($cmd, $cmd->options));
 
@@ -359,8 +360,6 @@ could be given to extract the usage from the pod.
 Display usage. An optional argument is to display detail or not.
 
 =back
-
-=head1 TODO
 
 =head1 SEE ALSO
 

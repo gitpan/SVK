@@ -2,7 +2,6 @@
 use Test::More tests => 18;
 use strict;
 require 't/tree.pl';
-use SVK::Command;
 our $output;
 my ($xd, $svk) = build_test();
 $svk->mkdir ('-m', 'init', '//V');
@@ -50,18 +49,21 @@ is_output ($svk, 'checkout', ['//V-3.1/A/Q', "../checkout/just-q"],
 	   ["Syncing //V-3.1/A/Q(/V-3.1/A/Q) in $corpath/just-q to 6.",
 	    'A   ../checkout/just-q/qu',
 	    'A   ../checkout/just-q/qz',
+	    ' U  ../checkout/just-q',
 	   ], 'checkout report');
 
 is_output ($svk, 'checkout', ['//V-3.1/A/Q/', "../checkout/just-q-slash"],
 	   ["Syncing //V-3.1/A/Q/(/V-3.1/A/Q) in $corpath/just-q-slash to 6.",
 	    'A   ../checkout/just-q-slash/qu',
 	    'A   ../checkout/just-q-slash/qz',
+	    ' U  ../checkout/just-q-slash',
 	   ], 'checkout report');
 
 is_output ($svk, 'checkout', ['//V-3.1/A/Q', "../checkout/just-q-slashco/"],
 	   ["Syncing //V-3.1/A/Q(/V-3.1/A/Q) in $corpath/just-q-slashco to 6.",
 	    'A   ../checkout/just-q-slashco/qu',
 	    'A   ../checkout/just-q-slashco/qz',
+	    ' U  ../checkout/just-q-slashco',
 	   ], 'checkout report');
 
 

@@ -23,10 +23,24 @@ sub lock {
 	$self->lock_target ($source) : $self->lock_none;
 }
 
+sub mkpdir {
+    my ($self, $target, $root, $yrev) = @_;
+    my $edit = SVN::Simple::Edit->new
+	(_editor => [SVN::Repos::get_commit_editor
+		     ( $target->{repos},
+		       "file://$target->{repospath}",
+		       '/', $ENV{USER},
+		       "directory for svk import",
+		       sub { print loc("Import path %1 initialized.\n", $target->{path}) })],
+	 pool => SVN::Pool->new,
+	 missing_handler => &SVN::Simple::Edit::check_missing ($root));
+    $edit->open_root ($yrev);
+    $edit->add_directory ($target->{path});
+    $edit->close_edit;
+}
+
 sub run {
     my ($self, $target, $copath) = @_;
-
-    $self->get_commit_message () unless $self->{check_only};
 
     my $fs = $target->{repos}->fs;
     my $yrev = $fs->youngest_rev;
@@ -36,81 +50,49 @@ sub run {
     die loc("import destination cannot be a file") if $kind == $SVN::Node::file;
 
     if ($kind == $SVN::Node::none) {
-	my $edit = SVN::Simple::Edit->new
-	    (_editor => [SVN::Repos::get_commit_editor($target->{repos},
-					    "file://$target->{repospath}",
-					    '/', $ENV{USER},
-					    "directory for svk import",
-					    sub { print loc("Import path %1 initialized.\n", $target->{path}) })],
-	     pool => SVN::Pool->new,
-	     missing_handler => &SVN::Simple::Edit::check_missing ($root));
-
-	$edit->open_root ($yrev);
-	$edit->add_directory ($target->{path});
-	$edit->close_edit;
+	$self->mkpdir ($target, $root, $yrev);
 	$yrev = $fs->youngest_rev;
 	$root = $fs->revision_root ($yrev);
     }
 
-    my ($editor, %cb) = $self->get_editor ($target);
-    ${$cb{callback}} =
-	sub { $yrev = $_[0];
-	      print loc("Directory %1 imported to depotpath %2 as revision %3.\n",
-			$copath, $target->{depotpath}, $yrev) };
-
-    my $baton = $editor->open_root ($yrev);
-    local $SIG{INT} = sub {
-	$editor->abort_edit;
-	die loc("Interrupted.\n");
-    };
     if (exists $self->{xd}{checkout}->get ($copath)->{depotpath}) {
 	$self->{is_checkout}++;
 	die loc("Import source cannot be a checkout path")
 	    unless $self->{force};
+	# XXX: check if anchor matches
+	my (undef, $path) = $self->{xd}->find_repos_from_co ($copath, 0);
+	die loc("Import path ($target->{path}) is different from the copath ($path)\n")
+	    unless $path eq $target->{path};
+
     }
     else {
-	# XXX: check the entry first
 	$self->{xd}{checkout}->store
 	    ($copath, {depotpath => $target->{depotpath},
 		       '.newprop' => undef,
 		       '.conflict' => undef,
-		       revision =>0});
+		       revision => $target->{revision}});
     }
 
-    $self->{xd}->_delta_dir
-	( %$target,
-	  copath => $copath,
-	  auto_add => 1,
-	  base => 1,
-	  cb_rev => $cb{cb_rev},
-	  editor => $editor,
-	  base_root => $root,
-	  base_path => $target->{path},
-	  xdroot => $root,
-	  kind => $SVN::Node::dir,
-	  absent_as_delete => 1,
-	  baton => $baton, root => 1);
+    $self->get_commit_message () unless $self->{check_only};
+    my ($editor, %cb) = $self->get_editor ($target);
+    ${$cb{callback}} =
+	sub { $yrev = $_[0];
+	      print loc("Directory %1 imported to depotpath %2 as revision %3.\n",
+			$copath, $target->{depotpath}, $yrev);
 
-    $editor->close_directory ($baton);
-    $editor->close_edit ();
+	      if ($self->{is_checkout}) {
+		  $self->committed_import ($copath)->($yrev);
+	      }
+	      else {
+		  $self->{xd}{checkout}->store
+		      ($copath, {depotpath => undef,
+				 revision => undef,
+				 '.schedule' => undef});
+	      }
+	  };
 
-    if ($self->{is_checkout}) {
-	my (undef, $path) = $self->{xd}->find_repos_from_co ($copath, 0);
-	$self->{xd}{checkout}->store_recursively
-	    ($copath, {revision => $yrev,
-		       '.copyfrom' => undef,
-		       '.copyfrom_rev' => undef,
-		       '.newprop' => undef,
-		       scheduleanchor => undef,
-		       '.schedule' => undef})
-	    if $path eq $target->{path};
-    }
-    else {
-	$self->{xd}{checkout}->store
-	    ($copath, {depotpath => undef,
-		       revision => undef,
-		       '.schedule' => undef});
-    }
+    $self->{import} = 1;
+    $self->run_delta ($target->new (copath => $copath), $root, $editor, %cb);
     return;
 }
 

@@ -16,6 +16,7 @@ sub options {
      'C|check-only' => 'check_only',
      's|sign'	  => 'sign',
      'force',	  => 'force',
+     'import',	  => 'import',
      'direct',	  => 'direct',
     );
 }
@@ -81,8 +82,8 @@ sub get_commit_message {
 # Return the editor according to copath, path, and is_mirror (path)
 # It will be Editor::XD, repos_commit_editor, or svn::mirror merge back editor.
 sub get_editor {
-    my ($self, $target) = @_;
-    my ($callback, $editor, %cb);
+    my ($self, $target, $callback) = @_;
+    my ($editor, %cb);
 
     # XXX: the case that the target is an xd is actually only used in merge.
     if ($target->{copath}) {
@@ -108,6 +109,7 @@ sub get_editor {
 	}
 	else {
 	    $m->{auth} = $self->auth;
+	    $m->{config} = $self->{svnconfig};
 	    $m->{revprop} = ['svk:signature'];
 	    ($base_rev, $editor) = $m->get_merge_back_editor
 		($mpath, $self->{message},
@@ -129,8 +131,8 @@ sub get_editor {
 
     $editor ||= $self->{check_only} ? SVN::Delta::Editor->new :
 	SVN::Delta::Editor->new
-	( SVN::Repos::get_commit_editor
-	  ( $target->{repos}, "file://$target->{repospath}",
+	( $target->{repos}->get_commit_editor
+	  ( "file://$target->{repospath}",
 	    $target->{path}, $ENV{USER}, $self->{message},
 	    sub { print loc("Committed revision %1.\n", $_[0]);
 		  $fs->change_rev_prop ($_[0], 'svk:signature',
@@ -153,16 +155,9 @@ sub get_editor {
 }
 
 
-sub run {
-    my ($self, $target) = @_;
-
-    my $is_mirrored = $self->under_mirror ($target);
-    print loc("Commit into mirrored path: merging back directly.\n")
-	if $is_mirrored;
-
+sub get_committable {
+    my ($self, $target, $root) = @_;
     my ($fh, $file);
-    my $xdroot = $target->root ($self->{xd});
-
     unless (defined $self->{message}) {
 	($fh, $file) = tmpfile ('commit', UNLINK => 0);
     }
@@ -182,7 +177,7 @@ sub run {
 	    }));
     $self->{xd}->checkout_delta
 	( %$target,
-	  xdroot => $xdroot,
+	  xdroot => $root,
 	  nodelay => 1,
 	  delete_verbose => 1,
 	  absent_ignore => 1,
@@ -190,7 +185,7 @@ sub run {
 	  cb_conflict => \&SVK::Editor::Status::conflict,
 	);
 
-    return loc("no targets to commit\n") if $#{$targets} < 0;
+    die loc("No targets to commit.\n") if $#{$targets} < 0;
 
     my $conflicts = grep {$_->[0] eq 'C'} @$targets;
     if ($conflicts) {
@@ -198,9 +193,8 @@ sub run {
 	    close $fh;
 	    unlink $file;
 	}
-	return loc("%*(%1,conflict) detected. Use 'svk resolved' after resolving them.\n", $conflicts);
+	die loc("%*(%1,conflict) detected. Use 'svk resolved' after resolving them.\n", $conflicts);
     }
-
 
     if ($fh) {
 	close $fh;
@@ -209,16 +203,22 @@ sub run {
 				    undef, $file, $target->{copath}, $target->{targets});
     }
 
-    # if $copath itself is a file or is in the targets,
-    # should get the anchor instead, tweak copath for the s// in XD.pm
+    return [sort {$a->[1] cmp $b->[1]} @$targets];
+}
 
-    $targets = [sort {$a->[1] cmp $b->[1]} @$targets];
+sub _schedule_empty {
+    ('.schedule' => undef,
+     '.copyfrom' => undef,
+     '.copyfrom_rev' => undef,
+     '.newprop' => undef,
+     scheduleanchor => undef);
+}
 
-    my ($editor, %cb) = $self->get_editor ({%$target, copath => undef});
+sub committed_commit {
+    my ($self, $target, $targets) = @_;
     my $fs = $target->{repos}->fs;
-
-    my $committed = sub {
-	my ($rev) = @_;
+    sub {
+	my $rev = shift;
 	my (undef, $dataroot) = $self->{xd}{checkout}->get ($target->{copath});
 	my $oldroot = $fs->revision_root ($rev-1);
 	my $oldrev = $oldroot->node_created_rev ($target->{path});
@@ -231,13 +231,7 @@ sub run {
 	# update checkout map with new revision
 	for (reverse @$targets) {
 	    my ($action, $path) = @$_;
-	    $self->{xd}{checkout}->store_recursively
-		($path, { '.schedule' => undef,
-			  '.copyfrom' => undef,
-			  '.copyfrom_rev' => undef,
-			  '.newprop' => undef,
-			  scheduleanchor => undef
-			});
+	    $self->{xd}{checkout}->store_recursively ($path, { $self->_schedule_empty });
 	    $self->{xd}{checkout}->store
 		($path, { revision => $rev,
 			  $action eq 'D' ? ('.deleted' => 1) : (),
@@ -245,40 +239,80 @@ sub run {
 		    unless $self->{xd}{checkout}->get ($path)->{revision} == $rev;
 	}
 	my $root = $fs->revision_root ($rev);
-	# update keyword-trnslated files
+	# update keyword-translated files
 	for (@$targets) {
 	    my ($action, $copath) = @$_;
 	    next if $action eq 'D' || -d $copath;
 	    my $dpath = $copath;
-	    $dpath =~ s|^\Q$target->{copath}\E|$target->{path}|;
+	    my $path = $target->{path};
+	    $path = '' if $path eq '/';
+	    # XXX: translate SEP to /
+	    $dpath =~ s|^\Q$target->{copath}\E|$path|;
 	    my $prop = $root->node_proplist ($dpath);
+	    # XXX: some mode in get_fh for modification only
 	    my $layer = SVK::XD::get_keyword_layer ($root, $dpath, $prop);
 	    my $eol = SVK::XD::get_eol_layer ($root, $dpath, $prop);
 	    next unless $layer || ($eol ne ':raw' && $eol ne '');
 
-	    my $fh = SVK::XD::get_fh ($xdroot, '<', $dpath, $copath, 0, $layer, $eol);
-	    my $fname = "$copath.svk.old";
-	    rename $copath, $fname or die $!;
+	    my $fh = $root->file_contents ($dpath);
+	    my $perm = (stat ($copath))[2];
 	    open my ($newfh), ">$eol", $copath or die $!;
 	    $layer->via ($newfh) if $layer;
 	    slurp_fh ($fh, $newfh);
-	    chmod ((stat ($fh))[2], $copath);
-	    close $fh;
-	    unlink $fname;
+	    chmod ($perm, $copath);
 	}
-    };
+    }
+}
+
+sub committed_import {
+    my ($self, $copath) = @_;
+    sub {
+	my $rev = shift;
+	$self->{xd}{checkout}->store_recursively
+	    ($copath, {revision => $rev, $self->_schedule_empty});
+    }
+}
+
+sub run {
+    my ($self, $target) = @_;
+
+    my $is_mirrored = $self->under_mirror ($target) && !$self->{direct};
+    print loc("Commit into mirrored path: merging back directly.\n")
+	if $is_mirrored;
+
+    # XXX: should use some status editor to get the committed list for post-commit handling
+    # while printing the modified nodes.
+    my $xdroot = $target->root ($self->{xd});
+    my $committed;
+    if ($self->{import}) {
+	$self->get_commit_message () unless $self->{check_only};
+	$committed = $self->committed_import ($target->{copath});
+    }
+    else {
+	$committed = $self->committed_commit ($target, $self->get_committable ($target, $xdroot));
+    }
+
+    my ($editor, %cb) = $self->get_editor ($target->new (copath => undef), $committed);
 
     die loc("unexpected error: commit to mirrored path but no mirror object")
 	if $is_mirrored && !$self->{direct} && !$cb{mirror};
 
-    ${$cb{callback}} = $committed;
+    $self->run_delta ($target, $xdroot, $editor, %cb);
+    return;
+}
 
+sub run_delta {
+    my ($self, $target, $xdroot, $editor, %cb) = @_;
+    my $fs = $target->{repos}->fs;
     my %revcache;
     $self->{xd}->checkout_delta
 	( %$target,
 	  xdroot => $xdroot,
-	  absent_ignore => 1,
 	  editor => $editor,
+	  $self->{import} ?
+	  ( auto_add => 1,
+	    absent_as_delete => 1) :
+	  ( absent_ignore => 1),
 	  $cb{mirror} ?
 	  ( send_delta => 1,
 	    cb_copyfrom => sub {
@@ -292,11 +326,10 @@ sub run {
 		$revtarget = $revtarget ? "$target->{path}/$revtarget" : $target->{path};
 		my $corev = $self->{xd}{checkout}->get($cotarget)->{revision};
 		return $revcache{$corev} if exists $revcache{corev};
-		my $rev = ($xdroot->node_history ($revtarget)->prev (0)->location)[1];
+		my $rev = ($fs->revision_root ($corev)->node_history ($revtarget)->prev (0)->location)[1];
 		$revcache{$corev} = $cb{mirror}->find_remote_rev ($rev);
 	    }) :
 	  ( nodelay => 1 ));
-    return;
 }
 
 1;
@@ -317,6 +350,7 @@ SVK::Command::Commit - Commit changes to depot
  -s [--sign]:           sign the commit
  -C [--check-only]:     Needs description
  --force:               Needs description
+ --import:              Import mode, nodes are automatically added and deleted
  --direct:              Commit directly even if the path is mirrored
 
 =head1 AUTHORS

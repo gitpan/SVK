@@ -176,6 +176,7 @@ sub open_root {
     $self->{notify} ||= SVK::Notify->new_with_report ($self->{report}, $self->{target});
     $self->{storage_baton}{''} =
 	$self->{storage}->open_root ($self->{cb_rev}->($self->{target}||''));
+    $self->{notify}->node_status ('', '');
     return '';
 }
 
@@ -258,16 +259,14 @@ sub prepare_fh {
     my ($self, $fh) = @_;
     # XXX: need to respect eol-style here?
     for my $name (qw/base new local/) {
-	next unless $fh->{$name}[0];
-	next if $fh->{$name}[1];
-	my $tmp = [tmpfile("$name-")];
-	my $slurp = $fh->{$name}[0];
-
-	slurp_fh ($slurp, $tmp->[0]);
-
-	close $fh->{$name}[0];
-	$fh->{$name} = $tmp;
-	seek $fh->{$name}[0], 0, 0;
+	my $entry = $fh->{$name};
+	next unless $entry->[0];
+	next if $entry->[1];
+	my $tmp = [tmpfile("$name-"), $entry->[2]];
+	slurp_fh ($entry->[0], $tmp->[0]);
+	close $entry->[0];
+	$entry = $fh->{$name} = $tmp;
+	seek $entry->[0], 0, 0;
     }
 }
 
@@ -324,6 +323,7 @@ sub close_file {
 	$fh->{base}[1] = '/dev/null' if $info->{addmerge};
 	my $diff = SVN::Core::diff_file_diff3
 	    (map {$fh->{$_}[1]} qw/base local new/);
+	# XXX: why do in-memory here? use some tee'ed io to get md5 upon written.
 	open my $mfh, '+>', \ (my $merged);
 	SVN::Core::diff_file_output_merge
 		( $mfh, $diff,
@@ -423,6 +423,7 @@ sub open_directory {
 	    return undef;
 	}
     }
+    $self->{notify}->node_status ($path, '');
     $self->{storage_baton}{$path} =
 	$self->{storage}->open_directory ($path, $self->{storage_baton}{$pdir},
 					  $self->{cb_rev}->($path), @arg);
@@ -470,6 +471,7 @@ sub _check_delete_conflict {
 		++$modified;
 		$self->node_conflict ($cpath);
 	    }
+	    delete $dirmodified->{$name};
 	}
 	else { # dir or unmodified file
 	    my $entry = $entries->{$name};
@@ -492,6 +494,11 @@ sub _check_delete_conflict {
 		++$merged;
 	    }
 	}
+    }
+    for my $name (keys %$dirmodified) {
+	my ($cpath, $crpath) = ("$path/$name", "$rpath/$name");
+	++$modified;
+	$self->node_conflict ($cpath);
     }
     if ($modified || $merged) {
 	# maybe leave the status to _partial delete?

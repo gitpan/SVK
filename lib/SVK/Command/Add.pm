@@ -4,6 +4,7 @@ our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command );
 use SVK::XD;
+use SVK::I18N;
 
 sub options {
     ('N|non-recursive'	=> 'nrec',
@@ -21,7 +22,6 @@ sub lock {
 
 sub run {
     my ($self, $target) = @_;
-
     $self->{xd}->do_add ( %$target,
 			  recursive => !$self->{nrec},
 			  quiet => $self->{quiet},
