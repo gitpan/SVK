@@ -4,7 +4,7 @@ require Exporter;
 our @ISA       = qw(Exporter);
 our @EXPORT_OK = qw(md5 get_buffer_from_editor slurp_fh get_anchor get_prompt
 		    find_svm_source resolve_svm_source svn_mirror tmpfile
-		    find_local_mirror abs_path);
+		    find_local_mirror abs_path mimetype mimetype_is_text);
 our $VERSION = $SVK::VERSION;
 
 use SVK::I18N;
@@ -12,9 +12,19 @@ use Digest::MD5 qw(md5_hex);
 use File::Spec;
 use Cwd;
 use File::Temp 0.14 qw(mktemp);
-my $svn_mirror = eval 'require SVN::Mirror; 1' ? 1 : 0;
+# ra must be loaded earlier since it uses the default pool
+use SVN::Core;
+use SVN::Ra;
 
-sub svn_mirror { $svn_mirror }
+# loading svn::mirror on-the-fly causes output stream not respected,
+# failing #1 in t/23commit. possibly because VCP calls select.
+my $svn_mirror = eval 'require SVN::Mirror; 1' ? 1 : 0;
+sub svn_mirror () {
+    no warnings 'redefine';
+    my $svn_mirror = eval { require SVN::Mirror; 1 };
+    *svn_mirror = $svn_mirror ? sub () { 1 } : sub () { 0 };
+    return $svn_mirror;
+}
 
 sub get_prompt {
     my ($prompt, $regex) = @_;
@@ -46,7 +56,7 @@ sub get_buffer_from_editor {
 	close $fh;
     }
     else {
-	open $fh, $file;
+	open $fh, $file or die $!;
 	local $/;
 	$content = <$fh>;
     }
@@ -58,6 +68,7 @@ sub get_buffer_from_editor {
     while (1) {
 	my $mtime = (stat($file))[9];
 	print loc("Waiting for editor...\n");
+	# XXX: check $?
 	system (@editor, $file) and die loc("Aborted: %1\n", $!);
 	last if (stat($file))[9] > $mtime;
 	my $ans = get_prompt(
@@ -68,7 +79,7 @@ sub get_buffer_from_editor {
 	die loc("Aborted.\n") if $ans =~ /^a/;
     }
 
-    open $fh, $file;
+    open $fh, $file or die $!;
     local $/;
     my @ret = defined $sep ? split (/\n\Q$sep\E\n/, <$fh>, 2) : (<$fh>);
     close $fh;
@@ -137,11 +148,9 @@ sub find_svm_source {
 sub find_local_mirror {
     my ($repos, $uuid, $path, $rev) = @_;
     my $myuuid = $repos->fs->get_uuid;
-    if ($uuid ne $myuuid && svn_mirror &&
-	(my ($m, $mpath) = SVN::Mirror::has_local ($repos, "$uuid:$path"))) {
-	return ("$m->{target_path}$mpath", $m->find_local_rev ($rev));
-    }
-    return;
+    return unless svn_mirror && $uuid ne $myuuid;
+    my ($m, $mpath) = SVN::Mirror::has_local ($repos, "$uuid:$path");
+    return ("$m->{target_path}$mpath", $m->find_local_rev ($rev)) if $m;
 }
 
 sub resolve_svm_source {
@@ -177,6 +186,28 @@ sub abs_path {
     return Cwd::abs_path ($path) unless -l $path;
     my (undef, $dir, $pathname) = File::Spec->splitpath ($path);
     return File::Spec->catpath (undef, Cwd::abs_path ($dir), $pathname);
+}
+
+sub mimetype {
+    no warnings 'redefine';
+    my $mimetype = eval {
+        require File::MimeInfo::Magic; 
+        \&File::MimeInfo::Magic::mimetype;
+    };
+    *mimetype = $mimetype || sub { undef };
+    goto &$mimetype;
+}
+
+sub mimetype_is_text {
+    my $type = shift;
+    scalar $type =~ m{^(?:text/.*
+                         |application/x-(?:perl
+		                          |python
+                                          |ruby
+                                          |php
+                                          |java
+                                          |shellscript)
+                         |image/x-x(?:bit|pix)map)$}xo;
 }
 
 1;

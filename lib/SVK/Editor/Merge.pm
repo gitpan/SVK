@@ -59,6 +59,16 @@ External tool that would be called upon textual conflicts.
 
 The editor that will receive the merged callbacks.
 
+=item allow_conflicts
+
+Close the edito instead of abort when there are conflicts.
+
+=item open_nonexist
+
+open the directory even if cb_exist failed. This is for use in
+conjunction with L<SVK::Editor::Rename> for the case that a descendent
+exists but its parent does not.
+
 =back
 
 =head2 callbacks for local tree
@@ -143,6 +153,17 @@ sub cb_for_root {
 	   );
 }
 
+# translate the path before passing to cb_*
+sub cb_translate {
+    my ($cb, $translate) = @_;
+    for (qw/cb_exist cb_rev cb_conflict cb_localmod cb_dirdelta/) {
+	my $sub = $cb->{$_};
+	next unless $sub;
+	$cb->{$_} = sub { my $path = shift; $translate->($path);
+			  $sub->($path, @_)};
+    }
+}
+
 sub set_target_revision {
     my ($self, $revision) = @_;
     $self->{revision} = $revision;
@@ -152,7 +173,7 @@ sub set_target_revision {
 sub open_root {
     my ($self, $baserev) = @_;
     $self->{baserev} = $baserev;
-    $self->{notify} = SVK::Notify->new_with_report ($self->{report}, $self->{target});
+    $self->{notify} ||= SVK::Notify->new_with_report ($self->{report}, $self->{target});
     $self->{storage_baton}{''} =
 	$self->{storage}->open_root ($self->{cb_rev}->($self->{target}||''));
     return '';
@@ -162,7 +183,7 @@ sub add_file {
     my ($self, $path, $pdir, @arg) = @_;
     return unless defined $pdir;
     ++$self->{changes};
-    if ($self->{cb_exist}->($path)) {
+    if (!$self->{added}{$pdir} && $self->{cb_exist}->($path)) {
 	$self->{info}{$path}{addmerge} = 1;
 	$self->{info}{$path}{open} = [$pdir, -1];
 	$self->{info}{$path}{fpool} = pop @arg;
@@ -179,12 +200,13 @@ sub add_file {
 sub open_file {
     my ($self, $path, $pdir, $rev, $pool) = @_;
     # modified but rm locally - tag for conflict?
-    if (defined $pdir && $self->{cb_exist}->($path)) {
+    if ($self->{cb_exist}->($path)) {
 	$self->{info}{$path}{open} = [$pdir, $rev];
 	$self->{info}{$path}{fpool} = $pool;
 	$self->{notify}->node_status ($path, '');
 	return $path;
     }
+    ++$self->{skipped};
     $self->{notify}->flush ($path);
     return undef;
 }
@@ -208,9 +230,11 @@ sub ensure_close {
     $self->{notify}->flush ($path, 1);
     $self->{cb_closed}->($path, $checksum, $pool)
         if $self->{cb_closed};
-    $self->{storage}->close_file ($self->{storage_baton}{$path},
-				  $checksum, $pool)
-        if $self->{storage_baton}{$path};
+
+    if (my $baton = $self->{storage_baton}{$path}) {
+	$self->{storage}->close_file ($baton, $checksum, $pool);
+	delete $self->{storage_baton}{$path};
+    }
 
     delete $self->{info}{$path};
 }
@@ -232,6 +256,7 @@ sub cleanup_fh {
 
 sub prepare_fh {
     my ($self, $fh) = @_;
+    # XXX: need to respect eol-style here?
     for my $name (qw/base new local/) {
 	next unless $fh->{$name}[0];
 	next if $fh->{$name}[1];
@@ -323,7 +348,8 @@ sub close_file {
 		    $mfn,
 		    );
 	    die "$path not merged" unless -e $mfn;
-	    open $mfh, '<', $mfn or die $!;
+	    # XXX: eol layer here?
+	    open $mfh, '<:raw', $mfn or die $!;
 	    $checksum = md5 ($mfh);
 	    $conflict = 0;
 	}
@@ -364,16 +390,21 @@ sub close_file {
 	}
     }
 
+    $self->{notify}->flush ($path, 1);
+    $self->{cb_merged}->($self->{storage}, $self->{storage_baton}{$path}, $pool)
+	if $path eq $self->{target} && $self->{changes} && $self->{cb_merged};
+
     $self->ensure_close ($path, $checksum, $pool);
 }
 
 sub add_directory {
     my ($self, $path, $pdir, @arg) = @_;
     return undef unless defined $pdir;
-    if ($self->{cb_exist}->($path)) {
+    if (!$self->{added}{$pdir} && $self->{cb_exist}->($path)) {
 	$self->{notify}->flush ($path) ;
 	return undef;
     }
+    $self->{added}{$path} = 1;
     $self->{storage_baton}{$path} =
 	$self->{storage}->add_directory ($path, $self->{storage_baton}{$pdir},
 					 @arg);
@@ -385,12 +416,13 @@ sub add_directory {
 
 sub open_directory {
     my ($self, $path, $pdir, $rev, @arg) = @_;
-    return undef unless defined $pdir;
-    unless ($self->{cb_exist}->($path)) {
-	$self->{notify}->flush ($path) ;
-	return undef;
+    unless ($self->{open_nonexist}) {
+	return undef unless defined $pdir;
+	unless ($self->{cb_exist}->($path) || $self->{open_nonexist}) {
+	    $self->{notify}->flush ($path);
+	    return undef;
+	}
     }
-
     $self->{storage_baton}{$path} =
 	$self->{storage}->open_directory ($path, $self->{storage_baton}{$pdir},
 					  $self->{cb_rev}->($path), @arg);
@@ -402,12 +434,16 @@ sub close_directory {
     return unless defined $path;
     no warnings 'uninitialized';
 
+    delete $self->{added}{$path};
     $self->{notify}->flush_dir ($path);
 
-    $self->{cb_merged}->($self->{storage}, $self->{storage_baton}{''}, $pool)
-	if $path eq '' && $self->{changes} && $self->{cb_merged};
+    my $baton = $self->{storage_baton}{$path};
+    $self->{cb_merged}->($self->{storage}, $baton, $pool)
+	if $path eq $self->{target} && $self->{changes} && $self->{cb_merged};
 
-    $self->{storage}->close_directory ($self->{storage_baton}{$path}, $pool);
+    $self->{storage}->close_directory ($baton, $pool);
+    delete $self->{storage_baton}{$path}
+	unless $path eq '';
 }
 
 # returns undef for deleting this, a hash for partial delete.
@@ -511,7 +547,6 @@ sub change_file_prop {
     $self->ensure_open ($path);
     $self->{storage}->change_file_prop ($self->{storage_baton}{$path}, @arg);
     $self->{notify}->prop_status ($path, 'U');
-    ++$self->{changes};
 }
 
 sub change_dir_prop {
@@ -523,6 +558,7 @@ sub change_dir_prop {
     # there should be a magic flag indicating if svk:merge prop should
     # be dealt.
     return if $arg[0] eq 'svk:merge';
+    return if $arg[0] =~ m/^svm:/;
     $self->{storage}->change_dir_prop ($self->{storage_baton}{$path}, @arg);
     $self->{notify}->prop_status ($path, 'U');
     ++$self->{changes};
@@ -530,8 +566,8 @@ sub change_dir_prop {
 
 sub close_edit {
     my ($self, @arg) = @_;
-    if (defined $self->{storage_baton}{''} &&
-	($self->{allow_conflicts} || !$self->{conflicts}) && $self->{changes}) {
+    if ($self->{allow_conflicts} ||
+	(defined $self->{storage_baton}{''} && !$self->{conflicts}) && $self->{changes}) {
 	$self->{storage}->close_edit(@arg);
     }
     else {

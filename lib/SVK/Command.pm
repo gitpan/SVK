@@ -35,8 +35,9 @@ my %alias = qw( co checkout
 	      );
 
 sub new {
-    my ($class) = @_;
-    bless {}, $class;
+    my ($class, $xd) = @_;
+    my $self = bless { xd => $xd }, $class;
+    return $self;
 }
 
 sub options { () }
@@ -56,16 +57,16 @@ sub _cmd_map {
 }
 
 sub get_cmd {
-    my ($pkg, $cmd) = @_;
-    local $@;
+    my ($pkg, $cmd, $xd) = @_;
+    die "Command not recognized, try $0 help.\n"
+	unless $cmd =~ m/^[a-z]+$/;
     $pkg = join('::', 'SVK::Command', _cmd_map ($cmd));
     unless (eval "require $pkg; 1" && UNIVERSAL::can($pkg, 'run')) {
 	$pkg =~ s|::|/|g;
 	warn $@ if $@ && exists $INC{"$pkg.pm"};
-	print "Command not recognized, try $0 help.\n";
-	die;
+	die "Command not recognized, try $0 help.\n";
     }
-    $pkg->new;
+    $pkg->new ($xd);
 }
 
 sub invoke {
@@ -75,9 +76,9 @@ sub invoke {
     my $pool = SVN::Pool->new_default;
     $ofh = select $output if $output;
     eval {
-	$cmd = get_cmd ($pkg, $cmd);
-	$cmd->{xd} = $xd;
-	die unless GetOptions ('h|help' => \$help, _opt_map($cmd, $cmd->options));
+	$cmd = get_cmd ($pkg, $cmd, $xd);
+	die loc ("Unknown options.\n")
+	    unless GetOptions ('h|help' => \$help, _opt_map($cmd, $cmd->options));
 
 	if ($help || !(@args = $cmd->parse_arg(@ARGV))) {
 	    $cmd->usage;
@@ -89,8 +90,8 @@ sub invoke {
 	}
     };
     print $ret if $ret;
+    print $@ if $@;
     select $ofh if $output;
-    die $@ if $@;
 }
 
 sub brief_usage {
@@ -205,6 +206,7 @@ sub arg_depotpath {
 	( repos => $repos,
 	  repospath => $repospath,
 	  path => $path,
+	  report => $arg,
 	  revision => $rev,
 	  depotpath => $arg,
 	);

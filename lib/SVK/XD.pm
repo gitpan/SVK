@@ -10,7 +10,7 @@ use SVK::Editor::Status;
 use SVK::Editor::Delay;
 use SVK::Editor::XD;
 use SVK::I18N;
-use SVK::Util qw( slurp_fh md5 get_anchor abs_path );
+use SVK::Util qw( slurp_fh md5 get_anchor abs_path mimetype mimetype_is_text );
 use Data::Hierarchy '0.18';
 use File::Spec;
 use File::Find;
@@ -18,6 +18,7 @@ use File::Path;
 use YAML qw(LoadFile DumpFile);
 use PerlIO::via::dynamic;
 use PerlIO::via::symlink;
+
 
 =head1 NAME
 
@@ -355,7 +356,6 @@ sub condense {
 	    }
 	}
     }
-    $report .= '/' unless $report eq '' || substr($report, -1, 1) eq '/';
     return ($report, $anchor,
 	    map {s|^\Q$anchor\E/||;$_} grep {$_ ne $anchor} @targets);
 }
@@ -366,13 +366,13 @@ sub xdroot {
 
 sub create_xd_root {
     my ($self, %arg) = @_;
-    my $fs = $arg{repos}->fs;
+    my ($fs, $copath) = ($arg{repos}->fs, $arg{copath});
     my ($txn, $root);
 
-    my @paths = $self->{checkout}->find ($arg{copath}, {revision => qr'.*'});
+    my @paths = $self->{checkout}->find ($copath, {revision => qr'.*'});
 
     return (undef, $fs->revision_root
-	    ($self->{checkout}->get ($paths[0] || $arg{copath})->{revision}))
+	    ($self->{checkout}->get ($paths[0] || $copath)->{revision}))
 	if $#paths <= 0;
 
     for (@paths) {
@@ -380,9 +380,9 @@ sub create_xd_root {
 	unless ($root) {
 	    $txn = $fs->begin_txn ($cinfo->{revision});
 	    $root = $txn->root();
-	    next if $_ eq $arg{copath};
+	    next if $_ eq $copath;
 	}
-	s|^\Q$arg{copath}\E/||;
+	s|^\Q$copath\E/||;
 	my $path = "$arg{path}/$_";
 	$root->delete ($path)
 	    if $root->check_path ($path) != $SVN::Node::none;
@@ -399,18 +399,11 @@ sub create_xd_root {
 
 =cut
 
-sub translator {
-    my ($target) = @_;
-    $target .= '/' if $target;
-    $target ||= '';
-    return qr/^\Q$target\E/;
-}
-
 sub xd_storage_cb {
     my ($self, %arg) = @_;
     # translate to abs path before any check
     return
-	( cb_exist => sub { $_ = shift; $arg{get_copath} ($_); -e $_},
+	( cb_exist => sub { $_ = shift; $arg{get_copath} ($_); -e $_ || -l $_ },
 	  cb_rev => sub { $_ = shift; $arg{get_copath} ($_);
 			  $self->{checkout}->get ($_)->{revision} },
 	  cb_conflict => sub { $_ = shift; $arg{get_copath} ($_);
@@ -421,7 +414,7 @@ sub xd_storage_cb {
 			       my $copath = $path;
 			       # XXX: make use of the signature here too
 			       $arg{get_copath} ($copath);
-			       $path = $arg{anchor} eq '/' ? "/$path" : "$arg{anchor}/$path";
+			       $arg{get_path} ($path);
 			       my $base = get_fh ($arg{oldroot}, '<',
 						  $path, $copath);
 			       my $md5 = md5 ($base);
@@ -432,6 +425,7 @@ sub xd_storage_cb {
 	  cb_dirdelta => sub { my ($path, $base_root, $base_path, $pool) = @_;
 			       my $copath = $path;
 			       $arg{get_copath} ($copath);
+			       $arg{get_path} ($path);
 			       my $modified;
 			       my $editor =  SVK::Editor::Status->new
 				   ( notify => SVK::Notify->new
@@ -442,7 +436,7 @@ sub xd_storage_cb {
 			       $self->checkout_delta
 				   ( %arg,
 				     # XXX: proper anchor handling
-				     path => "$arg{path}/$path",
+				     path => $path,
 				     copath => $copath,
 				     base_root => $base_root,
 				     base_path => $base_path,
@@ -470,16 +464,36 @@ L<SVK::Editor::Merge> when called in array context.
 
 sub get_editor {
     my ($self, %arg) = @_;
-    my $t = translator($arg{target});
-    $arg{get_copath} = sub { $_[0] = $arg{copath}, return
-				 if $arg{target} eq $_[0];
-			     $_[0] =~ s|$t|$arg{copath}/|
-				 or die loc("unable to translate %1 with %2", $_[0], $t);
-			     $_[0] =~ s|/$||;
-			 };
+    my ($copath, $anchor) = @arg{qw/copath path/};
+    $anchor = '' if $anchor eq '/';
+    $arg{get_copath} = sub { $_[0] = SVK::Target->copath ($copath,  $_[0]) };
+    $arg{get_path} = sub { $_[0] = "$anchor/$_[0]" };
     my $storage = SVK::Editor::XD->new (%arg, xd => $self);
 
     return wantarray ? ($storage, $self->xd_storage_cb (%arg)) : $storage;
+}
+
+=item auto_prop
+
+Return a hash of properties that should attach to the file
+automatically when added.
+
+=cut
+
+sub auto_prop {
+    my ($self, $copath) = @_;
+    # no other prop for links
+    return {'svn:special' => '*'} if -l $copath;
+    my $prop;
+    $prop->{'svn:executable'} = '*' if -x $copath;
+    if (my $type = mimetype($copath)) {
+	# add only binary mime types or text/* but not text/plain
+	$prop->{'svn:mime-type'} = $type
+	    if $type ne 'text/plain' &&
+		($type =~ m/^text/ || !mimetype_is_text ($type));
+    }
+    # XXX: autoprop stuff
+    return $prop;
 }
 
 sub do_add {
@@ -493,21 +507,23 @@ sub do_add {
 				( notify => SVK::Notify->new
 				  ( cb_flush => sub {
 					my ($path, $status) = @_;
-					my $copath = $path ? "$arg{copath}/$path" : $arg{copath};
+					my ($copath, $report) = map { SVK::Target->copath ($_, $path) }
+					    @arg{qw/copath report/};
 					if ($status->[0] eq 'D' && -e $copath) {
 					    $self->{checkout}->store ($copath, { '.schedule' => 'replace' });
-					    print "R   $arg{report}$path\n" unless $arg{quiet};
+					    print "R   $report\n" unless $arg{quiet};
 					}
 				    })),
 				delete_verbose => 1,
 				unknown_verbose => 1,
 				cb_unknown => sub {
-				    # XXX: generic auto-prop things and reporting here
 				    $self->{checkout}->store
 					($_[1], { '.schedule' => 'add',
-						  -l $_[1] ? ('.newprop' => { 'svn:special' => '*'}) : ()
+						  -d $_[1] ? () :
+						  ('.newprop'  => $self->auto_prop ($_[1]))
 						});
-				    print "A   $arg{report}$_[0]\n" unless $arg{quiet};
+				    my $report = SVK::Target->copath ($arg{report}, $_[0]);
+				    print "A   $report\n" unless $arg{quiet};
 				},
 			      );
     }
@@ -536,16 +552,17 @@ sub do_delete {
 			    ( notify => SVK::Notify->new
 			      ( cb_flush => sub {
 				    my ($path, $status) = @_;
-				    my $rpath = "$arg{report}$path";
+				    my ($copath, $report) = map { SVK::Target->copath ($_, $path) }
+					@arg{qw/copath report/};
 				    my $st = $status->[0];
 				    if ($st eq 'M') {
-					die loc("%1 changed", $rpath);
+					die loc("%1 changed", $report);
 				    }
 				    elsif ($st eq 'D') {
-					push @deleted, "$arg{copath}/$path";
+					push @deleted, $copath;
 				    }
-				    elsif (-f $rpath) {
-					die loc("%1 is scheduled, use 'svk revert'", $rpath);
+				    elsif (-f $copath) {
+					die loc("%1 is scheduled, use 'svk revert'", $report);
 				    }
 				})),
 			    cb_unknown => sub {
@@ -554,7 +571,7 @@ sub do_delete {
 			  );
 
     # actually remove it from checkout path
-    my @paths = grep {-e $_} ($arg{targets} ?
+    my @paths = grep {-l $_ || -e $_} (exists $arg{targets}[0] ?
 			      map { "$arg{copath}/$_" } @{$arg{targets}}
 			      : $arg{copath});
     find(sub {
@@ -567,7 +584,7 @@ sub do_delete {
 
     for (@deleted) {
 	my $rpath = $_;
-	$rpath =~ s|^\Q$arg{copath}\E/|$arg{report}|;
+	$rpath =~ s|^\Q$arg{copath}\E|$arg{report}|;
 	print "D   $rpath\n" unless $arg{quiet};
 	$self->{checkout}->store ($_, {'.schedule' => 'delete'});
     }
@@ -654,6 +671,7 @@ Don't generate text deltas in C<apply_textdelta> calls.
 sub depot_delta {
     my ($self, %arg) = @_;
     my @root = map {$_->isa ('SVK::XD::Root') ? $_->[1] : $_} @arg{qw/oldroot newroot/};
+    # XXX: if dir_delta croaks the editor would leak since the baton is not properly destroyed.
     SVN::Repos::dir_delta ($root[0], @{$arg{oldpath}},
 			   $root[1], $arg{newpath},
 			   $arg{editor}, undef,
@@ -804,26 +822,24 @@ sub _delta_file {
 	$arg{cb_conflict}->($arg{editor}, $arg{entry}, $arg{baton});
     }
 
-    lstat ($arg{copath});
     return 1 if $self->_node_deleted_or_absent (%arg, pool => $pool, type => 'file');
 
-    my $fh = get_fh ($arg{xdroot}, '<', $arg{path}, $arg{copath}, undef, $arg{add} && !-l _);
+    lstat ($arg{copath});
+    my $fh = get_fh ($arg{xdroot}, '<', $arg{path}, $arg{copath}, $arg{add} && !-l _);
     my $mymd5 = md5($fh);
-    my $md5;
+    my ($baton, $md5);
 
     return $modified unless $schedule || $arg{add} ||
 	($arg{base} && $mymd5 ne ($md5 = $arg{base_root}->file_md5_checksum ($arg{base_path})));
 
-    my $baton = $arg{add} ?
-	$arg{editor}->add_file ($arg{entry}, $arg{baton},
-				$cinfo->{'.copyfrom'} ?
-				"file://$arg{repospath}$cinfo->{'.copyfrom'}" : undef,
-				$cinfo->{'.copyfrom_rev'} ||  -1, $pool) :
-				    undef;
+    $baton = $arg{editor}->add_file ($arg{entry}, $arg{baton},
+				     $cinfo->{'.copyfrom'} ?
+				     ($arg{cb_copyfrom}->(@{$cinfo}{qw/.copyfrom .copyfrom_rev/}))
+				     : (undef, -1), $pool)
+	if $arg{add};
     my $newprop = $cinfo->{'.newprop'};
-    # XXX: generic auto prop for auto-added items
-    $newprop = {'svn:special' => '*'}
-	if -l _ && !$schedule && $arg{auto_add} && $arg{kind} == $SVN::Node::none;
+    $newprop = $self->auto_prop ($arg{copath})
+	if !$schedule && $arg{auto_add} && $arg{kind} == $SVN::Node::none;
 
     $baton ||= $arg{editor}->open_file ($arg{entry}, $arg{baton}, $arg{cb_rev}->($arg{entry}), $pool)
 	if keys %$newprop;
@@ -850,7 +866,6 @@ sub _delta_dir {
     my $schedule = $cinfo->{'.schedule'} || '';
     $arg{add} = 1 if $arg{auto_add} && $arg{kind} == $SVN::Node::none ||
 	$schedule eq 'replace';
-    my $rev = $arg{cb_rev}->($arg{entry} || '');
 
     # compute targets for children
     my $targets;
@@ -866,23 +881,23 @@ sub _delta_dir {
     $arg{cb_conflict}->($arg{editor}, $arg{entry}, $arg{baton})
 	if $arg{cb_conflict} && $cinfo->{'.conflict'};
 
-    return if $self->_node_deleted_or_absent (%arg, pool => $pool, rev => $rev,
-					      type => 'directory');
-    $rev = 0 if $arg{add};
+    return if $self->_node_deleted_or_absent (%arg, pool => $pool, type => 'directory');
     $arg{base} = 0 if $schedule eq 'replace';
     my ($entries, $baton) = ({});
     if ($arg{add}) {
 	$baton = $arg{root} ? $arg{baton} :
 	    $arg{editor}->add_directory ($arg{entry}, $arg{baton},
-					 $arg{copyfrom} ?
-					 ("file://$arg{repospath}$arg{copyfrom}",
-					  $cinfo->{'.copyfrom_rev'}) : (undef, -1), $pool);
+					 $cinfo->{'.copyfrom'} ?
+					 ($arg{cb_copyfrom}->(@{$cinfo}{qw/.copyfrom .copyfrom_rev/}))
+					 : (undef, -1), $pool);
     }
 
     $entries = $arg{base_root}->dir_entries ($arg{base_path})
 	if $arg{base} && $arg{kind} == $SVN::Node::dir;
 
-    $baton ||= $arg{root} ? $arg{baton} : $arg{editor}->open_directory ($arg{entry}, $arg{baton}, $rev, $pool);
+    $baton ||= $arg{root} ? $arg{baton}
+	: $arg{editor}->open_directory ($arg{entry}, $arg{baton},
+					$arg{cb_rev}->($arg{entry}), $pool);
 
     if (($schedule eq 'prop' || $arg{add}) && (!defined $targets)) {
 	my $newprop = $cinfo->{'.newprop'};
@@ -916,7 +931,8 @@ sub _delta_dir {
 			cinfo => undef,
 			base_path => $arg{base_path} eq '/' ? "/$entry" : "$arg{base_path}/$entry",
 			path => $arg{path} eq '/' ? "/$entry" : "$arg{path}/$entry",
-			copath => "$arg{copath}/$entry") and ($signature && $signature->invalidate ($entry));
+			copath => SVK::Target->copath ($arg{copath}, $entry))
+	    and ($signature && $signature->invalidate ($entry));
     }
 
     $signature->flush ($arg{copath}) if $signature;
@@ -938,7 +954,7 @@ sub _delta_dir {
 	my $add = ($sche || $arg{auto_add}) ||
 	    ($arg{xdroot} ne $arg{base_root} &&
 	     $arg{xdroot}->check_path ("$arg{path}/$_") != $SVN::Node::none);
-	my %newpaths = ( copath => "$arg{copath}/$_",
+	my %newpaths = ( copath => SVK::Target->copath ($arg{copath}, $_),
 			 entry => $arg{entry} ? "$arg{entry}/$_" : $_,
 			 path => "$arg{path}/$_",
 			 targets => $targets ? $targets->{$_} : undef);
@@ -973,7 +989,6 @@ sub _delta_dir {
 			($arg{path} eq '/' ? "/$_" : "$arg{path}/$_"),
 			# XXX: what shold base_path be when there's copyfrom?
 			base_path => $ccinfo->{'.copyfrom'} || "$arg{base_path}/$_",
-			copyfrom => $ccinfo->{'.copyfrom'},
 			cinfo => $ccinfo )
 	    if !defined $targets || exists $targets->{$_};
     }
@@ -994,7 +1009,7 @@ sub checkout_delta {
     $arg{base_root} ||= $arg{xdroot};
     $arg{base_path} ||= $arg{path};
     my $kind = $arg{kind} = $arg{base_root}->check_path ($arg{base_path});
-    my $copath = $arg{copath};
+    my ($copath, $repospath) = @arg{qw/copath repospath/};
     $arg{editor} = SVK::Editor::Delay->new ($arg{editor})
 	unless $arg{nodelay};
     $arg{editor} = SVN::Delta::Editor->new (_debug => 1, _editor => [$arg{editor}])
@@ -1003,6 +1018,7 @@ sub checkout_delta {
 			   $target = $target ? "$copath/$target" : $copath;
 			   $self->_get_rev ($target);
 		       };
+    $arg{cb_copyfrom} ||= sub { ("file://$repospath$_[0]", $_[1]) };
     my $rev = $arg{cb_rev}->('');
     my $baton = $arg{editor}->open_root ($rev);
     local $SIG{INT} = sub {
@@ -1062,11 +1078,18 @@ sub do_resolved {
     }
 }
 
+sub get_eol_layer {
+    my ($root, $path, $prop) = @_;
+    my $k = $prop->{'svn:eol-style'};
+    return ':raw' unless $k;
+    return ':crlf' if $k eq 'CRLF';
+    return '' if $k eq 'native';
+    return ':raw'; # unsupported or lf
+}
+
 sub get_keyword_layer {
-    my ($root, $path) = @_;
-    my $pool = SVN::Pool->new_default;
-    local $@;
-    my $k = eval { $root->node_prop ($path, 'svn:keywords') };
+    my ($root, $path, $prop) = @_;
+    my $k = $prop->{'svn:keywords'};
     return unless $k;
 
     # XXX: should these respect svm related stuff
@@ -1101,7 +1124,7 @@ sub get_keyword_layer {
 		   },
 		 FileRev =>
 		 sub { my ($root, $path) = @_;
-		       my $rev = 1;
+		       my $rev = 0;
 		       my $fs = $root->fs;
 		       my $hist = $fs->revision_root ($fs->youngest_rev)->node_history ($path);
 		       my $spool = SVN::Pool->new_default_sub;
@@ -1156,17 +1179,26 @@ sub _fh_symlink {
     return $fh;
 }
 
+=item get_fh
+
+Returns a file handle with keyword translation and line-ending layers attached.
+
+=cut
+
 sub get_fh {
-    my ($root, $mode, $path, $fname, $layer, $raw) = @_;
-    # XXX: it seems symlinks are not using the SVN::Node::special node type
-    # need to confirm this
+    my ($root, $mode, $path, $fname, $raw, $layer, $eol, $prop) = @_;
     local $@;
+    $prop ||= eval { $root->node_proplist ($path) };
     unless ($raw) {
 	return _fh_symlink ($mode, $fname)
-	    if -l $fname || defined eval {$root->node_prop ($path, 'svn:special')};
-	$layer ||= get_keyword_layer ($root, $path);
+	    if defined $prop->{'svn:special'} || -l $fname;
+	if (keys %$prop) {
+	    $layer ||= get_keyword_layer ($root, $path, $prop);
+	    $eol ||= get_eol_layer($root, $path, $prop);
+	}
     }
-    open my ($fh), $mode, $fname;
+    $eol ||= ':raw';
+    open my ($fh), $mode.$eol, $fname or die "can't open $fname: $!";
     $layer->via ($fh) if $layer;
     return $fh;
 }
@@ -1234,7 +1266,7 @@ sub lock {
     my ($self) = @_;
     my $path = $self->lock_path;
     return if -e $path;
-    open my $fh, '>', $path;
+    open my $fh, '>', $path or warn $!, return;
     print $fh $$;
     $self->{locked} = 1;
 }
@@ -1250,7 +1282,7 @@ sub read {
     my ($self) = @_;
     my $path = $self->path;
     if (-s $path) {
-        open my $fh, '<', $path or die $!;
+        open my $fh, '<:raw', $path or die $!;
         $self->{signature} =  { <$fh> };
     }
     else {
@@ -1271,7 +1303,7 @@ sub write {
     $self->lock;
     return unless $self->{locked};
     my ($hash, $file) = @_;
-    open my $fh, '>', $path or die $!;
+    open my $fh, '>:raw', $path or die $!;
     print {$fh} %{ $self->{newsignature} };
     $self->unlock;
 }
@@ -1295,8 +1327,6 @@ sub changed {
 
 sub invalidate {
     my ($self, $entry) = @_;
-    use Carp;
-    confess unless $entry;
     delete $self->{newsignature}{quotemeta($entry)."\n"};
 }
 
@@ -1315,6 +1345,7 @@ sub AUTOLOAD {
     return if $func =~ m/^[A-Z]*$/;
     no strict 'refs';
     my $self = shift;
+#    warn "===> $self $func: ".join(',',@_).' '.join(',', (caller(0))[0..3])."\n";
     $self->[1]->$func (@_);
 }
 
@@ -1328,8 +1359,7 @@ sub new {
 my $globaldestroy;
 
 sub DESTROY {
-    # XXX: maybe just for 5.8.0 ?
-#    warn "===> attempt to destroy root $_[0]" if $globaldestroy;
+    warn "===> attempt to destroy root $_[0], leaked?" if $globaldestroy;
     return if $globaldestroy;
     $_[0][0]->abort if $_[0][0];
 }

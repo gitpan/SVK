@@ -15,6 +15,7 @@ sub options {
      'a|auto'		=> 'auto',
      'l|log'		=> 'log',
      'remoterev'	=> 'remoterev',
+     'track-rename'	=> 'track_rename',
      'host=s'   	=> 'host',
      'I|incremental'	=> 'incremental',
      'no-ticket'	=> 'no_ticket',
@@ -48,10 +49,16 @@ sub run {
     my $fs = $repos->fs;
     my $yrev = $fs->youngest_rev;
 
+    if ($dst->root ($self->{xd})->check_path ($dst->path) != $SVN::Node::dir) {
+	$src->anchorify; $dst->anchorify;
+    }
+
     if ($self->{auto}) {
+	die loc("No need to track rename for smerge\n")
+	    if $self->{track_rename};
 	# XXX: these should come from parse_arg
 	$src->normalize; $dst->normalize;
-	$merge = SVK::Merge->auto (%$self, repos => $repos,
+	$merge = SVK::Merge->auto (%$self, repos => $repos, target => '',
 				   ticket => !$self->{no_ticket},
 				   src => $src, dst => $dst);
 	print $merge->info;
@@ -64,7 +71,7 @@ sub run {
 	$src->{revision} = $torev;
 	$merge = SVK::Merge->new
 	    (%$self, repos => $repos, src => $src, dst => $dst,
-	     base => SVK::Target->new (%$src, revision => $baserev));
+	     base => $src->new (revision => $baserev), target => '');
     }
 
     $self->get_commit_message ($self->{log} ? $merge->log : '')
@@ -127,6 +134,7 @@ merge -r N:M DEPOTPATH1 DEPOTPATH2
  -a [--auto]:               automatically find merge points
  -l [--log]:                brings the logs of merged revs to the message buffer
  --no-ticket:               don't associate the ticket tracking merge history
+ --track-rename:            track the changes made to renamed node
  --force:                   Needs description
  -s [--sign]:               Needs description
 

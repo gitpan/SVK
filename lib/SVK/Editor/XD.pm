@@ -83,10 +83,12 @@ sub open_root {
 }
 
 sub add_file {
-    my ($self, $path) = @_;
+    my ($self, $path, $pdir) = @_;
     my $copath = $path;
+    $self->{added}{$path} = 1;
     $self->{get_copath}($copath);
-    die loc("path %1 already exists", $path) if -e $copath;
+    die loc("path %1 already exists", $path)
+	if !$self->{added}{$pdir} && (-l $copath || -e _);
     return $path;
 }
 
@@ -94,7 +96,7 @@ sub open_file {
     my ($self, $path) = @_;
     my $copath = $path;
     $self->{get_copath}($copath);
-    die loc("path %1 does not exist", $path) unless -e $copath;
+    die loc("path %1 does not exist", $path) unless -l $copath || -e _;
     return $path;
 }
 
@@ -102,10 +104,10 @@ sub apply_textdelta {
     my ($self, $path, $checksum, $pool) = @_;
     my $base;
     return if $self->{check_only};
-    my $copath = $path;
+    my ($copath, $dpath) = ($path, $path);
     $self->{get_copath}($copath);
-    my $dpath = $self->{anchor} eq '/' ? "/$path" : "$self->{anchor}/$path";
-    if (-e $copath) {
+    $self->{get_path}($dpath);
+    unless ($self->{added}{$path}) {
 	my ($dir,$file) = get_anchor (1, $copath);
 	my $basename = "$dir.svk.$file.base";
 	$base = SVK::XD::get_fh ($self->{oldroot}, '<', $dpath, $copath);
@@ -118,7 +120,9 @@ sub apply_textdelta {
 	$self->{base}{$path} = [$base, $basename,
 				-l $basename ? () : [stat($base)]];
     }
-    my $fh = SVK::XD::get_fh ($self->{newroot}, '>', $dpath, $copath)
+    delete $self->{props}{$path}{'svn:keywords'} unless $self->{update};
+    my $fh = SVK::XD::get_fh ($self->{newroot}, '>', $dpath, $copath, 0, undef, undef,
+			      $self->{added}{$path} ? $self->{props}{$path} || {}: undef)
 	or warn "can't open $path";
 
     # The fh is refed by the current default pool, not the pool here
@@ -137,8 +141,8 @@ sub close_file {
 	delete $self->{base}{$path};
     }
     elsif (!$self->{update} && !$self->{check_only}) {
-	my $report = $path;
-	$report =~ s/^\Q$self->{target}\E/$self->{report}/ if $self->{report};
+	my $report = $copath;
+	$report =~ s/^\Q$self->{copath}\E/$self->{report}/ if $self->{report};
 	$self->{xd}->do_add (report => $report,
 			     copath => $copath, quiet => $self->{quiet});
     }
@@ -147,19 +151,23 @@ sub close_file {
 	$self->{xd}->fix_permission ($copath, $self->{exe}{$path})
 	    if exists $self->{exe}{$path};
     }
+    delete $self->{props}{$path};
+    delete $self->{added}{$path};
+
 }
 
 sub add_directory {
-    my ($self, $path) = @_;
+    my ($self, $path, $pdir) = @_;
     my $copath = $path;
     $self->{get_copath}($copath);
-    die loc("path %1 already exists", $copath) if -e $copath;
+    die loc("path %1 already exists", $copath) if !$self->{added}{$pdir} && -e $copath;
     mkdir ($copath) unless $self->{check_only};
     my $report = $path;
     $report =~ s/^\Q$self->{target}\E/$self->{report}/ if $self->{report};
     $self->{xd}->do_add (report => $report,
 			 copath => $copath, quiet => $self->{quiet})
 	if !$self->{update} && !$self->{check_only};
+    $self->{added}{$path} = 1;
     return $path;
 }
 
@@ -173,6 +181,7 @@ sub delete_entry {
     my ($self, $path, $revision) = @_;
     my $copath = $path;
     $self->{get_copath}($copath);
+    $self->{get_path}($path);
     # XXX: check if everyone under $path is sane for delete";
     return if $self->{check_only};
     if ($self->{update}) {
@@ -180,7 +189,7 @@ sub delete_entry {
     }
     else {
 	$self->{xd}->do_delete (%$self,
-				path => "$self->{anchor}/$path",
+				path => $path,
 				copath => $copath,
 				quiet => 1);
     }
@@ -188,17 +197,20 @@ sub delete_entry {
 
 sub close_directory {
     my ($self, $path) = @_;
+    return if $self->{target} && !$path;
     my $copath = $path;
-    eval {$self->{get_copath}($copath)};
-    undef $@, return if $@;
+    $self->{get_copath}($copath);
     $self->{xd}{checkout}->store_recursively ($copath,
 					      {revision => $self->{revision},
 					       '.deleted' => undef})
 	if $self->{update};
+    delete $self->{added}{$path};
 }
 
 sub change_file_prop {
     my ($self, $path, $name, $value) = @_;
+    $self->{props}{$path}{$name} = $value
+	if $self->{added}{$path};
     return if $self->{check_only};
     my $copath = $path;
     $self->{get_copath}($copath);

@@ -10,6 +10,7 @@ use SVK::Editor::Diff;
 
 sub options {
     ("v|verbose"    => 'verbose',
+     "s|summarize"  => 'summarize',
      "r|revision=s" => 'revspec');
 }
 
@@ -45,13 +46,13 @@ sub run {
     else {
 	$target->depotpath if $r1 && $r2;
 	if ($target->{copath}) {
-	    $target2 = SVK::Target->new (%$target);
+	    $target2 = $target->new;
 	    $target->depotpath;
 	    $report = $target->{report};
 	}
 	else {
 	    # XXX: require revspec;
-	    $target2 = SVK::Target->new (%$target);
+	    $target2 = $target->new;
 	}
     }
 
@@ -70,7 +71,9 @@ sub run {
     $oldroot ||= $fs->revision_root ($r1);
     $newroot ||= $fs->revision_root ($r2);
 
-    my $editor = SVK::Editor::Diff->new
+    my $editor = $self->{summarize} ?
+	SVK::Editor::Status->new
+	: SVK::Editor::Diff->new
 	( cb_basecontent =>
 	  sub { my ($rpath) = @_;
 		my $base = $oldroot->file_contents ("$target->{path}/$rpath");
@@ -78,7 +81,9 @@ sub run {
 	    },
 	  cb_baseprop =>
 	  sub { my ($rpath, $pname) = @_;
-		return $oldroot->node_prop ("$target->{path}/$rpath", $pname);
+		my $path = "$target->{path}/$rpath";
+		return $oldroot->check_path ($path) == $SVN::Node::none ?
+		    undef : $oldroot->node_prop ($path, $pname);
 	    },
 	  $cb_llabel ? (cb_llabel => $cb_llabel) : (llabel => "revision $r1"),
 	  rlabel => $target2->{copath} ? 'local' : "revision $r2",
@@ -92,17 +97,15 @@ sub run {
 	);
 
     if ($target2->{copath}) {
-	if ($newroot->check_path ($target2->{path}) == $SVN::Node::file) {
+	if ($oldroot->check_path ($target2->{path}) != $SVN::Node::dir) {
 	    my $tgt;
 	    ($target2->{path}, $tgt) = get_anchor (1, $target2->{path});
 	    ($target->{path}, $target2->{copath}) =
 		get_anchor (0, $target->{path}, $target2->{copath});
 	    $target2->{targets} = [$tgt];
-	    $report = (get_anchor (0, $report))[0].'/' if defined $report;
+	    ($report) = get_anchor (0, $report) if defined $report;
 	}
-	else {
-	    $report .= '/' if $report && $report !~ m|/$|;
-	}
+
 	$editor->{report} = $report;
 	$self->{xd}->checkout_delta
 	    ( %$target2,
@@ -114,10 +117,10 @@ sub run {
     }
     else {
 	my $tgt = '';
-	if ($newroot->check_path ($target2->{path}) == $SVN::Node::file) {
+	if ($oldroot->check_path ($target2->{path}) != $SVN::Node::dir) {
 	    ($target->{path}, $tgt) =
 		get_anchor (1, $target->{path});
-	    $report = (get_anchor (0, $report))[0].'/' if defined $report;
+	    ($report) = get_anchor (0, $report) if defined $report;
 	}
 	$editor->{report} = $report;
 	$self->{xd}->depot_delta
@@ -150,6 +153,7 @@ SVK::Command::Diff - Display diff between revisions or checkout copies
 =head1 OPTIONS
 
  -r [--revision] rev|old:new :    Needs description
+ -s [--summarize] :               Show summary only
  -v [--verbose]:                  Needs description
 
 =head1 AUTHORS

@@ -86,7 +86,7 @@ sub get_editor {
 
     # XXX: the case that the target is an xd is actually only used in merge.
     if ($target->{copath}) {
-	my $xdroot = $self->{xd}->xdroot (%$target);
+	my $xdroot = $target->root ($self->{xd});
 	($editor, %cb) = $self->{xd}->get_editor
 	    ( %$target,
 	      quiet => 1,
@@ -161,7 +161,7 @@ sub run {
 	if $is_mirrored;
 
     my ($fh, $file);
-    my $xdroot = $self->{xd}->xdroot (%$target);
+    my $xdroot = $target->root ($self->{xd});
 
     unless (defined $self->{message}) {
 	($fh, $file) = tmpfile ('commit', UNLINK => 0);
@@ -174,7 +174,7 @@ sub run {
 	( notify => SVK::Notify->new
 	  ( cb_flush => sub {
 		my ($path, $status) = @_;
-		my $copath = $path ? "$target->{copath}/$path" : $target->{copath};
+		my $copath = $target->copath ($path);
 		push @$targets, [$status->[0] || ($status->[1] ? 'P' : ''),
 				 $copath];
 		    no warnings 'uninitialized';
@@ -247,22 +247,22 @@ sub run {
 	my $root = $fs->revision_root ($rev);
 	# update keyword-trnslated files
 	for (@$targets) {
-	    next if $_->[0] eq 'D';
-	    my ($action, $tpath) = @$_;
-	    my $cpath = $tpath;
-	    $tpath =~ s|^\Q$target->{copath}\E||;
-	    my $layer = SVK::XD::get_keyword_layer ($root, "$target->{path}/$tpath");
-	    next unless $layer;
+	    my ($action, $copath) = @$_;
+	    next if $action eq 'D' || -d $copath;
+	    my $dpath = $copath;
+	    $dpath =~ s|^\Q$target->{copath}\E|$target->{path}|;
+	    my $prop = $root->node_proplist ($dpath);
+	    my $layer = SVK::XD::get_keyword_layer ($root, $dpath, $prop);
+	    my $eol = SVK::XD::get_eol_layer ($root, $dpath, $prop);
+	    next unless $layer || ($eol ne ':raw' && $eol ne '');
 
-	    my $fh = SVK::XD::get_fh ($xdroot, '<', "$target->{path}/$tpath", $cpath, $layer);
-	    # XXX: beware of collision
-	    # XXX: fix permission etc also
-	    my $fname = "$cpath.svk.old";
-	    rename $cpath, $fname;
-	    open my ($newfh), ">", $cpath;
-	    $layer->via ($newfh);
+	    my $fh = SVK::XD::get_fh ($xdroot, '<', $dpath, $copath, 0, $layer, $eol);
+	    my $fname = "$copath.svk.old";
+	    rename $copath, $fname or die $!;
+	    open my ($newfh), ">$eol", $copath or die $!;
+	    $layer->via ($newfh) if $layer;
 	    slurp_fh ($fh, $newfh);
-	    chmod ((stat ($fh))[2], $cpath);
+	    chmod ((stat ($fh))[2], $copath);
 	    close $fh;
 	    unlink $fname;
 	}
@@ -281,16 +281,21 @@ sub run {
 	  editor => $editor,
 	  $cb{mirror} ?
 	  ( send_delta => 1,
+	    cb_copyfrom => sub {
+		my ($path, $rev) = @_;
+		$path =~ s|^\Q$cb{mirror}{target_path}\E|$cb{mirror}{source}|;
+		return ($path, scalar $cb{mirror}->find_remote_rev ($rev));
+	    },
 	    cb_rev => sub {
 		my $revtarget = shift;
-		my $cotarget = $revtarget;
+		my $cotarget = $target->copath ($revtarget);
 		$revtarget = $revtarget ? "$target->{path}/$revtarget" : $target->{path};
-		$cotarget = $cotarget ? "$target->{copath}/$cotarget" : $target->{copath};
 		my $corev = $self->{xd}{checkout}->get($cotarget)->{revision};
 		return $revcache{$corev} if exists $revcache{corev};
 		my $rev = ($xdroot->node_history ($revtarget)->prev (0)->location)[1];
 		$revcache{$corev} = $cb{mirror}->find_remote_rev ($rev);
-	    }) : ());
+	    }) :
+	  ( nodelay => 1 ));
     return;
 }
 

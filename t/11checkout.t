@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 15;
+use Test::More tests => 18;
 use strict;
 require 't/tree.pl';
 use SVK::Command;
@@ -26,41 +26,44 @@ ok (-e "$copath/co-root-v3.1/A/Q/qu");
 chdir ($copath);
 $svk->checkout ('//V-3.1');
 ok (-e 'V-3.1/A/Q/qu');
-$svk->checkout ('//');
-ok ($@ =~ qr"don't know where to checkout");
+is_output_like ($svk, 'checkout', ['//'], qr"don't know where to checkout");
 
-$svk->checkout ('//V-3.1');
-ok ($@ =~ qr'already exists');
-$svk->checkout ('//V-3.1', 'V-3.1/l2');
-ok ($@ =~ qr'overlapping checkout');
+is_output_like ($svk, 'checkout', ['//V-3.1'], qr'already exists');
+is_output_like ($svk, 'checkout', ['//V-3.1', 'V-3.1/l2'], qr'overlapping checkout');
 
 $svk->checkout ('-r5', '//V-3.1', 'V-3.1-r5');
 ok (-e 'V-3.1-r5/A/P/pe');
 
 is_output ($svk, 'checkout', ['-Nr5', '//V-3.1', 'V-3.1-nr'],
 	   ["Syncing //V-3.1(/V-3.1) in $corpath/V-3.1-nr to 5.",
-	    'A   V-3.1-nr/',
 	    'A   V-3.1-nr/me'], 'checkout - non-recursive');
+
 ok (!-e 'V-3.1-nr/A');
 ok (-e 'V-3.1-nr/me');
 
-TODO: {
-local $TODO = 'checkout target is file';
-
-$svk->checkout ('//V-3.1/A/Q/qu');
-ok (-e 'Q/qu');
-}
+is_output ($svk, 'checkout', ['//V-3.1/A/Q/qu'],
+	   ["Syncing //V-3.1/A/Q/qu(/V-3.1/A/Q/qu) in $corpath/qu to 6.",
+	    'A   qu']);
+ok (-e 'qu');
 
 is_output ($svk, 'checkout', ['//V-3.1/A/Q', "../checkout/just-q"],
 	   ["Syncing //V-3.1/A/Q(/V-3.1/A/Q) in $corpath/just-q to 6.",
-	    'A   ../checkout/just-q/',
 	    'A   ../checkout/just-q/qu',
 	    'A   ../checkout/just-q/qz',
 	   ], 'checkout report');
 
 is_output ($svk, 'checkout', ['//V-3.1/A/Q/', "../checkout/just-q-slash"],
 	   ["Syncing //V-3.1/A/Q/(/V-3.1/A/Q) in $corpath/just-q-slash to 6.",
-	    'A   ../checkout/just-q-slash/',
 	    'A   ../checkout/just-q-slash/qu',
 	    'A   ../checkout/just-q-slash/qz',
 	   ], 'checkout report');
+
+is_output ($svk, 'checkout', ['//V-3.1/A/Q', "../checkout/just-q-slashco/"],
+	   ["Syncing //V-3.1/A/Q(/V-3.1/A/Q) in $corpath/just-q-slashco to 6.",
+	    'A   ../checkout/just-q-slashco/qu',
+	    'A   ../checkout/just-q-slashco/qz',
+	   ], 'checkout report');
+
+
+is_output_like ($svk, 'checkout', ['//V-3.1-non'],
+		qr'not exist');
