@@ -1,0 +1,203 @@
+#!/usr/bin/perl -w
+use strict;
+our $VERSION = '0.09';
+require SVN::Core;
+require SVN::Client;
+require SVN::Repos;
+require SVN::Fs;
+use SVK::XD;
+use YAML qw(LoadFile DumpFile);
+use Getopt::Long qw(:config no_ignore_case);
+use Cwd;
+use File::Spec;
+use Data::Hierarchy;
+use SVK::Command;
+
+use vars qw/$xd $info/;
+
+sub _init {
+    my $svkpath = "$ENV{HOME}/.svk";
+
+    die "Another svk might be running. remove $svkpath/lock if not"
+	if -e "$svkpath/lock";
+
+    if (-e "$svkpath/config") {
+	$info = LoadFile ("$svkpath/config");
+    }
+    else {
+	mkdir ($svkpath);
+    }
+
+    open my ($lock), ">$svkpath/lock";
+    print $lock $$;
+    close $lock;
+
+    $info ||= { depotmap => {'' => "$svkpath/local" },
+	        checkout => Data::Hierarchy->new(),
+	      };
+}
+
+sub _update_info {
+    my $svkpath = "$ENV{HOME}/.svk";
+    DumpFile ("$svkpath/config", $info);
+    unlink ("$svkpath/lock");
+}
+
+my %REPOS;
+my $REPOSPOOL = SVN::Pool->new;
+
+sub open_repos {
+    my ($repospath) = @_;
+    $REPOS{$repospath} ||= SVN::Repos::open ($repospath, $REPOSPOOL);
+}
+
+sub find_repos {
+    my ($depotpath, $open) = @_;
+    die "not depotspec" unless $depotpath;
+    my ($depot, $path) = $depotpath =~ m|^/(\w*)(/.*)/?$|
+	or die "not depot spec";
+
+    my $repospath = $info->{depotmap}{$depot} or die "no such depot: $depot";
+
+    return ($repospath, $path, $open && open_repos ($repospath));
+}
+
+sub find_repos_from_co {
+    my ($copath, $open) = @_;
+    $copath = Cwd::abs_path ($copath || '');
+
+    my ($cinfo, $coroot) = $info->{checkout}->get ($copath);
+    die "$copath not a checkout path" unless %$cinfo;
+    my ($repospath, $path, $repos) = find_repos ($cinfo->{depotpath}, $open);
+
+    if ($copath eq $coroot) {
+	$copath = '';
+    }
+    else {
+	$copath =~ s|^\Q$coroot\E/|/|;
+    }
+
+    return ($repospath, $path eq '/' ? $copath : $path.$copath,
+	    $cinfo, $repos);
+}
+
+sub find_repos_from_co_maybe {
+    my ($target, $open) = @_;
+    my ($repospath, $path, $copath, $cinfo, $repos);
+    unless (($repospath, $path, $repos) = eval { find_repos ($target, $open) }) {
+	undef $@;
+	($repospath, $path, $cinfo, $repos) = find_repos_from_co ($target, $open);
+	$copath = Cwd::abs_path ($target || '');
+    }
+    return ($repospath, $path, $copath, $cinfo, $repos);
+}
+
+sub find_depotname {
+    my ($target, $can_be_co) = @_;
+    my ($cinfo);
+    if ($can_be_co) {
+	(undef, undef, $cinfo) = eval { find_repos_from_co ($target, 0) };
+	if ($@) {
+	    undef $@;
+	}
+	else {
+	    $target = $cinfo->{depotpath};
+	}
+    }
+
+    find_repos ($target, 0);
+    return ($target =~ m|^/(.*?)/|);
+}
+
+*get_anchor = *SVK::XD::get_anchor;
+
+sub condense {
+    my @targets = map {Cwd::abs_path ($_ || '')} @_;
+    my ($anchor, $report);
+    $report = $_[0];
+    for (@targets) {
+	if (!$anchor) {
+	    $anchor = $_;
+	    $report = $_[0]
+	}
+	my $schedule = $info->{checkout}->get_single ($anchor)->{schedule} || '';
+	if ($anchor ne $_ || -f $anchor ||
+	    $schedule eq 'add' || $schedule eq 'delete') {
+	    while ($anchor.'/' ne substr ($_, 0, length($anchor)+1)) {
+		($anchor, $report) = get_anchor (0, $anchor, $report);
+	    }
+	}
+    }
+    $report .= '/' unless $report eq '' || substr($report, -1, 1) eq '/';
+    return ($report, $anchor,
+	    map {s|^\Q$anchor\E/||;$_} grep {$_ ne $anchor} @targets);
+}
+
+
+my $show_version;
+
+my $cmd = shift;
+
+GetOptions ("version"  => \$show_version) unless $cmd;
+
+if ($show_version) {
+    print "This is svk version ".$VERSION."\n";
+    exit 0;
+}
+
+#$xd = SVK::XD->new (%$info);
+
+if ($0 eq __FILE__) {
+    unless ($cmd) {
+	print "Type 'svk help' for usage.\n";
+	exit 0;
+    }
+
+    if ($cmd eq 'help') {
+	SVK::Command->help ($info, @ARGV);
+    }
+
+    _init();
+    $SIG{INT} = sub {
+	_update_info();
+	die "interrupted\n";
+    };
+
+    my $msg = SVK::Command->invoke ($info, $cmd, @ARGV);
+    print $msg if $msg;
+    _update_info();
+}
+
+END {
+    my $svkpath = "$ENV{HOME}/.svk";
+    return unless -e "$svkpath/lock";
+    warn "cleaning up after exception";
+    unlink ("$svkpath/lock");
+}
+
+our $AUTOLOAD;
+
+sub AUTOLOAD {
+    my $cmd = $AUTOLOAD;
+    $cmd =~ s/^svk:://;
+    my $msg = SVK::Command->invoke ($info, $cmd, @_);
+    print $msg if $msg;
+}
+
+#%$info = %$xd;
+1;
+
+=head1 AUTHORS
+
+Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2003-2004 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
+
+This program is free software; you can redistribute it and/or modify it
+under the same terms as Perl itself.
+
+See L<http://www.perl.com/perl/misc/Artistic.html>
+
+=cut

@@ -1,0 +1,124 @@
+[Changes for 0.09 - 5 Mar, 2004]
+
+* Command invocation interface cleanup.
+
+* Move to SVK:: namespace.
+
+* Reduce root->check_path calls in checkout_delta .
+
+* Commit target editing support [Autrijus].
+
+* svk cat, ls and switch.
+
+* Avoid opening repository multiple times.
+
+* Let checkout_delta generate strict editor calls.
+
+* Support committing to mirrored path directly.
+
+* Commit / Merge to remote now brings the mirrored path updated.
+
+* Various code cleanups.
+
+* Fix some pool abuse.
+
+* Keyword enhacement (p4-like). [Autrijus]
+
+* Update to modern perl build system. [Autrijus]
+
+[Changes for 0.08 - 16 Feb, 2004]
+
+* Support multi-parent branch auto merging.
+
+* Support property diff output in DiffEditor.
+
+* Cherry picking merge support.
+
+* svk sync -a to sync all mirrored path in the given depot.
+
+* checkout_delta now handle props and do_commit commits them.
+
+* Respect conflict flag in status and commit.
+
+* Store and respect the deleted state of mixed-revision checkout copy.
+
+* Various doc improvements and code cleanups.
+
+[Changes for 0.07 - 15 Jan, 2004]
+
+* Memory usage enhancements.
+
+* Support but not require subversion 0.36.0.
+
+* clean up multiple targets handling for various commands.
+
+* svk status now reports what is given in command line.
+
+[Changes for 0.06 - 26 Dec, 2003]
+
+* Correct a pacakging problem.
+
+* New command: svk import, version.
+
+* svk status, revert improvement.
+
+[Changes for 0.05 - 20 Dec, 2003]
+
+* svk help and some usage are written.
+
+* Better svk diff support: file target, dpath1 vs dpath2.
+
+* Mergeback now transfers textdelta.
+
+* update, add, delete, revert, and sync now support multiple targets.
+
+* svk depotmap for depot mapping configuration.
+
+* Fix a segfault for empty merges.
+
+* Merge-ticket handling now mutliple-safe.
+
+* Committing to mirrored path now forbidden by default.
+
+* Make sm respect -C for XD destination.
+
+* New commands: svk resolved, describe, propedit.
+
+* smerge -l now brings the logs for candidate revisions to editor buffer.
+
+* svk process now locks for state file.
+
+* New default local repository location ~/.svk/local.
+
+* Support svn:ignore property.
+
+* Use checkout_delta for svk status.
+
+* Require svn 0.35.
+
+[Changes for 0.04 - 06 Dec, 2003]
+
+* Textual merge now uses svn's internal diff library.
+
+* new DiffEdtitor to handle depot diff.
+
+* Requires svn 0.34
+
+[Changes for 0.03 - 26 Nov, 2003]
+
+* Merge editor now calls open_file only when necessary.
+  This makes merge back to RA a lot faster for mutual merged branches.
+
+* Merge editor status 'g' means file merged bug unmodified.
+
+* Fix a xdroot creation bug.
+
+* New - svk log -r.
+
+[Changes for 0.02 - 19 Nov, 2003]
+
+* Fix packaging problem for missed Makefile.PL.
+
+[Changes for 0.01 - 19 Nov, 2003]
+
+Initial Release.
