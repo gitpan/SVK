@@ -8,7 +8,7 @@ use SVK::Target;
 use Pod::Simple::Text ();
 use Pod::Simple::SimpleTree ();
 use File::Find ();
-use SVK::Util qw( get_prompt abs_path is_uri catdir $SEP IS_WIN32 HAS_SVN_MIRROR );
+use SVK::Util qw( get_prompt abs_path is_uri catdir bsd_glob $SEP IS_WIN32 HAS_SVN_MIRROR );
 use SVK::I18N;
 
 =head1 NAME
@@ -126,7 +126,7 @@ and the arguments for the command. The command name is translated with the
 C<%alias> map.
 
 On Win32, after C<@args> is parsed for named options, the remaining positional
-arguments are expanded for shell globbing with C<File::Glob::bsd_glob>.
+arguments are expanded for shell globbing with C<bsd_glob>.
 
 =cut
 
@@ -149,10 +149,9 @@ sub invoke {
 
 	# Fake shell globbing on Win32 if we are called from main
 	if (IS_WIN32 and caller(1) eq 'main') {
-	    require File::Glob;
 	    @args = map {
 		/[?*{}\[\]]/
-		    ? File::Glob::bsd_glob($_, File::Glob::GLOB_NOCHECK())
+		    ? bsd_glob($_, File::Glob::GLOB_NOCHECK())
 		    : $_
 	    } @args;
 	}
@@ -290,7 +289,7 @@ sub arg_condensed {
     s{[/\Q$SEP\E]$}{}o for @arg; # XXX band-aid
 
     my ($report, $copath, @targets )= $self->{xd}->condense (@arg);
-    my ($repospath, $path, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($copath, 1);
+    my ($repospath, $path, undef, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($copath, 1);
     my $target = SVK::Target->new
 	( repos => $repos,
 	  repospath => $repospath,
@@ -372,7 +371,7 @@ sub arg_uri_maybe {
 
     my $path = get_prompt(
         loc("Name a depot path for this mirror (under //mirror/ if no leading '/'): "),
-        qr{^(?:/(?:$depots)/)?\w+},
+        qr{^(?:/(?:$depots)/)?[^/]},
     );
     $path = "//mirror/$path" unless $path =~ m!^/!;
 
@@ -425,7 +424,7 @@ sub arg_co_maybe {
 	  repospath => $repospath,
 	  depotpath => $cinfo->{depotpath} || $arg,
 	  copath => $copath,
-	  report => $arg,
+	  report => $copath ? File::Spec->canonpath ($arg) : $arg,
 	  path => $path,
 	  revision => $rev,
 	);
@@ -439,12 +438,12 @@ Argument is a checkout path.
 
 sub arg_copath {
     my ($self, $arg) = @_;
-    my ($repospath, $path, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($arg, 1);
+    my ($repospath, $path, $copath, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($arg, 1);
     return SVK::Target->new
 	( repos => $repos,
 	  repospath => $repospath,
-	  report => $arg,
-	  copath => abs_path ($arg),
+	  report => File::Spec->canonpath ($arg),
+	  copath => $copath,
 	  path => $path,
 	  cinfo => $cinfo,
 	  depotpath => $cinfo->{depotpath},

@@ -40,10 +40,12 @@ for (qw/SVKRESOLVE SVKMERGE SVKDIFF LC_CTYPE LC_ALL LANG LC_MESSAGES/) {
 }
 $ENV{LANGUAGE} = $ENV{LANGUAGES} = 'i-default';
 
-$ENV{HOME} ||= catdir(@ENV{qw( HOMEDRIVE HOMEPATH )});
+$ENV{HOME} ||= (
+    $ENV{HOMEDRIVE} ? catdir(@ENV{qw( HOMEDRIVE HOMEPATH )}) : ''
+) || (getpwuid($<))[7];
 $ENV{USER} ||= (
     (defined &Win32::LoginName) ? Win32::LoginName() : ''
-) || $ENV{USERNAME};
+) || $ENV{USERNAME} || (getpwuid($<))[0];
 
 # Make "prove -l" happy; abs_path() returns "undef" if the path 
 # does not exist. This makes perl very unhappy.
@@ -176,7 +178,11 @@ sub is_sorted_output {
 sub is_deeply_like {
     my ($got, $expected, $test) = @_;
     for (0..$#{$expected}) {
-	if (ref ($expected->[$_]) eq 'Regexp' ) {
+	if (ref ($expected->[$_]) eq 'SCALAR' ) {
+	    @_ = ($#{$got}, $#{$got}, $test);
+	    goto &is;
+	}
+	elsif (ref ($expected->[$_]) eq 'Regexp' ) {
 	    unless ($got->[$_] =~ m/$expected->[$_]/) {
 		diag "Different at $_:\n$got->[$_]\n$expected->[$_]";
 		@_ = (0, $test);

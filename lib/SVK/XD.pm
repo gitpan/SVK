@@ -87,7 +87,7 @@ sub new {
     my $class = shift;
     my $self = bless {}, $class;
     %$self = @_;
-    $self->{signature} ||= SVK::XD::Signature->new (root => "$self->{svkpath}/cache")
+    $self->{signature} ||= SVK::XD::Signature->new (root => $self->cache_directory)
 	if $self->{svkpath};
     $self->{checkout} ||= Data::Hierarchy->new( sep => $SEP );
     return $self;
@@ -111,7 +111,7 @@ sub load {
     my ($self) = @_;
     my $info;
 
-    mkdir($self->{svkpath}) || die loc("Cannot create svk-config-directory at '%1': %2", $self->{svkpath}, $!)
+    mkdir($self->{svkpath}) or die loc("Cannot create svk-config-directory at '%1': %2", $self->{svkpath}, $!)
         unless -d $self->{svkpath};
 
     $self->giant_lock ();
@@ -129,7 +129,7 @@ sub load {
         }
     }
 
-    $info ||= { depotmap => {'' => "$self->{svkpath}/local" },
+    $info ||= { depotmap => {'' => catdir($self->{svkpath}, 'local') },
 	        checkout => Data::Hierarchy->new( sep => $SEP ) };
     $self->{$_} = $info->{$_} for keys %$info;
 }
@@ -260,6 +260,11 @@ sub _open_repos {
     $REPOS{$repospath} ||= SVN::Repos::open ($repospath, $REPOSPOOL);
 }
 
+sub _reset_repos {
+    %REPOS = ();
+    $REPOSPOOL = SVN::Pool->new;
+}
+
 =item find_repos
 
 Given depotpath and an option about if the repository should be
@@ -272,7 +277,7 @@ repository to be opened.
 sub find_repos {
     my ($self, $depotpath, $open) = @_;
     die loc("no depot spec") unless $depotpath;
-    my ($depot, $path) = $depotpath =~ m|^/(\w*)(/.*?)/?$|
+    my ($depot, $path) = $depotpath =~ m|^/([^/]*)(/.*?)/?$|
 	or die loc("%1 is not a depot path.\n", $depotpath);
 
     my $repospath = $self->{depotmap}{$depot} or die loc("no such depot: %1", $depot);
@@ -291,21 +296,15 @@ C<SVN::Repos> object if caller wants the repository to be opened.
 
 sub find_repos_from_co {
     my ($self, $copath, $open) = @_;
-    die loc("path %1 is not a checkout path.\n", $copath)
-	unless abs_path ($copath);
-    $copath = abs_path ($copath);
+    my $report = $copath;
+    $copath = abs_path (File::Spec->canonpath ($copath));
+    die loc("path %1 is not a checkout path.\n", $report)
+	unless $copath;
     my ($cinfo, $coroot) = $self->{checkout}->get ($copath);
     die loc("path %1 is not a checkout path.\n", $copath) unless %$cinfo;
     my ($repospath, $path, $repos) = $self->find_repos ($cinfo->{depotpath}, $open);
 
-    if ($copath eq $coroot) {
-	$copath = '';
-    }
-    else {
-	$copath = abs2rel($copath, $coroot => '', '/');
-    }
-
-    return ($repospath, $path eq '/' ? $copath || '/' : $path.$copath,
+    return ($repospath, abs2rel ($copath, $coroot => $path, '/'), $copath,
 	    $cinfo, $repos);
 }
 
@@ -319,12 +318,11 @@ a depotpath. In that case, the checkout paths returned iwll be undef.
 sub find_repos_from_co_maybe {
     my ($self, $target, $open) = @_;
     my ($repospath, $path, $copath, $cinfo, $repos);
-    unless (($repospath, $path, $repos) = eval { $self->find_repos ($target, $open) }) {
-	($repospath, $path, $cinfo, $repos) = $self->find_repos_from_co ($target, $open);
-	$copath = abs_path ($target);
+    if (($repospath, $path, $repos) = eval { $self->find_repos ($target, $open) }) {
+	return ($repospath, $path, undef, undef, $repos);
     }
     undef $@;
-    return ($repospath, $path, $copath, $cinfo, $repos);
+    return $self->find_repos_from_co ($target, $open);
 }
 
 =item find_depotname
@@ -651,7 +649,7 @@ sub fix_permission {
     else {
 	$mode &= ~0111;
     }
-    chmod ($mode, $copath)
+    chmod ($mode, $copath);
 }
 
 =item depot_delta
@@ -1342,10 +1340,17 @@ sub get_props {
     return _combine_prop ($props, $entry->{'.newprop'});
 }
 
+sub cache_directory {
+    my ($self) = @_;
+    my $rv = catdir ( $self->{svkpath}, 'cache' );
+    mkdir $rv or die $! unless -e $rv;
+    return $rv;
+}
+
 sub patch_directory {
     my ($self) = @_;
     my $rv = catdir ( $self->{svkpath}, 'patch' );
-    mkdir $rv unless -e $rv;
+    mkdir $rv or die $! unless -e $rv;
     return $rv;
 }
 
@@ -1362,19 +1367,22 @@ sub DESTROY {
 }
 
 package SVK::XD::Signature;
+use SVK::Util qw( $SEP );
 
 sub new {
     my ($class, @arg) = @_;
     my $self = bless {}, __PACKAGE__;
     %$self = @arg;
-    mkdir ($self->{root}) unless -e $self->{root};
+    mkdir ($self->{root}) or die $! unless -e $self->{root};
     return $self;
 }
 
 sub load {
     my ($factory, $path) = @_;
     my $spath = $path;
-    $spath =~ s{/}{_}g;
+    $spath =~ s{(?=[_=])}{=}g;
+    $spath =~ s{:}{=-}g;
+    $spath =~ s{\Q$SEP}{_}go;
     my $self = bless { root => $factory->{root},
 		       path => $path, spath => $spath }, __PACKAGE__;
     $self->read;
@@ -1383,7 +1391,7 @@ sub load {
 
 sub path {
     my $self = shift;
-    return "$self->{root}/$self->{spath}";
+    return "$self->{root}$SEP$self->{spath}";
 }
 
 sub lock_path {

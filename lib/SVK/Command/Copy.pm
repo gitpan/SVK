@@ -14,6 +14,8 @@ sub parse_arg {
     my ($self, @arg) = @_;
     return if @arg < 1;
 
+    push @arg, '' if @arg == 1;
+
     my $dst = pop(@arg);
     my @src = (map {$self->arg_co_maybe ($_)} @arg);
 
@@ -56,9 +58,6 @@ sub handle_co_item {
     my ($self, $src, $dst) = @_;
     $src->as_depotpath;
     my $xdroot = $dst->root ($self->{xd});
-    if (-d $dst->{copath}) {
-	$dst->descend ($src->{path} =~ m|/([^/]+)/?$|);
-    }
     die loc ("Path %1 does not exist.\n", $src->{path})
 	if $src->root->check_path ($src->{path}) == $SVN::Node::none;
     die loc ("Path %1 already exists.\n", $dst->{copath})
@@ -136,7 +135,16 @@ sub run {
 	# XXX: check if dst is versioned
 	return loc("%1 is not a directory.\n", $dst->{copath})
 	    if $#src > 0 && !-d $dst->{copath};
-	$self->handle_co_item ($_, $dst->new) for @src;
+	my @cpdst;
+	for (@src) {
+	    my $cpdst = $dst->new;
+	    $cpdst->descend ($_->{path} =~ m|/([^/]+)/?$|)
+		if -d $cpdst->{copath};
+	    die loc ("Path %1 already exists.\n", $cpdst->{report})
+		if -e $cpdst->{copath};
+	    push @cpdst, $cpdst;
+	}
+	$self->handle_co_item ($_, shift @cpdst) for @src;
     }
     else {
 	my $root = $dst->root;
@@ -182,6 +190,7 @@ SVK::Command::Copy - Make a versioned copy
 
  -r [--revision] arg    : act on revision ARG instead of the head revision
  -m [--message] arg     : specify commit message ARG
+ -p [--parent]          : create intermediate directories as required
  -C [--check-only]      : try operation but make no changes
  -S [--sign]            : sign this change
 
