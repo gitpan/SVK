@@ -7,7 +7,7 @@ our $output;
 
 eval "require SVN::Mirror"
 or plan skip_all => "SVN::Mirror not installed";
-plan tests => 24;
+plan tests => 27;
 
 # build another tree to be mirrored ourself
 my ($xd, $svk) = build_test();
@@ -27,7 +27,6 @@ $svk2->sync ('//trunk');
 $svk2->copy ('-m', 'local branch', '//trunk', '//local');
 
 my ($copath, $corpath) = get_copath ('patch');
-
 $svk2->checkout ('//local', $copath);
 
 append_file ("$copath/B/fe", "fnord\n");
@@ -35,6 +34,8 @@ $svk2->commit ('-m', "modified on local", $copath);
 
 my ($uuid, $uuid2) = map {$_->fs->get_uuid} ($repos, $repos2);
 
+is_output ($svk2, 'patch', ['create', '//local', '//trunk'],
+	   ['Illegal patch name: //local.']);
 is_output ($svk2, 'patch', ['create', 'test-1', '//local', '//trunk'],
 	   ['U   B/fe',
 	    'Patch test-1 created.']);
@@ -57,14 +58,16 @@ my $patch1 = ['',
 	      '+fnord'];
 
 is_output ($svk2, 'patch', ['view', 'test-1'],
-	   ['=== Patch <test-1> level 1',
+	   ['==== Patch <test-1> level 1',
 	    "Source: $uuid2:/local:6 [local]",
 	    "Target: $uuid:/trunk:3 [mirrored]",
+            "        ($uri/trunk)",
 	    @$log1, @$patch1]);
 
-ok (-e "$xd2->{svkpath}/patch/test-1.svkpatch");
+
+ok (-e "$xd2->{svkpath}/patch/test-1.patch");
 mkdir ("$xd->{svkpath}/patch");
-copy ("$xd2->{svkpath}/patch/test-1.svkpatch" => "$xd->{svkpath}/patch/test-1.svkpatch");
+copy ("$xd2->{svkpath}/patch/test-1.patch" => "$xd->{svkpath}/patch/test-1.patch");
 is_output ($svk, 'patch', ['list'], ['test-1@1: ']);
 
 my ($scopath, $scorpath) = get_copath ('patch1');
@@ -77,7 +80,7 @@ is_output ($svk, 'patch', [qw/test test-1/], ['G   B/fe', 'Empty merge.'],
 	   'patch still applicable from server.');
 
 is_output ($svk, 'patch', ['view', 'test-1'],
-	   ['=== Patch <test-1> level 1',
+	   ['==== Patch <test-1> level 1',
 	    "Source: $uuid2:/local:6",
 	    "Target: $uuid:/trunk:3 [local] [updated]",
 	    @$log1, @$patch1]);
@@ -92,9 +95,10 @@ is_output ($svk2, 'patch', [qw/test test-1/],
 	   'patch still applicable from original.');
 
 is_output ($svk2, 'patch', ['view', 'test-1'],
-	   ['=== Patch <test-1> level 1',
+	   ['==== Patch <test-1> level 1',
 	    "Source: $uuid2:/local:6 [local]",
 	    "Target: $uuid:/trunk:3 [mirrored] [updated]",
+            "        ($uri/trunk)",
 	    @$log1, @$patch1]);
 
 is_output ($svk2, 'patch', ['update', 'test-1'],
@@ -114,12 +118,13 @@ my $patch2 = [split ("\n", << 'END_OF_DIFF')];
 END_OF_DIFF
 
 is_output ($svk2, 'patch', ['view', 'test-1'],
-	   ['=== Patch <test-1> level 1',
+	   ['==== Patch <test-1> level 1',
 	    "Source: $uuid2:/local:6 [local]",
 	    "Target: $uuid:/trunk:4 [mirrored]",
+            "        ($uri/trunk)",
 	    @$log1, @$patch2]);
 
-copy ("$xd2->{svkpath}/patch/test-1.svkpatch" => "$xd->{svkpath}/patch/test-1.svkpatch");
+copy ("$xd2->{svkpath}/patch/test-1.patch" => "$xd->{svkpath}/patch/test-1.patch");
 
 is_output ($svk, 'patch', [qw/test test-1/], ['U   B/fe', 'Empty merge.'],
 	   'patch applies cleanly on server.');
@@ -132,14 +137,21 @@ is_output ($svk2, 'patch', [qw/test test-1/],
 	   'patch applies cleanly from local.');
 
 is_output ($svk, 'patch', ['view', 'test-1'],
-	   ['=== Patch <test-1> level 1',
+	   ['==== Patch <test-1> level 1',
 	    "Source: $uuid2:/local:6",
 	    "Target: $uuid:/trunk:4 [local]",
 	    @$log1, @$patch2]);
 
+is_output ($svk, 'patch', ['apply', 'test-1', $scopath, '--', '-C'],
+	   [__("U   $scopath/B/fe"),
+	    "New merge ticket: $uuid2:/local:6"]);
+$svk2->cp ('-m', 'branch', '//trunk', '//patch-branch');
+is_output ($svk2, 'patch', ['apply', 'test-1', '//patch-branch', '--', '-C'],
+	   ['U   B/fe',
+	    'Empty merge.']);
+
 overwrite_file ("$scopath/B/fe", "on trunk\nfile fe added later\nbzzzzz\n");
 $svk->commit ('-m', "modified on trunk", $scopath);
-
 is_output ($svk, 'patch', [qw/test test-1/],
 	   ['C   B/fe', 'Empty merge.', '1 conflict found.',
 	    'Please do a merge to resolve conflicts and regen the patch.'],
@@ -147,17 +159,19 @@ is_output ($svk, 'patch', [qw/test test-1/],
 overwrite_file ("$copath/B/fe", "file fe added later\nbzzzzz\nfnord\n");
 $svk2->commit ('-m', "catch up on local", $copath);
 is_output ($svk2, 'patch', ['view', 'test-1'],
-	   ['=== Patch <test-1> level 1',
+	   ['==== Patch <test-1> level 1',
 	    "Source: $uuid2:/local:6 [local] [updated]",
 	    "Target: $uuid:/trunk:4 [mirrored]",
+            "        ($uri/trunk)",
 	    @$log1, @$patch2]);
 is_output ($svk2, 'patch', [qw/regen test-1/],
 	   ['G   B/fe']);
 
 is_output ($svk2, 'patch', ['view', 'test-1'],
-	   ['=== Patch <test-1> level 2',
-	    "Source: $uuid2:/local:8 [local]",
+	   ['==== Patch <test-1> level 2',
+	    "Source: $uuid2:/local:9 [local]",
 	    "Target: $uuid:/trunk:4 [mirrored]",
+            "        ($uri/trunk)",
 	    @$log1,
 	    qr'.*',
 	    ' catch up on local',
@@ -175,9 +189,10 @@ is_output ($svk2, 'patch', ['view', 'test-1'],
 
 $svk2->sync ('-a');
 is_output ($svk2, 'patch', ['view', 'test-1'],
-	   ['=== Patch <test-1> level 2',
-	    "Source: $uuid2:/local:8 [local]",
+	   ['==== Patch <test-1> level 2',
+	    "Source: $uuid2:/local:9 [local]",
 	    "Target: $uuid:/trunk:4 [mirrored] [updated]",
+            "        ($uri/trunk)",
 	    @$log1,
 	    qr'.*',
 	    ' catch up on local',

@@ -4,22 +4,29 @@ our $VERSION = $SVK::VERSION;
 
 use base qw( SVK::Command::Commit );
 use SVK::I18N;
-use SVK::Util qw( HAS_SVN_MIRROR );
+use SVK::Util qw( HAS_SVN_MIRROR is_uri );
 
 sub options {
-    ('upgrade' => 'upgrade',
-     'list'    => 'list');
+    ('l|list'  => 'list',
+     'd|delete|detach'=> 'detach',
+     'upgrade' => 'upgrade',
+     'relocate'=> 'relocate');
 }
 
 sub parse_arg {
-    my ($self, $path, @arg) = @_;
+    my ($self, @arg) = @_;
+
+    return (@arg ? @arg : undef) if $self->{list};
+    @arg = ('//') if $self->{upgrade} and !@arg;
+    return if !@arg;
+
+    my $path = shift(@arg);
 
     # Allow "svk mi uri://... //depot" to mean "svk mi //depot uri://"
-    if (@arg and $path =~ /^[A-Za-z][-+.A-Za-z0-9]*:/) {
-	($arg[0], $path) = ($path, $arg[0]);
+    if (is_uri($path)) {
+        ($arg[0], $path) = ($path, $arg[0]);
     }
 
-    $path ||= '//';
     return ($self->arg_depotpath ($path), @arg);
 }
 
@@ -34,20 +41,39 @@ sub run {
 	return;
     }
     elsif ($self->{list}) {
-	my @paths = SVN::Mirror::list_mirror ($target->{repos});
-	my $fs = $target->{repos}->fs;
-	my $root = $fs->revision_root ($fs->youngest_rev);
-	local $\ = "\n";
-	my $fmt = "%-20s %-s\n";
-	printf $fmt, 'Path', 'Source';
-	print '=' x 60;
-	my ($depot) = ($target->{depotpath} =~ /^(\/\w*)/);
-	for (@paths) {
-	    my $m = SVN::Mirror->new (target_path => $_, repos => $target->{repos},
-				      get_source => 1);
-	    printf $fmt, $depot.$_, $m->{source};
-	}
-	return;
+        my $fmt = "%-20s\t%-s\n";
+        printf $fmt, loc('Path'), loc('Source');
+        print '=' x 60, "\n";
+        my @depots = (defined($_[1])) ? @_[1..$#_] : sort keys %{$self->{xd}{depotmap}};
+        foreach my $depot (@depots) {
+            $depot =~ s{/}{}g;
+            $target = $self->arg_depotpath ("/$depot/");
+
+            my @paths = SVN::Mirror::list_mirror ($target->{repos});
+            my $fs = $target->{repos}->fs;
+            my $root = $fs->revision_root ($fs->youngest_rev);
+            my $name = $target->depotname;
+            foreach my $path (@paths) {
+                my $m = SVN::Mirror->new(
+                    target_path => $path,
+                    repos => $target->{repos},
+                    get_source => 1
+                );
+                printf $fmt, "/$name$path", $m->{source};
+            }
+        }
+        return;
+    }
+    elsif ($self->{detach}) {
+	my ($m, $mpath) = SVN::Mirror::is_mirrored ($target->{repos},
+						    $target->{path});
+
+        die loc("%1 is not a mirrored path.\n", $target->{depotpath}) if !$m;
+        die loc("%1 is inside a mirrored path.\n", $target->{depotpath}) if $mpath;
+
+	$m->delete(1); # remove svm:source and svm:uuid too
+        print loc("Mirror path '%1' detached.\n", $target->{depotpath});
+        return;
     }
 
     my $m = SVN::Mirror->new (target_path => $target->{path},
@@ -61,7 +87,13 @@ sub run {
 			      target => $target->{repospath},
 			     );
 
-    $m->init;
+    if ($self->{relocate}) {
+        $m->relocate;
+        return;
+    }
+
+    $m->init or die loc("%1 already mirrored, use 'svk mirror --detach' to remove it first.\n", $target->{depotpath});
+
     return;
 }
 
@@ -82,13 +114,17 @@ SVK::Command::Mirror - Initialize a mirrored depotpath
  # You may also list the target part first:
  mirror DEPOTPATH [http|svn]://host/path
 
- mirror --list
+ mirror --list [DEPOT...]
+ mirror --relocate DEPOTPATH [http|svn]://host/path 
+ mirror --detach DEPOTPATH
  mirror --upgrade //
  mirror --upgrade /DEPOT/
 
 =head1 OPTIONS
 
- --list                 : list mirrored paths
+ -l [--list]            : list mirrored paths
+ -d [--detach]          : mark a depotpath as no longer mirrored
+ --relocate             : relocate the mirror to another URI
  --upgrade              : upgrade mirror state to the latest version
 
 =head1 AUTHORS

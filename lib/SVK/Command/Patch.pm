@@ -11,7 +11,7 @@ use SVK::I18N;
 use SVK::Util qw (resolve_svm_source);
 use SVK::Command::Log;
 
-my %cmd = map {$_ => 1} qw/view dump update regen update test send delete/;
+my %cmd = map {$_ => 1} qw/view dump update regen update test send delete apply/;
 $cmd{create} = $cmd{list} = 0;
 
 sub options {
@@ -28,14 +28,19 @@ sub parse_arg {
 	    unless $arg[0];
 	$arg[0] = $self->_load ($arg[0]);
     }
+    if ($cmd eq 'apply') {
+	$arg[1] = $self->arg_co_maybe ($arg[1] || '');
+    }
     return ($cmd, @arg);
 }
 
 sub create {
     my ($self, $name, @arg) = @_;
+    die loc ("Illegal patch name: %1.\n", $name)
+	if $name !~ m/^[\w\-]+$/;
     my $fname = "$self->{xd}{svkpath}/patch";
     mkdir ($fname);
-    $fname .= "/$name.svkpatch";
+    $fname .= "/$name.patch";
     return "file $fname already exists, use $0 patch regen or update $name instead\n"
 	if -e $fname;
 
@@ -53,8 +58,7 @@ sub create {
 
 sub view {
     my ($self, $patch) = @_;
-    $patch->view;
-    return;
+    return $patch->view;
 }
 
 sub dump {
@@ -102,22 +106,39 @@ sub list {
     opendir my $dir, "$self->{xd}{svkpath}/patch";
     foreach my $file (readdir ($dir)) {
 	next if $file =~ /^\./;
-	$file =~ s/\.svkpatch$//;
+	$file =~ s/\.patch$// or next;
 	my $patch = $self->_load ($file);
 	print "$patch->{name}\@$patch->{level}: \n";
     }
     return;
 }
 
+sub apply {
+    require SVK::Command::Merge;
+    my ($self, $patch, $dst, @args) = @_;
+    $self->lock_target ($dst) if $dst->{copath};
+    my $ticket;
+    my $mergecmd = SVK::Command::Merge->new ($self->{xd});
+    $mergecmd->getopt (\@args);
+    $mergecmd->get_commit_message ($patch->{log}) unless $dst->{copath};
+    my $merge = SVK::Merge->new (%$mergecmd, dst => $dst, repos => $dst->{repos});
+    $ticket = sub { $merge->get_new_ticket (SVK::Merge::Info->new ($patch->{ticket})) }
+	if $dst->universal->same_resource ($patch->{target});
+    $patch->apply_to ($dst, $mergecmd->get_editor ($dst),
+		      resolve => $merge->resolver,
+		      ticket => $ticket);
+    return;
+}
+
 sub _store {
     my ($self, $patch) = @_;
-    $patch->store ("$self->{xd}{svkpath}/patch/$patch->{name}.svkpatch");
+    $patch->store ("$self->{xd}{svkpath}/patch/$patch->{name}.patch");
 }
 
 sub _load {
     my ($self, $name) = @_;
     # XXX: support alternative path
-    SVK::Patch->load ("$self->{xd}{svkpath}/patch/$name.svkpatch",
+    SVK::Patch->load ("$self->{xd}{svkpath}/patch/$name.patch",
 		      $self->{xd}, $self->{depot} || '');
 }
 
@@ -141,7 +162,7 @@ SVK::Command::Patch - Manage patches
  patch view PATCHNAME
  patch regen PATCHNAME
  patch update PATCHNAME
- patch apply PATCHNAME
+ patch apply PATCHNAME [DEPOTPATH | PATH] [-- MERGEOPTIONS]
  patch send PATCHNAME
  patch delete PATCHNAME
 

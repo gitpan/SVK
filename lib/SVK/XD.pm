@@ -27,9 +27,7 @@ SVK::XD - svk depot and checkout handling.
 =head1 SYNOPSIS
 
   use SVK::XD;
-  $xd = SVK::XD->new
-      (depotmap => { '' => '/path/to/repos'},
-       checkout => Data::Hierarchy->new);
+  $xd = SVK::XD->new (depotmap => { '' => '/path/to/repos'});
 
 =head1 TERMINOLOGY
 
@@ -88,6 +86,7 @@ sub new {
     %$self = @_;
     $self->{signature} ||= SVK::XD::Signature->new (root => "$self->{svkpath}/cache")
 	if $self->{svkpath};
+    $self->{checkout} ||= Data::Hierarchy->new( sep => $SEP );
     return $self;
 }
 
@@ -122,10 +121,13 @@ sub load {
 	    print loc ("Can't load statefile, old statefile saved as %1\n",
 		     "$self->{statefile}.backup");
 	}
+        elsif ($info) {
+            $info->{checkout}{sep} = $SEP;
+        }
     }
 
     $info ||= { depotmap => {'' => "$self->{svkpath}/local" },
-	        checkout => Data::Hierarchy->new() };
+	        checkout => Data::Hierarchy->new( sep => $SEP ) };
     $self->{$_} = $info->{$_} for keys %$info;
 }
 
@@ -209,9 +211,14 @@ sub giant_lock {
     my ($self) = @_;
     return unless $self->{giantlock};
 
-    if (-e $self->{giantlock}) {
-	$self->{updated} = 1;
-	die loc("another svk might be running; remove %1 if not", $self->{giantlock});
+    LOCKED: {
+        for (1..5) {
+            -e $self->{giantlock} or last LOCKED;
+            sleep 1;
+        }
+
+        $self->{updated} = 1;
+        die loc("another svk might be running; remove %1 if not", $self->{giantlock});
     }
 
     open my ($lock), '>', $self->{giantlock}
@@ -272,7 +279,7 @@ sub find_repos {
 
 =item find_repos_from_co
 
-Given the checkout path and an optiona about if the repository should
+Given the checkout path and an option about if the repository should
 be opened. Returns an array of repository path, the path inside
 repository, the absolute checkout path, the checkout info, and the
 C<SVN::Repos> object if caller wants the repository to be opened.
@@ -801,8 +808,6 @@ sub _node_deleted {
 		    if $file;
 	    }
 	}
-	$self->_unknown_verbose (%arg)
-	    if $arg{cb_unknown} && $arg{unknown_verbose};
     }
 }
 
@@ -812,11 +817,15 @@ sub _node_deleted_or_absent {
 
     if ($schedule eq 'delete' || $schedule eq 'replace') {
 	$self->_node_deleted (%arg);
-	return 1 if $schedule eq 'delete';
+	if ($schedule eq 'delete') {
+	    $self->_unknown_verbose (%arg)
+		if $arg{cb_unknown} && $arg{unknown_verbose};
+	    return 1;
+	}
     }
 
     lstat ($arg{copath});
-    unless (-e _ or is_symlink) {
+    unless (-e _) {
 	# deleted during base_root -> xdroot
 	if ($arg{xdroot} ne $arg{base_root} && $arg{kind} == $SVN::Node::none) {
 	    $self->_node_deleted (%arg);
@@ -1054,7 +1063,7 @@ sub _delta_dir {
 	}
 	lstat ($newpaths{copath});
 	# XXX: warn about unreadable entry?
-	next unless -r _ or is_symlink;
+	next unless -r _;
 	my $delta = (-d _ and not is_symlink)
 	    ? \&_delta_dir : \&_delta_file;
 	my $copyfrom = $ccinfo->{'.copyfrom'};
@@ -1071,7 +1080,7 @@ sub _delta_dir {
     }
 
     if (defined $targets) {
-	print loc ("Unknown target: %1.\n", $_) for keys %$targets;
+	print loc ("Unknown target: %1.\n", $_) for sort keys %$targets;
     }
 
     $arg{editor}->close_directory ($baton, $pool)
@@ -1196,7 +1205,8 @@ sub get_keyword_layer {
 	Change		    Rev
 	File		    URL
 	DateTime	    Date
-	Revision	    FileRev
+	Revision	    Rev
+	FileRevision	    FileRev
     );
 
     $kmap{$_} = $kmap{$kalias{$_}} for keys %kalias;
@@ -1422,15 +1432,21 @@ sub flush {
 package SVK::XD::Root;
 use SVK::I18N;
 
-our $AUTOLOAD;
 sub AUTOLOAD {
-    my $func = $AUTOLOAD;
+    my $func = our $AUTOLOAD;
     $func =~ s/^SVK::XD::Root:://;
     return if $func =~ m/^[A-Z]*$/;
+
     no strict 'refs';
-    my $self = shift;
-#    warn "===> $self $func: ".join(',',@_).' '.join(',', (caller(0))[0..3])."\n";
-    $self->[1]->$func (@_);
+    no warnings 'redefine';
+
+    *$func = sub {
+        my $self = shift;
+        # warn "===> $self $func: ".join(',',@_).' '.join(',', (caller(0))[0..3])."\n";
+        $self->[1]->$func (@_);
+    };
+
+    goto &$func;
 }
 
 sub new {

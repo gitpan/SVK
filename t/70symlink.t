@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests => 20;
+use Test::More tests => 24;
 BEGIN { require 't/tree.pl' };
 
 use SVK::Util qw( HAS_SYMLINK );
@@ -70,7 +70,10 @@ is_output ($svk, 'diff', [$copath],
 	    __('--- t/checkout/symlink/A/dir.lnk  (revision 1)'),
 	    __('+++ t/checkout/symlink/A/dir.lnk  (local)'),
 	    '@@ -1 +1 @@',
-	    '-link /tmp+link .'], 'modified diff');
+	    '-link /tmp',
+            '\ No newline at end of file',
+            '+link .',
+            '\ No newline at end of file'], 'modified diff');
 
 $svk->revert ("$copath/A/dir.lnk");
 is_output ($svk, 'status', [$copath], [], 'revert');
@@ -99,7 +102,7 @@ $svk->commit ('-m', 'change something', "$copath/B");
 
 $svk->smerge ('-C', '//B', "$copath/A");
 is_output ($svk, 'smerge', ['--no-ticket', '//B', "$copath/A"],
-	   ['Auto-merging (1, 4) /B to /A (base /A:1).',
+	   ['Auto-merging (0, 4) /B to /A (base /A:1).',
 	    __("U   $copath/A/dir.lnk")], 'merge');
 is_output ($svk, 'diff', [$copath],
 	   [__('=== t/checkout/symlink/A/dir.lnk'),
@@ -107,7 +110,10 @@ is_output ($svk, 'diff', [$copath],
 	    __('--- t/checkout/symlink/A/dir.lnk  (revision 4)'),
 	    __('+++ t/checkout/symlink/A/dir.lnk  (local)'),
 	    '@@ -1 +1 @@',
-	    '-link /tmp+link .'], 'merge');
+	    '-link /tmp',
+            '\ No newline at end of file',
+            '+link .',
+            '\ No newline at end of file'], 'merge');
 
 _symlink ('non', "$copath/B/new-non.lnk");
 $svk->import ('--force', '-m', 'use import', '//', $copath);
@@ -131,5 +137,19 @@ $svk->update ('-r5', $copath);
 ok (_l "$copath/B/new-non.lnk", 'update from file to symlink');
 $svk->update ($copath);
 ok (-e "$copath/B/new-non.lnk", 'update from symlink to file');
+
+$svk->rm ("$copath/B/new-non.lnk");
+_symlink ('non', "$copath/B/new-non.lnk");
+is_output ($svk, 'add', ["$copath/B/new-non.lnk"],
+	   [__('R   t/checkout/symlink/B/new-non.lnk')], 'replace normal file with symlink');
+is_output ($svk, 'st', [$copath],
+	   [__('R   t/checkout/symlink/B/new-non.lnk')]);
+is_output ($svk, 'commit', ['-m', 'change to non-link', $copath],
+	   ['Committed revision 7.']);
+
+unlink ("$copath/B/dir.lnk");
+_symlink ('/tmp', "$copath/B/dir.lnk");
+is_output ($svk, 'commit', ['-m', "change dir.lnk", "$copath/B/dir.lnk"],
+	   ['Committed revision 8.']);
 
 # XXX: test for conflicts resolving etc; XD should stop translating when conflicted

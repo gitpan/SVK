@@ -2,7 +2,7 @@ package SVK::Target;
 use strict;
 our $VERSION = $SVK::VERSION;
 use SVK::XD;
-use SVK::Util qw( get_anchor catfile abs2rel IS_WIN32 );
+use SVK::Util qw( get_anchor catfile abs2rel HAS_SVN_MIRROR IS_WIN32 );
 use SVK::Target::Universal;
 use Clone;
 
@@ -26,9 +26,13 @@ sub new {
     my $self = ref $class ? clone ($class) :
 	bless {}, $class;
     %$self = (%$self, @arg);
-    $self->{revision} = $self->{repos}->fs->youngest_rev
-	unless defined $self->{revision};
+    $self->refresh_revision unless defined $self->{revision};
     return $self;
+}
+
+sub refresh_revision {
+    my ($self) = @_;
+    $self->{revision} = $self->{repos}->fs->youngest_rev;
 }
 
 sub clone {
@@ -67,6 +71,7 @@ sub same_repos {
 
 sub same_source {
     my ($self, @other) = @_;
+    return 0 unless HAS_SVN_MIRROR;
     return 0 unless $self->same_repos (@other);
     my $mself = SVN::Mirror::is_mirrored ($self->{repos}, $self->{path});
     for (@other) {
@@ -104,10 +109,11 @@ sub normalize {
 	unless $self->{revision} == $root->node_created_rev ($self->path);
 }
 
-sub depotpath {
+sub as_depotpath {
     my ($self, $revision) = @_;
     delete $self->{copath};
     $self->{revision} = $revision if defined $revision;
+    return $self;
 }
 
 =head2 path
@@ -174,6 +180,51 @@ sub contains_copath {
     return 0;
 }
 
+sub depotname {
+    my $self = shift;
+
+    $self->{depotpath} =~ m!^/([^/]*)!
+      or die loc("'%1' does not contain a depot name.\n", $self->{depotpath});
+
+    return $1;
+}
+
+sub copied_from {
+    my ($self, $want_mirror) = @_;
+    my $merge = SVK::Merge->new (%$self);
+
+    # evil trick to take the first element from the array
+    my @ancestors = $merge->copy_ancestors (@{$self}{qw( repos path revision )}, 1);
+    while (my $ancestor = shift(@ancestors)) {
+        shift(@ancestors);
+
+        my $path = (split (/:/, $ancestor))[1];
+        my $target = $self->new (
+            path => $path,
+            depotpath => '/' . $self->depotname . $path,
+            revision => undef,
+        );
+
+        # make a depot path
+        $target->as_depotpath;
+
+        next if $target->root->check_path (
+            $target->{path}
+        ) == $SVN::Node::none;
+
+        if ($want_mirror and HAS_SVN_MIRROR) {
+            my ($m, $mpath) = SVN::Mirror::is_mirrored (
+                $target->{repos},
+                $target->{path}
+            );
+            $m->{source} or next;
+        }
+
+        return $target;
+    }
+
+    return undef;
+}
 
 =head1 AUTHORS
 

@@ -1,5 +1,5 @@
 name: SVK
-version: 0.21
+version: 0.22
 abstract: A decentralized version control system
 author: Chia-liang Kao <clkao@clkao.org>
 license: perl
@@ -7,7 +7,6 @@ distribution_type: module
 requires:
   SVN::Core: 1.0.4
   Algorithm::Annotate: 0
-  Text::Diff: 0
   Algorithm::Diff: 0
   YAML: 0
   Regexp::Shellish: 0
@@ -21,7 +20,9 @@ requires:
   IO::Digest: 0
   SVN::Simple::Edit: 0.21
   Date::Parse: 0
-  SVN::Mirror: 0.45
+  File::Type: 0
+  URI: 0
+  SVN::Mirror: 0.48
 no_index:
   directory:
     - inc

@@ -98,7 +98,7 @@ sub run {
     my $uuid = $fs->get_uuid;
 
     # give ticket to src
-    my $ticket = SVK::Merge->find_merge_sources ($repos, $src->{path}, $newrev, 1, 1);
+    my $ticket = SVK::Merge->find_merge_sources ($src->new (revision => $newrev), 1, 1);
     $ticket->{"$uuid:$tmpbranch"} = $newrev;
 
     $self->do_propset_direct
@@ -138,7 +138,7 @@ SVK::Command::Cmerge - Merge specific changes
  -l [--log]             : use logs of merged revisions as commit message
  -r [--revision] N:M    : act on revisions between N and M
  -a [--auto]            : merge from the previous merge point
- -s [--sign]            : sign this change
+ -S [--sign]            : sign this change
  --no-ticket            : do not record this merge point
 
 =head1 AUTHORS

@@ -68,7 +68,9 @@ sub run {
 sub revert_item {
     my ($self, $copath, $dpath, $xdroot) = @_;
 
-    if ($self->{xd}{checkout}->get ($copath)->{'.schedule'}) {
+    my $schedule = $self->{xd}{checkout}->get ($copath)->{'.schedule'};
+
+    if ($schedule and $schedule ne 'delete') {
 	$self->do_unschedule($copath);
     }
     else {
@@ -105,7 +107,8 @@ sub do_revert {
 
 sub do_unschedule {
     my ($self, $copath) = @_;
-    $self->{xd}{checkout}->store ($copath, {$self->_schedule_empty});
+    $self->{xd}{checkout}->store ($copath, { $self->_schedule_empty,
+					     '.conflict' => undef });
     print loc("Reverted %1\n", $copath);
 }
 

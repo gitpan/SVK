@@ -14,7 +14,7 @@ my $target_prompt = '=== below are targets to be committed ===';
 sub options {
     ('m|message=s'  => 'message',
      'C|check-only' => 'check_only',
-     's|sign'	  => 'sign',
+     'S|sign'	  => 'sign',
      'import',	  => 'import',
      'direct',	  => 'direct',
     );
@@ -39,8 +39,7 @@ sub under_mirror {
 sub check_mirrored_path {
     my ($self, $target) = @_;
     if (!$self->{direct} && $self->under_mirror ($target)) {
-	print loc ("%1 is under mirrored path, use --direct to override.\n",
-		    $target->{depotpath});
+	print loc ("%1 is under mirrored path.\n", $target->{depotpath});
 	return;
     }
     return 1;
@@ -198,6 +197,10 @@ sub get_committable {
 
     if ($fh) {
 	close $fh;
+
+        # get_buffer_from_editor may modify it, so it must be a ref first
+        $target->{targets} ||= [];
+
 	($self->{message}, $targets) =
 	    get_buffer_from_editor (loc('log message'), $target_prompt,
 				    undef, $file, $target->{copath}, $target->{targets});
@@ -225,11 +228,20 @@ sub committed_commit {
 	for (reverse @$targets) {
 	    my ($action, $path) = @$_;
 	    $self->{xd}{checkout}->store_recursively ($path, { $self->_schedule_empty });
-	    $self->{xd}{checkout}->store
-		($path, { revision => $rev,
-			  $action eq 'D' ? ('.deleted' => 1) : (),
-			})
-		    unless $self->{xd}{checkout}->get ($path)->{revision} == $rev;
+            if (($action eq 'D') and $self->{xd}{checkout}->get ($path)->{revision} == $rev ) {
+                # Fully merged, remove the special node
+                $self->{xd}{checkout}->store (
+                    $path, { revision => undef, $self->_schedule_empty }
+                );
+            }
+            else {
+                $self->{xd}{checkout}->store (
+                    $path, {
+                        revision => $rev,
+                        ($action eq 'D') ? ('.deleted' => 1) : (),
+                    }
+                )
+            }
 	}
 	my $root = $fs->revision_root ($rev);
 	# update keyword-translated files
@@ -321,6 +333,7 @@ sub run_delta {
 		$revcache{$corev} = $cb{mirror}->find_remote_rev ($rev);
 	    }) :
 	  ( nodelay => 1 ));
+    return;
 }
 
 1;
@@ -339,7 +352,7 @@ SVK::Command::Commit - Commit changes to depot
 
  -m [--message] arg     : specify commit message ARG
  -C [--check-only]      : try operation but make no changes
- -s [--sign]            : sign this change
+ -S [--sign]            : sign this change
  --import               : import mode; automatically add and delete nodes
  --direct               : commit directly even if the path is mirrored
 

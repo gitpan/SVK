@@ -14,7 +14,6 @@ clean_files	('t/checkout');
 requires(
         'SVN::Core'   => $required_svn,
         'Algorithm::Annotate'   => '0',
-        'Text::Diff'            => '0',
         'Algorithm::Diff'       => '0',
         'YAML'                  => '0',
         'Regexp::Shellish'      => '0',
@@ -28,6 +27,8 @@ requires(
         'IO::Digest'		=> '0',
         'SVN::Simple::Edit'     => '0.21',
         'Date::Parse'           => '0',
+        'File::Type'            => '0',
+        'URI'                   => '0',
 );
 features(
     'Localized messages' => [
@@ -38,11 +39,11 @@ features(
 );
 
 if( eval{ require SVN::Mirror } ) {
-    requires( 'SVN::Mirror' => '0.45' );
+    requires( 'SVN::Mirror' => '0.48' );
 } else {
     features( 'SVN::Mirror support' => [
                -default => 1,
-               'SVN::Mirror'    => '0.45',
+               'SVN::Mirror'    => '0.48',
            ],
 	    );
 }
@@ -51,14 +52,7 @@ features(
     'Patch management' => [
 	-default => 1,
 	'Compress::Zlib'    => '0',
-    ],
-);
-
-features(
-    'Automatic mime-type detection' => [
-	-default => 1,
-	'File::BaseDir'     => '0',
-	'File::MimeInfo'    => '0',
+	'FreezeThaw'        => '0',
     ],
 );
 

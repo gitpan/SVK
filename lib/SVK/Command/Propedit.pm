@@ -9,8 +9,9 @@ use SVK::Util qw(get_buffer_from_editor);
 
 sub parse_arg {
     my ($self, @arg) = @_;
-    return unless $#arg == 1;
-    return ($arg[0], $self->arg_co_maybe ($arg[1]));
+    return if @arg < 1 or @arg > 2;
+    push @arg, ('') if @arg == 1;
+    return ($arg[0], $self->_arg_revprop ($arg[1]));
 }
 
 sub lock {
@@ -21,9 +22,14 @@ sub lock {
 sub run {
     my ($self, $pname, $target) = @_;
 
-    my $pvalue = $self->{xd}->do_proplist ($target)->{$pname};
-    $pvalue = get_buffer_from_editor (loc("property %1", $pname), undef, $pvalue || '',
-				      'prop');
+    my $pvalue = $self->_proplist ($target)->{$pname};
+
+    $pvalue = get_buffer_from_editor (
+        loc("property %1", $pname),
+        undef,
+        (defined($pvalue) ? $pvalue : ''),
+        'prop'
+    );
 
     $self->do_propset ($pname, $pvalue, $target);
 
@@ -46,7 +52,11 @@ SVK::Command::Propedit - Edit a property on path
 
  -m [--message] arg     : specify commit message ARG
  -C [--check-only]      : try operation but make no changes
- -s [--sign]            : sign this change
+ -S [--sign]            : sign this change
+ -R [--recursive]       : descend recursively
+ -r [--revision] arg    : act on revision ARG instead of the head revision
+ --revprop              : operate on a revision property (use with -r)
+ --direct               : commit directly even if the path is mirrored
 
 =head1 AUTHORS
 

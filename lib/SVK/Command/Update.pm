@@ -5,10 +5,15 @@ our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command );
 use SVK::XD;
 use SVK::I18N;
+use SVK::Util qw( HAS_SVN_MIRROR );
 
 sub options {
-    ('r|revision=i'   => 'rev',
-     'N|non-recursive' => 'nonrecursive');
+    ('r|revision=i'    => 'rev',
+     'N|non-recursive' => 'nonrecursive',
+     's|sync'          => 'sync',
+     'm|merge'         => 'merge',
+     'I|incremental'   => 'incremental', # -- XXX unsafe -- undocumented XXX --
+    );
 }
 
 sub parse_arg {
@@ -25,6 +30,9 @@ sub lock {
 sub run {
     my ($self, @arg) = @_;
 
+    die loc ("--revision cannot be used in conjunction with --sync or --merge.\n")
+	if defined $self->{rev} && ($self->{merge} || $self->{sync});
+
     for my $target (@arg) {
 	my $update_target = SVK::Target->new
 	    ( %$target,
@@ -33,6 +41,45 @@ sub run {
 	      $self->{rev} : $target->{repos}->fs->youngest_rev,
 	      copath => undef
 	    );
+
+        # Because merging under the copath anchor is unsafe,
+        # we always merge to the copath root.
+        my $entry = $self->{xd}{checkout}->get ($target->{copath});
+        my $merge_target = $self->arg_depotpath ($entry->{depotpath});
+        my $sync_target = $merge_target;
+
+        if ($self->{merge}) {
+            my $copied_from = $merge_target->copied_from($self->{sync});
+            if ($copied_from) {
+                $sync_target = $copied_from;
+            }
+            else {
+                delete $self->{merge};
+            }
+        }
+
+        if ($self->{sync} and HAS_SVN_MIRROR) {
+            # Because syncing under the mirror anchor is impossible,
+            # we always sync from the mirror anchor.
+            my ($m, $mpath) = SVN::Mirror::is_mirrored (
+                $sync_target->{repos},
+                $sync_target->{path}
+            );
+            $m->run if $m->{source};
+        }
+
+        if ($self->{merge}) {
+            require SVK::Command::Smerge;
+            my $smerge = SVK::Command::Smerge->new;
+            %$smerge = (
+                ($self->{incremental} ? () : (message => '', log => 0)),
+                %$self, %$smerge, sync => 0,
+            );
+            $smerge->run(
+                $merge_target->copied_from($self->{sync}) => $merge_target
+            );
+        }
+	$update_target->refresh_revision if $self->{sync} || $self->{merge};
 
 	$self->do_update ($target, $update_target);
     }
@@ -96,6 +143,8 @@ SVK::Command::Update - Bring changes from repository to checkout copies
 
  -r [--revision] arg    : act on revision ARG instead of the head revision
  -N [--non-recursive]   : do not descend recursively
+ -s [--sync]            : synchronize mirrored sources before update
+ -m [--merge]           : smerge from copied sources before update
 
 =head1 DESCRIPTION
 
@@ -115,6 +164,10 @@ action taken. These characters have the following meaning:
 A character in the first column signifies an update to the actual
 file, while updates to the file's props are shown in the second
 column.
+
+If both C<--sync> and C<--merge> are specified, like in C<svk up -sm>,
+it will first synchronize the mirrored copy source path, and then smerge
+from it.
 
 =head1 AUTHORS
 

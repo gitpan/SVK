@@ -1,14 +1,24 @@
 package SVK::Command::Propset;
 use strict;
 our $VERSION = $SVK::VERSION;
-use base qw( SVK::Command::Commit );
+use base qw( SVK::Command::Commit SVK::Command::Proplist );
 use SVK::XD;
 use SVK::I18N;
 
+sub options {
+    ($_[0]->SUPER::options,
+     'K|keep-local' => 'keep',
+     'R|recursive' => 'recursive',
+     'r|revision=i' => 'rev',
+     'revprop' => 'revprop',
+    );
+}
+
 sub parse_arg {
     my ($self, @arg) = @_;
-    return if $#arg < 2;
-    return (@arg[0,1], map {$self->arg_co_maybe ($_)} @arg[2..$#arg]);
+    return if @arg < 2;
+    push @arg, ('') if @arg == 2;
+    return (@arg[0,1], map {$self->_arg_revprop ($_)} @arg[2..$#arg]);
 }
 
 sub lock {
@@ -20,6 +30,14 @@ sub lock {
 sub do_propset_direct {
     my ($self, %arg) = @_;
     my $fs = $arg{repos}->fs;
+
+    if ($self->{revprop}) {
+        my $rev = (defined($self->{rev}) ? $self->{rev} : $arg{revision});
+        $fs->change_rev_prop ($rev, $arg{propname} => $arg{propvalue});
+        print loc("Property '%1' set on repository revision %2.\n", $arg{propname}, $rev);
+        return;
+    }
+
     my $root = $fs->revision_root ($fs->youngest_rev);
     my $kind = $root->check_path ($arg{path});
 
@@ -51,7 +69,7 @@ sub do_propset {
     }
     else {
 	return unless $self->check_mirrored_path ($target);
-	$self->get_commit_message ();
+	$self->get_commit_message () unless $self->{revprop};
 	$self->do_propset_direct ( author => $ENV{USER},
 				   %$target,
 				   propname => $pname,
@@ -83,7 +101,11 @@ SVK::Command::Propset - Set a property on path
 
  -m [--message] arg     : specify commit message ARG
  -C [--check-only]      : try operation but make no changes
- -s [--sign]            : sign this change
+ -S [--sign]            : sign this change
+ -R [--recursive]       : descend recursively
+ -r [--revision] arg    : act on revision ARG instead of the head revision
+ --revprop              : operate on a revision property (use with -r)
+ --direct               : commit directly even if the path is mirrored
 
 =head1 AUTHORS
 

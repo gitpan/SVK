@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 18;
+use Test::More tests => 20;
 use strict;
 BEGIN { require 't/tree.pl' };
 our $output;
@@ -59,7 +59,15 @@ $svk->rm ('A/foo');
 $svk->commit ('-m', 'rm something', 'A/foo');
 is_deeply ([$xd->{checkout}->find ($corpath, {revision => qr/.*/})],
 	   [$corpath, __("$corpath/A/barnew"), __("$corpath/A/foo")]);
-$svk->update ($corpath);
+
+# The '--sync' and '--merge' below would have no effect.
+is_output ($svk, 'update', ['--sync', '--merge', $corpath], [
+            "Syncing //(/) in $corpath to 4.",
+            __"A   $corpath/A/deep/new",
+            __"U   $corpath/A/deep/baz",
+            __"U   $corpath/A/deep/la/no",
+           ]);
+
 $svk->commit ('-m', 'the rest');
 
 is_deeply ([$xd->{checkout}->find ($corpath, {revision => qr/.*/})], [$corpath]);
@@ -76,10 +84,11 @@ mkdir ('A/forimport');
 overwrite_file ("A/forimport/foo", "fnord");
 overwrite_file ("A/forimport/bar", "fnord");
 overwrite_file ("A/forimport/baz", "fnord");
+overwrite_file ("A/forimport/ss..", "fnord");
 
 is_output ($svk, 'commit', ['--import', '-m', 'commit --import',
 			    'A/forimport', 'A/forimport/foo', 'A/forimport/bar', 'A/forimport/baz',
-			    'A/barnew'],
+			    'A/barnew', 'A/forimport/ss..'],
 	   ['Committed revision 7.']);
 
 is_output ($svk, 'status', [],
@@ -99,3 +108,28 @@ is_output ($svk, 'commit', ['--import', '-m', 'commit --import', 'A/newdir/bar']
 	   ['Committed revision 10.']);
 is_output ($svk, 'status', [], [], 'import finds anchor');
 $svk->update ('-r9');
+
+overwrite_file ("A/foo", "foobar");
+overwrite_file ("A/bar", "foobar");
+$svk->add("A/foo", "A/bar");
+$svk->commit ('-m', 'foo');
+
+overwrite_file ("A/foo", "foobar2");
+overwrite_file ("A/bar", "foobar2");
+
+set_editor(<< 'TMP');
+$_ = shift;
+open _ or die $!;
+# remove foo from the targets
+@_ = grep !/foo/, <_>;
+close _;
+unlink $_;
+open _, '>', $_ or die $!;
+print _ @_;
+close _;
+print @_;
+TMP
+
+$svk->commit;
+is_output ($svk, 'status', [],
+	   [__('M   A/foo')]);

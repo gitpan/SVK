@@ -8,7 +8,7 @@ use SVK::I18N;
 use SVK::Editor::Delay;
 use SVK::Command::Log;
 use SVK::Merge;
-use SVK::Util qw( get_buffer_from_editor find_svm_source );
+use SVK::Util qw( get_buffer_from_editor find_svm_source resolve_svm_source );
 
 sub options {
     ($_[0]->SUPER::options,
@@ -19,13 +19,51 @@ sub options {
      'host=s'   	=> 'host',
      'I|incremental'	=> 'incremental',
      'no-ticket'	=> 'no_ticket',
-     'r|revision=s'	=> 'revspec');
+     'r|revision=s'	=> 'revspec',
+     't|to'             => 'to',
+     'f|from'           => 'from',
+     's|sync'           => 'sync');
 }
 
 sub parse_arg {
     my ($self, @arg) = @_;
-    return if $#arg < 0 || $#arg > 1;
-    return ($self->arg_depotpath ($arg[0]), $self->arg_co_maybe ($arg[1] || ''));
+    return if $#arg > 1;
+
+    if (!$self->{to} && !$self->{from}) {
+
+        if (scalar (@arg) == 0) {
+            return;
+        }
+
+        return ($self->arg_depotpath ($arg[0]), $self->arg_co_maybe ($arg[1] || ''));
+    }
+
+    if (scalar (@arg) == 2) {
+        die loc("Cannot specify 'to' or 'from' when specifying a source and destination.\n");
+    }
+
+    if ($self->{to} && $self->{from}) {
+        die loc("Cannot specify both 'to' and 'from'.\n");
+    }
+
+    my $target1 = $self->arg_co_maybe (@arg ? $arg[0] : '');
+
+    if ($self->{from}) {
+        # When using "from", $target1 must always be a depotpath.
+        if (defined $target1->{copath}) {
+            # Because merging under the copath anchor is unsafe,
+            # cast it into a coroot now. -- XXX -- also see Update.pm
+            my $entry = $self->{xd}{checkout}->get ($target1->{copath});
+            $target1 = $self->arg_depotpath ($entry->{depotpath});
+        }
+    }
+
+    my $target2 = $target1->copied_from($self->{sync});
+    if (!defined ($target2)) {
+        die loc ("Cannot find the path which '%1' copied from.\n", $arg[0]);
+    }
+
+    return ( ($self->{from}) ? ($target1, $target2) : ($target2, $target1) );
 }
 
 sub lock {
@@ -48,6 +86,17 @@ sub run {
     my $repos = $src->{repos};
     my $fs = $repos->fs;
     my $yrev = $fs->youngest_rev;
+
+    if ($self->{sync}) {
+        require SVK::Command::Sync;
+        my $sync = SVK::Command::Sync->new;
+        %$sync = (%$self, %$sync);
+	my (undef, $m) = resolve_svm_source($repos, find_svm_source($repos, $src->{path}));
+        if ($m->{target_path}) {
+            $sync->run($self->arg_depotpath('/' . $src->depotname .  $m->{target_path}));
+            $src->refresh_revision;
+        }
+    }
 
     if ($dst->root ($self->{xd})->check_path ($dst->path) != $SVN::Node::dir) {
 	$src->anchorify; $dst->anchorify;
@@ -74,7 +123,7 @@ sub run {
 	     base => $src->new (revision => $baserev), target => '');
     }
 
-    $self->get_commit_message ($self->{log} ? $merge->log : '')
+    $self->get_commit_message ($self->{log} ? $merge->log(1) : '')
 	unless $dst->{copath};
 
     $merge->{notify} = SVK::Notify->new_with_report
@@ -125,6 +174,7 @@ SVK::Command::Merge - Apply differences between two sources
 
  merge -r N:M DEPOTPATH [PATH]
  merge -r N:M DEPOTPATH1 DEPOTPATH2
+ merge -r N:M [--to|--from] [PATH]
 
 =head1 OPTIONS
 
@@ -134,7 +184,10 @@ SVK::Command::Merge - Apply differences between two sources
  -I [--incremental]     : apply each change individually
  -a [--auto]            : merge from the previous merge point
  -l [--log]             : use logs of merged revisions as commit message
- -s [--sign]            : sign this change
+ -s [--sync]            : synchronize mirrored sources before update
+ -t [--to]              : merge to the specified path
+ -f [--from]            : merge from the specified path
+ -S [--sign]            : sign this change
  --no-ticket            : do not record this merge point
  --track-rename         : track changes made to renamed node
 

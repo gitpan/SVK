@@ -7,7 +7,7 @@ eval { require SVN::Mirror; 1 } or do {
     plan skip_all => "SVN::Mirror not installed";
     exit;
 };
-plan tests => 23;
+plan tests => 24;
 
 # build another tree to be mirrored ourself
 my ($xd, $svk) = build_test('test', 'client2');
@@ -44,7 +44,6 @@ is_output ($svk, 'smerge', ['-C', '//m/be', '//l/be'],
 	   ['Auto-merging (2, 6) /m/be to /l/be (base /m/be:2).',
 	    'U   be',
 	    "New merge ticket: $suuid:/A/be:3"]);
-
 TODO: {
 local $TODO = 'better target checks';
 
@@ -63,14 +62,14 @@ is_output ($svk, 'smerge', ['-C', '//m', '//l'],
 
 my ($uuid, $rev) = ($repos->fs->get_uuid, $repos->fs->youngest_rev);
 is_output ($svk, 'smerge', ['-C', '//l', '//m'],
-	   ['Auto-merging (3, 5) /l to /m (base /m:3).',
+	   ['Auto-merging (0, 5) /l to /m (base /m:3).',
 	    "Merging back to SVN::Mirror source $uri/A.",
 	    'Checking against mirrored directory locally.',
 	    'U   Q/qu',
 	    "New merge ticket: $uuid:/l:5"], 'check merge up');
 
 is_output ($svk, 'smerge', ['-C', '//l', '//m/'],
-	   ['Auto-merging (3, 5) /l to /m (base /m:3).',
+	   ['Auto-merging (0, 5) /l to /m (base /m:3).',
 	    "Merging back to SVN::Mirror source $uri/A.",
 	    'Checking against mirrored directory locally.',
 	    'U   Q/qu',
@@ -91,7 +90,7 @@ is_deeply ($xd->do_proplist (SVK::Target->new
 $rev = $repos->fs->youngest_rev;
 
 is_output ($svk, 'smerge', ['-m', 'simple smerge from local', '//l', '//m'],
-	   ['Auto-merging (6, 7) /l to /m (base /m:6).',
+	   ['Auto-merging (0, 7) /l to /m (base /m:6).',
 	    "Merging back to SVN::Mirror source $uri/A.",
 	    'U   Q/qu',
 	    "New merge ticket: $uuid:/l:7",
@@ -113,10 +112,11 @@ is_deeply ($xd->do_proplist (SVK::Target->new
 
 $svk->smerge ('-C', '//m', '//l');
 is_output ($svk, 'smerge', ['-m', 'mergedown', '//m', '//l'],
-	   ['Auto-merging (7, 8) /m to /l (base /l:7).',
+	   ['Auto-merging (6, 8) /m to /l (base /l:7).',
 	    'Empty merge.'], 'merge down - empty');
+$svk->pl ('-v', '//m');
 is_output ($svk, 'smerge', ['-m', 'mergedown', '//m', '//l'],
-	   ['Auto-merging (7, 8) /m to /l (base /l:7).',
+	   ['Auto-merging (6, 8) /m to /l (base /l:7).',
 	    'Empty merge.'], 'merge up - empty');
 $svk->update ($scopath);
 append_file ("$scopath/A/be", "more modification on trunk\n");
@@ -142,7 +142,7 @@ append_file ("$copath/Q/qu", "modified on local\n");
 $svk->rm ("$copath/Q/qz");
 $svk->commit ('-m', 'commit on local', $copath);
 is_output ($svk, 'smerge', ['-C', '//m', '//l'],
-	   ['Auto-merging (7, 9) /m to /l (base /l:7).',
+	   ['Auto-merging (6, 9) /m to /l (base /l:7).',
 	    ' U  Q/qu',
 	    '    Q/qz - skipped',
 	    'C   be',
@@ -155,7 +155,7 @@ is_output ($svk, 'smerge', ['-C', '//m', '//l'],
 	   'smerge - added file collision');
 $svk->smerge ('-C', '//m', $copath);
 is_output ($svk, 'smerge', ['//m', $copath],
-	   ['Auto-merging (7, 9) /m to /l (base /l:7).',
+	   ['Auto-merging (6, 9) /m to /l (base /l:7).',
 	    __" U  $copath/Q/qu",
 	    __"    $copath/Q/qz - skipped",
 	    __"C   $copath/be",
@@ -166,13 +166,15 @@ is_output ($svk, 'smerge', ['//m', $copath],
 	    "New merge ticket: $suuid:/A:5",
 	    '2 conflicts found.']);
 $svk->status ($copath);
-$svk->commit ('-m', 'commit with conflict state', $copath);
-ok ($output =~ m/conflict/, 'forbid commit with conflict state');
+is_output ($svk, 'commit', ['-m', 'commit with conflict state', $copath],
+	   ["1 conflict detected. Use 'svk resolved' after resolving them."],
+	   'forbid commit with conflict state');
 $svk->revert ("$copath/be");
 $svk->resolved ("$copath/be");
 # XXX: newfile2 conflicted but not added
 $svk->status ($copath);
-$svk->commit ('-m', 'merge down committed from checkout', $copath);
+is_output ($svk, 'commit', ['-m', 'merge down committed from checkout', $copath],
+	   ['Committed revision 11.']);
 rmdir "$copath/newdir";
 $svk->revert ('-R', $copath);
 ok (-e "$copath/newdir", 'smerge to checkout - add directory');
@@ -201,9 +203,12 @@ is_output ($svk, 'smerge', ['-m', 'merge down prop only', '/client2/m-all/A', '/
 	    'Empty merge.'], 'empty merge');
 
 $svk->ps ('-m', 'prop on A/be', 'proponly', 'proponly', '/test/A/be');
-$svk->sync ('/client2/m-all');
-is_output ($svk, 'smerge', ['-m', 'merge down prop only', '/client2/m-all/A', '/client2/m-all/A-cp'],
-	   ['Auto-merging (8, 10) /m-all/A to /m-all/A-cp (base /m-all/A:8).',
+
+is_output ($svk, 'smerge', ['-m', 'merge down prop only with --sync and --to', '-st', '/client2/m-all/A-cp'],
+	   ["Syncing $uri",
+            'Retrieving log information from 9 to 9',
+            'Committed revision 10 from revision 9.',
+	    'Auto-merging (8, 10) /m-all/A to /m-all/A-cp (base /m-all/A:8).',
 	    "Merging back to SVN::Mirror source $uri.",
 	    ' U  be',
 	    "New merge ticket: $suuid:/A:9",
@@ -237,7 +242,7 @@ overwrite_file ("$copath/Q/qu", "on local\nfirst line in qu\n2nd line in qu\n");
 is_output ($svk, 'commit', ['-m', 'more on local', $copath],
 	   ['Committed revision 12.']);
 is_output ($svk, 'smerge', ['-m', 'merge back', '//l', '//m'],
-	   ['Auto-merging (7, 12) /l to /m (base /l:7).',
+	   ['Auto-merging (7, 12) /l to /m (base /m:9).',
 	    "Merging back to SVN::Mirror source $uri/A.",
 	    qr'Transaction is out of date.*',
 	   'Please sync mirrored path /m first.']);

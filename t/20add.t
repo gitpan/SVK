@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 21;
+use Test::More tests => 28;
 use strict;
 BEGIN { require 't/tree.pl' };
 our $output;
@@ -59,9 +59,16 @@ $svk->revert ('-R', '.');
 is_output ($svk, 'add', [qw/-N A/],
 	   [map __($_), 'A   A'],
 	   'add - nonrecursive anchor');
+
+is_output ($svk, 'add', [qw/-N A/],
+	   ['A already added.'],
+	   'add - nonrecursive anchor already added');
 is_output ($svk, 'add', ['A/foo'],
 	   [map __($_), 'A   A/foo'],
 	   'add - nonrecursive target');
+is_output ($svk, 'add', ['A'],
+	   [map __($_), 'A   A/bar', 'A   A/deep', 'A   A/deep/baz'],
+	   'add - readd');
 $svk->revert ('-R', '.');
 
 is_output ($svk, 'add', ['-N', 'A/foo'],
@@ -77,12 +84,25 @@ is_output($svk, 'add', ['A/exe'],
 	   __('A   A/exe - (bin)')]);
 }
 $svk->commit ('-m', 'test exe bit');
+is_output ($svk, 'add', [qw/-N A/],
+	   ['A already under version control.'],
+	   'add - nonrecursive, already committed');
+
+is_output ($svk, 'add', ['A'],
+	   [map __($_), 'A   A/bar', 'A   A/deep', 'A   A/deep/baz', 'A   A/foo'],
+	   'add - readd with committed anchor');
+is_output ($svk, 'add', ['-N', 'A/exe'], [],
+	   'add - readd with committed file unmodified');
+is_output ($svk, 'add', ['A/exe'], [],
+	   'add - readd with committed file unmodified');
+overwrite_file ("A/exe", "foobarbaz");
+is_output ($svk, 'add', ['-N', 'A/exe'],
+	   [],
+	   'add - readd with committed file modified');
+
 unlink ('A/exe');
 $svk->revert ('A/exe');
 ok (_x 'A/exe');
-SKIP: {
-
-skip 'File::MimeInfo not installed', 2 unless eval 'require File::MimeInfo::Magic; 1';
 
 mkdir ('A/mime');
 overwrite_file ("A/mime/foo.pl", "#!/usr/bin/perl\n");
@@ -107,7 +127,7 @@ is_output ($svk, 'pl', ['-v', <A/mime/*>],
 	    'Properties on A/mime/foo.jpg:',
 	    '  svn:mime-type: image/jpeg',
 	   ]);
-}
+
 
 $svk->revert ('-R', 'A');
 

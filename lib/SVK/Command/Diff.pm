@@ -35,7 +35,9 @@ sub run {
     # translate to target and target2
     if ($target2) {
 	if ($target->{copath}) {
-	    die loc("invalid arguments");
+	    die loc("invalid arguments") if !$target2->{copath};
+            $self->run($_) foreach @_[1..$#_];
+            return;
 	}
 	if ($target2->{copath}) {
 	    die loc("invalid arguments") if $target->{copath};
@@ -44,10 +46,10 @@ sub run {
 	}
     }
     else {
-	$target->depotpath if $r1 && $r2;
+	$target->as_depotpath if $r1 && $r2;
 	if ($target->{copath}) {
 	    $target2 = $target->new;
-	    $target->depotpath;
+	    $target->as_depotpath;
 	    $report = $target->{report};
 	}
 	else {
@@ -146,7 +148,7 @@ SVK::Command::Diff - Display diff between revisions or checkout copies
 
 =head1 SYNOPSIS
 
- diff [-r REV] [PATH]
+ diff [-r REV] [PATH...]
  diff -r N[:M] DEPOTPATH
  diff DEPOTPATH1 DEPOTPATH2
  diff DEPOTPATH PATH

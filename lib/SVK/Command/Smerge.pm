@@ -24,12 +24,13 @@ __DATA__
 
 =head1 NAME
 
-SVK::Command::Smerge - Automatic merge all changes between branches
+SVK::Command::Smerge - Automatically merge all changes between branches
 
 =head1 SYNOPSIS
 
  smerge DEPOTPATH [PATH]
  smerge DEPOTPATH1 DEPOTPATH2
+ smerge [--to|--from] [PATH]
 
 =head1 OPTIONS
 
@@ -39,7 +40,10 @@ SVK::Command::Smerge - Automatic merge all changes between branches
  -l [--log]             : use logs of merged revisions as commit message
  -B [--baseless]        : use the earliest revision as the merge point
  -b [--base] arg        : use revision ARG as the merge point
- -s [--sign]            : sign this change
+ -s [--sync]            : synchronize mirrored sources before update
+ -t [--to]              : merge to the specified path
+ -f [--from]            : merge from the specified path
+ -S [--sign]            : sign this change
  --no-ticket            : do not record this merge point
  --track-rename         : track changes made to renamed node
  --host arg             : use ARG as the hostname shown in merge log

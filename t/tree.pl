@@ -3,20 +3,31 @@ END {
     rm_test($_) for @TOCLEAN;
 }
 
+use strict;
 require Data::Hierarchy;
 require SVN::Core;
 require SVN::Repos;
 require SVN::Fs;
 use File::Path;
 use File::Temp;
+use SVK::Util qw( catdir tmpdir can_run abs_path $SEP $EOL IS_WIN32 );
+
+# Fake standard input
+our $answer = 's'; # skip
+BEGIN {
+    no warnings 'redefine';
+    *SVK::Util::get_prompt = sub {
+        ref($answer) ? shift(@$answer) : $answer
+    } unless $ENV{DEBUG_INTERACTIVE};
+}
+
+use Carp;
 use SVK;
 use SVK::XD;
-use SVK::Util qw( catdir tmpdir abs_path $SEP $EOL IS_WIN32 );
-use strict;
-use Carp;
 
 our @TOCLEAN;
 END {
+    $SIG{__WARN__} = sub { 1 };
     cleanup_test($_) for @TOCLEAN;
 }
 
@@ -24,13 +35,24 @@ END {
 our $output = '';
 our $copath;
 
-for (qw/SVKMERGE SVKDIFF LC_CTYPE LC_ALL LANG LC_MESSAGES/) {
+for (qw/SVKRESOLVE SVKMERGE SVKDIFF LC_CTYPE LC_ALL LANG LC_MESSAGES/) {
     $ENV{$_} = '' if $ENV{$_};
 }
 $ENV{LANGUAGE} = $ENV{LANGUAGES} = 'i-default';
 
-# Make "prove -l" happy
-@INC = map abs_path($_), @INC;
+# Make "prove -l" happy; abs_path() returns "undef" if the path 
+# does not exist. This makes perl very unhappy.
+@INC = grep defined, map abs_path($_), @INC;
+
+if ($ENV{DEBUG}) {
+    {
+        package Tie::StdScalar::Tee;
+        require Tie::Scalar;
+        our @ISA = 'Tie::StdScalar';
+        sub STORE { print STDOUT $_[1] ; ${$_[0]} = $_[1]; }
+    }
+    tie $output => 'Tie::StdScalar::Tee';
+}
 
 my $pool = SVN::Pool->new_default;
 
@@ -55,9 +77,8 @@ sub build_test {
 
     my $depotmap = {map {$_ => (new_repos())[0]} '',@depot};
     my $xd = SVK::XD->new (depotmap => $depotmap,
-			   svkpath => $depotmap->{''},
-			   checkout => Data::Hierarchy->new( sep => $SEP ));
-    my $svk = SVK->new (xd => $xd, output => \$output);
+			   svkpath => $depotmap->{''});
+    my $svk = SVK->new (xd => $xd, $ENV{DEBUG_INTERACTIVE} ? () : (output => \$output));
     push @TOCLEAN, [$xd, $svk];
     return ($xd, $svk);
 }
@@ -85,8 +106,8 @@ sub cleanup_test {
     use YAML;
     print Dump($xd);
     for my $depot (sort keys %{$xd->{depotmap}}) {
-	my $path = $xd->{depotmap}{$depot};
-	print "===> depot $depot:\n";
+	my (undef, undef, $repos) = $xd->find_repos ("/$depot/", 1);
+	print "===> depot $depot (".$repos->fs->get_uuid."):\n";
 	$svk->log ('-v', "/$depot/");
 	print ${$svk->{output}};
     }
@@ -135,6 +156,15 @@ sub is_output {
     my $cmp = (grep {ref ($_) eq 'Regexp'} @$expected)
 	? \&is_deeply_like : \&is_deeply;
     @_ = ([split (/\r?\n/, $output)], $expected, $test || join(' ', $cmd, @$arg));
+    goto &$cmp;
+}
+
+sub is_sorted_output {
+    my ($svk, $cmd, $arg, $expected, $test) = @_;
+    $svk->$cmd (@$arg);
+    my $cmp = (grep {ref ($_) eq 'Regexp'} @$expected)
+	? \&is_deeply_like : \&is_deeply;
+    @_ = ([sort split (/\r?\n/, $output)], [sort @$expected], $test || join(' ', $cmd, @$arg));
     goto &$cmp;
 }
 
@@ -217,8 +247,8 @@ sub create_basic_tree {
     $edit->modify_file ($edit->add_file ('/me'),
 			"first line in me$/2nd line in me$/");
     $edit->modify_file ($edit->add_file ('/A/be'),
-			"\$Rev\$ \$Rev\$$/\$Revision\$$/first line in be$/2nd line in be$/");
-    $edit->change_file_prop ('/A/be', 'svn:keywords', 'Rev URL Revision');
+			"\$Rev\$ \$Revision\$$/\$FileRev\$$/first line in be$/2nd line in be$/");
+    $edit->change_file_prop ('/A/be', 'svn:keywords', 'Rev URL Revision FileRev');
     $edit->modify_file ($edit->add_file ('/A/P/pe'),
 			"first line in pe$/2nd line in pe$/");
     $edit->add_directory ('/B');
@@ -301,7 +331,7 @@ sub set_editor {
     print $tmp $_[0];
     $tmp->close;
 
-    my $perl = $^X;
+    my $perl = can_run($^X);
     my $tmpfile = $tmp->filename;
 
     if (defined &Win32::GetShortPathName) {
@@ -313,6 +343,22 @@ sub set_editor {
     push @unlink, $tmpfile;
 
     $ENV{SVN_EDITOR} = "$perl $tmpfile";
+}
+
+sub replace_file {
+    my ($file, $from, $to) = @_;
+    my @content;
+
+    open my $fh, '<', $file or croak "Cannot open $file: $!";
+    while (<$fh>) {
+        s/$from/$to/g;
+        push @content, $_;
+    }
+    close $fh;
+
+    open $fh, '>', $file or croak "Cannot open $file: $!";
+    print $fh @content;
+    close $fh;
 }
 
 END {

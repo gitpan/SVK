@@ -11,10 +11,10 @@ our @EXPORT_OK = qw(
 
     read_file write_file slurp_fh md5_fh mimetype mimetype_is_text
 
-    abs_path abs2rel catdir catfile catpath devnull get_anchor 
-    splitpath splitdir tmpdir tmpfile 
+    abs_path abs2rel catdir catfile catpath devnull dirname get_anchor 
+    move_path make_path splitpath splitdir tmpdir tmpfile
 
-    is_symlink is_executable
+    is_symlink is_executable is_uri is_empty_path can_run
 );
 our $VERSION = $SVK::VERSION;
 
@@ -40,6 +40,8 @@ use Config;
 use SVK::I18N;
 use Digest::MD5;
 use Cwd;
+use File::Copy qw(move);
+use File::Path qw(mkpath);
 use File::Temp 0.14 qw(mktemp);
 use File::Basename qw(dirname);
 use File::Spec::Functions qw(catdir catpath splitpath splitdir tmpdir );
@@ -151,7 +153,10 @@ sub get_buffer_from_editor {
 	   		: defined($ENV{EDITOR}) ? $ENV{EDITOR}
 			: DEFAULT_EDITOR; # fall back to something
     my @editor = split (' ', $editor);
+    my $time = time;
+
     while (1) {
+        utime ($time - 10, $time - 10, $file);
 	my $mtime = (stat($file))[9];
 	print loc("Waiting for editor...\n");
 	# XXX: check $?
@@ -172,14 +177,13 @@ sub get_buffer_from_editor {
     unlink $file;
     return $ret[0] unless wantarray;
 
-    # compare targets in commit message
-    # XXX: test suites for this
+    # Compare targets in commit message
     my $old_targets = (split (/\n\Q$sep\E\n/, $content, 2))[1];
     my @new_targets = map {s/^\s+//; # proponly change will have leading spacs
 			   [split(/[\s\+]+/, $_, 2)]} grep /\S/, split(/\n+/, $ret[1]);
     if ($old_targets ne $ret[1]) {
-	@$targets_ref = map $_->[1], @new_targets;
-	s|^\Q$anchor\E/|| for @$targets_ref;
+        # Assign new targets 
+	@$targets_ref = map abs2rel($_->[1], $anchor, undef, '/'), @new_targets;
     }
     return ($ret[0], \@new_targets);
 }
@@ -280,15 +284,27 @@ sub write_file {
 =head3 slurp_fh ($input_fh, $output_fh)
 
 Read all data from the input filehandle and write them to the
-output filehandle.
+output filehandle.  The input may also be a scalar, or reference
+to a scalar.
 
 =cut
 
 sub slurp_fh {
-    my ($from, $to) = @_;
+    my $from = shift;
+    my $to = shift;
+
     local $/ = \16384;
-    while (<$from>) {
-	print $to $_;
+
+    if (!ref($from)) {
+        print $to $from;
+    }
+    elsif (ref($from) eq 'SCALAR') {
+        print $to $$from;
+    }
+    else {
+        while (<$from>) {
+            print $to $_;
+        }
     }
 }
 
@@ -298,8 +314,11 @@ Calculate MD5 checksum for data in the input filehandle.
 
 =cut
 
-push @EXPORT_OK, qw( md5 ); # deprecated compatibility API
-*md5 = *md5_fh;
+{
+    no warnings 'once';
+    push @EXPORT_OK, qw( md5 ); # deprecated compatibility API
+    *md5 = *md5_fh;
+}
 
 sub md5_fh {
     my $fh = shift;
@@ -316,19 +335,23 @@ is missing on the system.
 =cut
 
 sub mimetype {
-    no strict 'refs';
-    no warnings 'redefine';
+    my $fh = shift;
 
-    local $@;
-    my $mimetype = eval {
-        require File::MimeInfo::Magic;
-        \&File::MimeInfo::Magic::mimetype;
-    } || sub { undef };
+    return 'text/plain' if -z $fh;
 
-    *{caller().'::mimetype'} = $mimetype;
-    *mimetype = $mimetype;
+    binmode($fh);
+    read $fh, my $data, 16*1024 or return undef;
 
-    goto &$mimetype;
+    require File::Type;
+    my $type = File::Type->checktype_contents($data);
+
+    # On fallback, use the same logic as File::MimeInfo to detect text
+    if ($type eq 'application/octet-stream') {
+        substr($data, 0, 10) =~ m/[\x00-\x07\x09\x0B-\x0C\x0E-\x1F]/
+            or return 'text/plain';
+    }
+
+    return $type;
 }
 
 =head3 mimetype_is_text ($mimetype)
@@ -346,6 +369,8 @@ sub mimetype_is_text {
                                           |ruby
                                           |php
                                           |java
+                                          |[kcz]?sh
+                                          |awk
                                           |shellscript)
                          |image/x-x(?:bit|pix)map)$}x;
 }
@@ -394,7 +419,7 @@ sub abs2rel {
 
     my $rel = File::Spec::Functions::abs2rel($pathname, $old_basedir);
 
-    if (index($rel, '..') > -1) {
+    if ($rel =~ /(?:\A|\Q$SEP\E)\.\.(?:\Q$SEP\E|\z)/o) {
         $rel = $pathname;
     }
     elsif (defined $new_basedir) {
@@ -421,7 +446,7 @@ will be splitted off to the end of C<@directories>.
 sub catfile {
     my $pathname = pop;
     return File::Spec::Functions::catfile (
-	grep {defined and length} @_, splitdir($pathname)
+	(grep {defined and length} @_), splitdir($pathname)
     )
 }
 
@@ -435,8 +460,10 @@ Return a file name suitable for reading, and guaranteed to be empty.
 
 =cut
 
+my $devnull;
 sub devnull () {
-    IS_WIN32 ? tmpfile('', UNLINK => 1) : File::Spec::Functions::devnull();
+    IS_WIN32 ? ($devnull ||= tmpfile('', UNLINK => 1))
+             : File::Spec::Functions::devnull();
 }
 
 =head3 get_anchor ($need_target)
@@ -452,6 +479,19 @@ sub get_anchor {
 	chop $anchor if length ($anchor) > 1;
 	($volume.$anchor, $need_target ? ($target) : ())
     } @_;
+}
+
+=head3 make_path ($path)
+
+Create a directory, and intermediate directories as required.  
+
+=cut
+
+sub make_path {
+    my $path = shift;
+
+    return undef if !defined($path) or -d $path;
+    return mkpath([$path]);
 }
 
 =head3 splitpath ($path)
@@ -514,7 +554,79 @@ Unlike C<is_symlink()>, the C<$filename> argument is not optional.
 =cut
 
 sub is_executable {
-    MM->maybe_command($_[0]);
+    defined($_[0]) and length($_[0]) and MM->maybe_command($_[0]);
+}
+
+=head3 can_run ($filename)
+
+Check if we can run some command.
+
+=cut
+
+sub can_run {
+    my ($_cmd, @path) = @_;
+
+    return $_cmd if (-x $_cmd or $_cmd = is_executable($_cmd));
+
+    for my $dir ((split /$Config::Config{path_sep}/, $ENV{PATH}), @path, '.') {
+        my $abs = catfile($dir, $_[0]);
+        return $abs if (-x $abs or $abs = is_executable($abs));
+    }
+
+    return;
+}
+
+=head3 is_uri ($string)
+
+Check if a string is a valid URI.
+
+=cut
+
+sub is_uri {
+    ($_[0] =~ /^[A-Za-z][-+.A-Za-z0-9]+:/)
+}
+
+=head3 move_path ($source, $target)
+
+Move a path to another place, creating intermediate directories in the target
+path if neccessary.  If move failed, tell the user to move it manually.
+
+=cut
+
+sub move_path {
+    my ($source, $target) = @_;
+
+    if (-d $source and (!-d $target or rmdir($target))) {
+        make_path (dirname($target));
+        move ($source => $target) and return;
+    }
+
+    print loc(
+        "Cannot rename %1 to %2; please move it manually.\n",
+        catfile($source), catfile($target),
+    );
+}
+
+=head3 move_path ($source, $target)
+
+Move a path to another place, creating intermediate directories in the target
+path if neccessary.  If move failed, tell the user to move it manually.
+
+=cut
+
+sub is_empty_path {
+    my ($path) = @_;
+
+    return 1 if !-e $path;
+    return 0 if !-d $path;
+
+    opendir my $dh, $path or die $!;
+    while (my $node = readdir($dh)) {
+        next if $node =~ /^\.\.?$/;
+        return 0 if catdir($path, $node);
+    }
+
+    return 1;
 }
 
 1;
