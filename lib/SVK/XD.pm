@@ -761,7 +761,6 @@ Don't generate text deltas in C<apply_textdelta> calls.
 sub depot_delta {
     my ($self, %arg) = @_;
     my @root = map {$_->isa ('SVK::XD::Root') ? $_->[1] : $_} @arg{qw/oldroot newroot/};
-    # XXX: if dir_delta croaks the editor would leak since the baton is not properly destroyed.
     SVN::Repos::dir_delta ($root[0], @{$arg{oldpath}},
 			   $root[1], $arg{newpath},
 			   $arg{editor}, undef,
@@ -1322,6 +1321,15 @@ sub get_eol_layer {
     }
 }
 
+# Remove anything from the keyword value that could prevent us from being able
+# to correctly collapse it again later.
+sub _sanitize_keyword_value {
+    my $value = shift;
+    $value =~ s/[\r\n]/ /g;
+    $value =~ s/ +\$/\$/g;
+    return $value;
+}
+
 sub get_keyword_layer {
     my ($root, $path, $prop) = @_;
     my $k = $prop->{'svn:keywords'};
@@ -1342,18 +1350,16 @@ sub get_keyword_layer {
 		 sub { my ($root, $path) = @_;
 		       my $rev = $root->node_created_rev ($path);
 		       my $fs = $root->fs;
-		       my $author = $fs->revision_prop ($rev, 'svn:author');
-			$author =~ s/[\r\n\$]/ /g;
+		       $fs->revision_prop ($rev, 'svn:author');
 		 },
 		 Id =>
 		 sub { my ($root, $path) = @_;
 		       my $rev = $root->node_created_rev ($path);
 		       my $fs = $root->fs;
-		       my $id = join( ' ', $path, $rev,
+		       join( ' ', $path, $rev,
 			     $fs->revision_prop ($rev, 'svn:date'),
 			     $fs->revision_prop ($rev, 'svn:author'), ''
 			   );
-			$id =~ s/[\r\n\$]/ /g;
 		   },
 		 URL =>
 		 sub { my ($root, $path) = @_;
@@ -1395,7 +1401,7 @@ sub get_keyword_layer {
 
     return PerlIO::via::dynamic->new
 	(translate =>
-         sub { $_[1] =~ s/\$($keyword)(?:: .*? )?\$/"\$$1: ".$kmap{$1}->($root, $path).' $'/eg; },
+         sub { $_[1] =~ s/\$($keyword)(?:: .*? )?\$/"\$$1: "._sanitize_keyword_value($kmap{$1}->($root, $path)).' $'/eg; },
 	 untranslate =>
 	 sub { $_[1] =~ s/\$($keyword)(?:: .*? )?\$/\$$1\$/g; });
 }
@@ -1649,17 +1655,13 @@ sub new {
     bless [@arg], $class;
 }
 
-# XXX: workaround some stalled refs in svn/perl
-my $globaldestroy;
-
 sub DESTROY {
-    warn "===> attempt to destroy root $_[0], leaked?" if $globaldestroy;
-    return if $globaldestroy;
+    return unless $_[0][0];
+    # if this destructor is called upon the pool cleanup which holds the
+    # txn also, we need to use a new pool, otherwise it segfaults for
+    # doing allocation in a pool that is being destroyed.
+    my $pool = SVN::Pool->new_default;
     $_[0][0]->abort if $_[0][0];
-}
-
-END {
-    $globaldestroy = 1;
 }
 
 =head1 AUTHORS
