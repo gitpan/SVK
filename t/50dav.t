@@ -72,7 +72,7 @@ append_file ("$copath/Q/qu", "some changes\n");
 append_file ("$copath/be", "changes\n");
 
 is_output ($svk, 'commit', [-m => "L\x{e9}on is a nice guy.", $copath],
-	   ["Can't decode commit message as utf8.", "try --encoding."]);
+	   ["Can't decode commit message as utf-8-strict.", "try --encoding."]);
 is_output ($svk, 'commit', [-m => "L\x{e9}on is a nice guy.", '--encoding', 'iso-8859-1', $copath],
 	   ["Committed revision 5."]);
 $svk->smerge (-Cm => 'foo', -f => '//local/');
@@ -93,7 +93,7 @@ $svk->switch ('//remote', $copath);
 append_file ("$copath/Q/qu", "More changes in iso-8859-1\n");
 is_output ($svk, 'commit', [-m => "L\x{e9}on has a nice name.", $copath],
 	   ["Commit into mirrored path: merging back directly.",
-	    "Can't decode commit message as utf8.", "try --encoding."]);
+	    "Can't decode commit message as utf-8-strict.", "try --encoding."]);
 is_output_like ($svk, 'commit', [-m => "L\x{e9}on has a nice name.", '--encoding', 'iso-8859-1', $copath],
 		qr'Committed revision');
 
@@ -118,6 +118,7 @@ ok (my ($filename) = $output =~ m/saved in (.*)\./s);
 is_file_content ($filename, "from editor\n");
 
 $server->stop;
+print "\n";
 
 
 append_file ("be", "changes\n");
@@ -126,7 +127,7 @@ is_output ($svk, 'commit', [],
 	   ['Commit into mirrored path: merging back directly.',
 	    'Waiting for editor...',
 	    "Merging back to mirror source $uri/A.",
-	    qr"RA layer request failed: OPTIONS request failed on '/svn/A': OPTIONS of '/svn/A': could not connect to server .*",
+	    qr"RA layer request failed: OPTIONS request failed on '/svn/A': OPTIONS of '/svn/A': .*",
 	    qr'Commit message saved in (.*)\.']);
 ($filename) = $output =~ m/saved in (.*)\./s;
 is_file_content ($filename, "from editor\n");

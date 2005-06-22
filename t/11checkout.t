@@ -1,8 +1,8 @@
 #!/usr/bin/perl -w
-use Test::More tests => 52;
+use Test::More tests => 57;
 use strict;
 BEGIN { require 't/tree.pl' };
-our $output;
+our($output, $answer);
 my ($xd, $svk) = build_test();
 $svk->mkdir ('-m', 'init', '//V');
 $svk->mkdir ('-m', 'init', '//V-3.1');
@@ -44,7 +44,7 @@ $svk->checkout ('//V-3.1');
 ok (-e 'V-3.1/A/Q/qu');
 is_output_like ($svk, 'checkout', ['//'], qr"don't know where to checkout");
 
-is_output_like ($svk, 'checkout', ['//V-3.1'], qr'already exists');
+is_output ($svk, 'checkout', ['//V-3.1'], ["Syncing //V-3.1(/V-3.1) in ".__"$corpath/V-3.1 to 6."], 'check same depot path became update');
 overwrite_file ('some-file', 'blah blah blah');
 is_output_like ($svk, 'checkout', ['//V-3.1', 'some-file'], qr'already exists');
 is_output_like ($svk, 'checkout', ['//V-3.1', 'V-3.1/l2'], qr'Overlapping checkout');
@@ -101,21 +101,21 @@ is_output_like ($svk, 'checkout', ['//V-3.1-non'],
 		qr'not exist');
 
 is_output ($svk, 'checkout', ['--list'], [
-            "Depot Path          \tPath",
-            "============================================================",
-            "//                  \t".__("$corpath/co-root"),
-            "//V-3.1             \t".__("$corpath/V-3.1"),
-            "//V-3.1             \t".__("$corpath/V-3.1-nr"),
-            "//V-3.1             \t".__("$corpath/V-3.1-r5"),
-            "//V-3.1             \t".__("$corpath/co-root-v3.1"),
-            "//V-3.1-non         \t".__("$corpath/V-3.1-non"),
-            "//V-3.1/A/Q         \t".__("$corpath/just-q"),
-            "//V-3.1/A/Q         \t".__("$corpath/just-q-slashco"),
-            "//V-3.1/A/Q/        \t".__("$corpath/just-q-slash"),
-            "//V-3.1/A/Q/qu      \t".__("$corpath/boo"),
-            "//V-3.1/A/Q/qu      \t".__("$corpath/qu"),
-            "//V/A               \t".__("$corpath/co-root-a"),
-	    "//V/A               \t".__("$corpath/co-root-deep/there"),
+            "  Depot Path                    \tPath",
+            "========================================================================",
+            "  //                            \t".__("$corpath/co-root"),
+            "  //V-3.1                       \t".__("$corpath/V-3.1"),
+            "  //V-3.1                       \t".__("$corpath/V-3.1-nr"),
+            "  //V-3.1                       \t".__("$corpath/V-3.1-r5"),
+            "  //V-3.1                       \t".__("$corpath/co-root-v3.1"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/just-q"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/just-q-slashco"),
+            "  //V-3.1/A/Q/                  \t".__("$corpath/just-q-slash"),
+            "  //V-3.1/A/Q/qu                \t".__("$corpath/boo"),
+            "  //V-3.1/A/Q/qu                \t".__("$corpath/qu"),
+            "  //V/A                         \t".__("$corpath/co-root-a"),
+	    "  //V/A                         \t".__("$corpath/co-root-deep/there"),
+            "? //V-3.1-non                   \t".__("$corpath/V-3.1-non"),
             ]);
 
 is_output ($svk, 'checkout', ['//V-3.1/A/Q', "."],
@@ -240,3 +240,65 @@ is_output_like ($svk, 'diff', ['3.1'], qr'revision 7');
 #$svk->up (-r3 => '3.1');
 #warn $output;
 }
+
+my ($copath_noexist, $corpath_noexist) = get_copath ('checkout-noexist');
+mkdir ($copath_noexist);
+$svk->checkout ('//V/A', "$copath_noexist/A");
+rmtree [$corpath_noexist];
+
+# note: the results of the next test have not been sanity-checked!
+is_output ($svk, 'checkout', ['--list'], [
+            "  Depot Path                    \tPath",
+            "========================================================================",
+            "  //                            \t".__("$corpath/co-root"),
+            "  //V-3.1                       \t".__("$corpath/3.1"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/Q"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/baz"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/just-q-slashco"),
+            "  //V-3.1/A/Q/                  \t".__("$corpath/just-q-slash"),
+            "  //V-3.1/A/Q/qu                \t".__("$corpath/qu"),
+	    "  //V/A                         \t".__("$corpath/co-root-deep/there"),
+            "? //V-3.1-non                   \t".__("$corpath/bar"),
+            "? //V/A                         \t".__("$corpath/co-root-a"),
+            "? //V/A                         \t".__("$corpath/$copath_noexist/A"),
+            ]);
+
+is_output ($svk, 'checkout', ['--detach', __("$corpath_noexist/A")], [
+            __("Checkout path '$corpath_noexist/A' detached.")]);
+
+
+is_output ($svk, 'checkout', ['--list'], [
+            "  Depot Path                    \tPath",
+            "========================================================================",
+            "  //                            \t".__("$corpath/co-root"),
+            "  //V-3.1                       \t".__("$corpath/3.1"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/Q"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/baz"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/just-q-slashco"),
+            "  //V-3.1/A/Q/                  \t".__("$corpath/just-q-slash"),
+            "  //V-3.1/A/Q/qu                \t".__("$corpath/qu"),
+	    "  //V/A                         \t".__("$corpath/co-root-deep/there"),
+            "? //V-3.1-non                   \t".__("$corpath/bar"),
+            "? //V/A                         \t".__("$corpath/co-root-a"),
+            ]);
+
+$answer = ['y', 'n'];
+is_output ($svk, 'checkout', ['--purge'], [
+#	    "Purge checkout of //V-3.1-non to non-existing directory ".__("$corpath/bar")."? (y/n) ",
+            __("Checkout path '$corpath/bar' detached."),
+#	    "Purge checkout of //V/A to non-existing directory ".__("$corpath/co-root-a")."? (y/n) ",
+	    ]);
+
+is_output ($svk, 'checkout', ['--list'], [
+            "  Depot Path                    \tPath",
+            "========================================================================",
+            "  //                            \t".__("$corpath/co-root"),
+            "  //V-3.1                       \t".__("$corpath/3.1"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/Q"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/baz"),
+            "  //V-3.1/A/Q                   \t".__("$corpath/just-q-slashco"),
+            "  //V-3.1/A/Q/                  \t".__("$corpath/just-q-slash"),
+            "  //V-3.1/A/Q/qu                \t".__("$corpath/qu"),
+	    "  //V/A                         \t".__("$corpath/co-root-deep/there"),
+            "? //V/A                         \t".__("$corpath/co-root-a"),
+            ]);

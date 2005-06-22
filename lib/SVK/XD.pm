@@ -261,7 +261,7 @@ sub giant_lock {
     }
 
     open my ($lock), '>', $self->{giantlock}
-	or die loc("Cannot acquire giant loc %1:%2.\n", $self->{giantlock}, $!);
+	or die loc("Cannot acquire giant lock %1:%2.\n", $self->{giantlock}, $!);
     print $lock $$;
     close $lock;
     $self->{giantlocked} = 1;
@@ -542,13 +542,16 @@ L<SVK::Editor::Merge> when called in array context.
 
 sub get_editor {
     my ($self, %arg) = @_;
-    my ($copath, $path) = @arg{qw/copath path/};
+    my ($copath, $path, $spath) = @arg{qw/copath path store_path/};
+    $spath = $path unless defined $spath;
     my $encoding = $self->{checkout}->get ($copath)->{encoding};
     $path = '' if $path eq '/';
+    $spath = '' if $spath eq '/';
     $encoding = Encode::find_encoding($encoding) if $encoding;
     $arg{get_copath} = sub { to_native ($_[0], 'path', $encoding) if $encoding;
 			     $_[0] = SVK::Target->copath ($copath,  $_[0]) };
     $arg{get_path} = sub { $_[0] = "$path/$_[0]" };
+    $arg{get_store_path} = sub { $_[0] = "$spath/$_[0]" };
     my $storage = SVK::Editor::XD->new (%arg, xd => $self);
 
     return wantarray ? ($storage, $self->xd_storage_cb (%arg)) : $storage;
@@ -973,17 +976,19 @@ sub _node_props {
 
 sub _node_type {
     my $copath = shift;
-    lstat ($copath);
+    my $st = [lstat ($copath)];
     return '' if !-e _;
     unless (-r _) {
 	print loc ("Warning: $copath is unreadable.\n");
 	return;
     }
-    return 'file' if -f _ or is_symlink;
-    return 'directory' if -d _;
+    return ('file', $st) if -f _ or is_symlink;
+    return ('directory', $st) if -d _;
     print loc ("Warning: unsupported node type $copath.\n");
-    return;
+    return ('', $st);
 }
+
+use Fcntl ':mode';
 
 sub _delta_file {
     my ($self, %arg) = @_;
@@ -1002,6 +1007,13 @@ sub _delta_file {
     return 1 if $self->_node_deleted_or_absent (%arg, pool => $pool);
 
     my ($newprops, $fullprops) = $self->_node_props (%arg);
+    if (HAS_SYMLINK && (defined $fullprops->{'svn:special'} xor S_ISLNK($arg{st}[2]))) {
+	# special case obstructure for links, since it's not standard
+	return 1 if $self->_node_deleted_or_absent (%arg,
+						    type => 'link',
+						    pool => $pool);
+	return 1 unless $arg{obstruct_as_replace};
+    }
     my $fh = get_fh ($arg{xdroot}, '<', $arg{path}, $arg{copath}, $fullprops);
     my $mymd5 = md5_fh ($fh);
     my ($baton, $md5);
@@ -1128,7 +1140,7 @@ sub _delta_dir {
 	    next;
 	}
 	next if $unchanged && !$ccinfo->{'.schedule'} && !$ccinfo->{'.conflict'};
-	my $type = _node_type ($copath);
+	my ($type, $st) = _node_type ($copath);
 	next unless defined $type;
 	my $delta = $type ? $type eq 'directory' ? \&_delta_dir : \&_delta_file
 	                  : $kind == $SVN::Node::file ? \&_delta_file : \&_delta_dir;
@@ -1146,6 +1158,7 @@ sub _delta_dir {
 			targets => $newtarget,
 			baton => $baton,
 			root => 0,
+			st => $st,
 			cinfo => $ccinfo,
 			base_path => $arg{base_path} eq '/' ? "/$entry" : "$arg{base_path}/$entry",
 			path => $newpath,
@@ -1212,13 +1225,14 @@ sub _delta_dir {
 	    }
 	    next;
 	}
-	my $type = _node_type ($newpaths{copath}) or next;
+	my ($type, $st) = _node_type ($newpaths{copath}) or next;
 	my $delta = $type eq 'directory' ? \&_delta_dir : \&_delta_file;
 	my $copyfrom = $ccinfo->{'.copyfrom'};
 	my $fromroot = $copyfrom ? $arg{repos}->fs->revision_root ($ccinfo->{'.copyfrom_rev'}) : undef;
 	$self->$delta ( %arg, %newpaths, add => 1, baton => $baton,
 			root => 0, base => 0, cinfo => $ccinfo,
 			type => $type,
+			st => $st,
 			depth => defined $arg{depth} ? defined $targets ? $arg{depth} : $arg{depth} - 1: undef,
 			$copyfrom ?
 			( base => 1,
