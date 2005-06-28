@@ -426,19 +426,24 @@ sub create_xd_root {
 	    ($self->{checkout}->get ($paths[0] || $copath)->{revision}))
 	if $#paths <= 0;
 
+    my $pool = SVN::Pool->new;
+    my $base_rev;
     for (@paths) {
 	my $cinfo = $self->{checkout}->get ($_);
 	unless ($root) {
-	    $txn = $fs->begin_txn ($cinfo->{revision});
+	    $base_rev = $cinfo->{revision};
+	    $txn = $fs->begin_txn ($base_rev);
 	    $root = $txn->root();
 	    next if $_ eq $copath;
 	}
+	next if $cinfo->{revision} == $base_rev;
 	my $path = abs2rel($_, $copath => $arg{path}, '/');
-	$root->delete ($path)
-	    if eval { $root->check_path ($path) != $SVN::Node::none };
-	SVN::Fs::revision_link ($fs->revision_root ($cinfo->{revision}),
-				$root, $path)
+	$root->delete ($path, $pool)
+	    if eval { $root->check_path ($path, $pool) != $SVN::Node::none };
+	SVN::Fs::revision_link ($fs->revision_root ($cinfo->{revision}, $pool),
+				$root, $path, $pool)
 		unless $cinfo->{'.deleted'};
+	$pool->clear;
     }
     return ($txn, $root);
 }
@@ -453,14 +458,15 @@ sub xd_storage_cb {
     my ($self, %arg) = @_;
     # translate to abs path before any check
     return
-	( cb_exist => sub { my $copath = shift; my $path = $copath;
+	( cb_exist => sub { my ($copath, $pool) = @_;
+			    my $path = $copath;
 			    $arg{get_copath} ($copath);
 			    lstat ($copath);
 			    return $SVN::Node::none unless -e _;
 			    $arg{get_path} ($path);
 			    return (is_symlink || -f _) ? $SVN::Node::file : $SVN::Node::dir
 				if $self->{checkout}->get ($copath)->{'.schedule'} or
-				    $arg{oldroot}->check_path ($path);
+				    $arg{oldroot}->check_path ($path, $pool);
 			    return $SVN::Node::unknown;
 			},
 	  cb_rev => sub { $_ = shift; $arg{get_copath} ($_);
