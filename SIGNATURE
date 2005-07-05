@@ -14,9 +14,9 @@ not run its Makefile.PL or Build.PL.
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA1
 
-SHA1 8e1bc41af0095868fb40845d41c67e3a6ca404e8 CHANGES
-SHA1 71244987877ee02bc802ab1ddf87d0fcf77b1e9e MANIFEST
-SHA1 5edd640ae42b2b3abd2febdf4d28b42356e921ef META.yml
+SHA1 19cf6bdc41402d7788baa4d4c6c786575cb55732 CHANGES
+SHA1 7d4b77478a1f325acbceecf614e6a533e6c5c413 MANIFEST
+SHA1 ffa9fa38b983f166e9f3ae320009d357d2c01278 META.yml
 SHA1 406886c57efa27555b824f8b80f7e19bdd28c688 Makefile.PL
 SHA1 fd93391727a558e73ede92bde2f3f521a6297707 README
 SHA1 b7397251879055a7b8f942ee897d0a4925588ecf bin/svk
@@ -44,10 +44,10 @@ SHA1 8ea49420d1e796cbcae689ef6e30f845b512f031 lib/SVK/Command/Cleanup.pm
 SHA1 5795422e735f61f4f3a93cfebdc36dcb8739f5df lib/SVK/Command/Cmerge.pm
 SHA1 1f71479e8e26c26aec1d52f0db7db6c4dbe1bb55 lib/SVK/Command/Commit.pm
 SHA1 0161a328e8e51ce3212ff4c7cca6858a1180aa1c lib/SVK/Command/Copy.pm
-SHA1 cc6791c56851bf4f5dd864bd06eb5197b1553fd0 lib/SVK/Command/Delete.pm
+SHA1 38b74f5be12e900dfe0208ec5b399585af35e03c lib/SVK/Command/Delete.pm
 SHA1 470c2052f114259d3db597b26282b21cadcf5bc6 lib/SVK/Command/Depotmap.pm
 SHA1 e0fc253ac04151addfea256b18ef12bb9559b64e lib/SVK/Command/Describe.pm
-SHA1 83d71c8a980f84b3c1f75b0349f951f3ba126459 lib/SVK/Command/Diff.pm
+SHA1 0d31641da79f9841f43cf4e728abae2185f0565b lib/SVK/Command/Diff.pm
 SHA1 55c1bd52a7cbce78ae619b41790594666644a52d lib/SVK/Command/Help.pm
 SHA1 458a637c175daf5781a3e856b21072d30fe5d197 lib/SVK/Command/Import.pm
 SHA1 1a1c96984c7adaaa89e64e0fff86bcafc8063ba3 lib/SVK/Command/Info.pm
@@ -75,7 +75,7 @@ SHA1 5b43d8621de5b0e66112d84d34e58d873deb2e1d lib/SVK/Command/Update.pm
 SHA1 a8a1bcf7782de41043ebe6a60583b420851066f6 lib/SVK/Command/Verify.pm
 SHA1 3343fa267e7e6ca2ad50e758dea4b14a5a21d11d lib/SVK/Editor/Combine.pm
 SHA1 cea784bfe144c5bd23cbb903d97f389c01070766 lib/SVK/Editor/Delay.pm
-SHA1 c0b7dbd32bb9c9a94e39a83c980c75bfc50587b1 lib/SVK/Editor/Diff.pm
+SHA1 254a978e9415a1eba6b872f99175b160663ad9c0 lib/SVK/Editor/Diff.pm
 SHA1 6b768f71695f5f3c2df43d88342a459bdd1755fe lib/SVK/Editor/Merge.pm
 SHA1 b1475b8ea327f4924464bf3856b835ed75558a83 lib/SVK/Editor/Patch.pm
 SHA1 b825e6851fda5b5aa1313b5c201bcdf588f26258 lib/SVK/Editor/Rename.pm
@@ -112,7 +112,7 @@ SHA1 4e884b69d61942f12484b37d5e8b2e42253af5b0 lib/SVK/Resolve/XXDiff.pm
 SHA1 30da978959754ad75c491ac8174e6c9f9d94d316 lib/SVK/Target.pm
 SHA1 43503adbbe3ce7c91fa20f29a7d35717c8a4b05d lib/SVK/Target/Universal.pm
 SHA1 44de0e5a0fecb59f19f9fe34953cb9a17eb90175 lib/SVK/Util.pm
-SHA1 3f41aae9ace8425ad2a5c63fb06d9164daec14f7 lib/SVK/Version.pm
+SHA1 35a0128efd153f496f7af781dfc58bdf3d51556c lib/SVK/Version.pm
 SHA1 61e7d45d58af17766507f5e66e0995ec9671afcc lib/SVK/XD.pm
 SHA1 4614afbbb389f429104240ccdb13fb8480465e4a t/00use.t
 SHA1 a5fef310982ee1be8f396b06e9878612c5bc3c97 t/01depotmap.t
@@ -130,6 +130,7 @@ SHA1 016909f8b522a9d87c1925d63df9f6db7191c0ea t/05svm-empty.t
 SHA1 7baf96015d382d7c61eafa6325d7da4b8de5d591 t/05svm-head.t
 SHA1 ab3ae99898f542a4690bcb9504e965f5babcc5d9 t/05svm-lock.t
 SHA1 81b026acd2c7f5e959bca64bdefb201c844af208 t/05svm-move.t
+SHA1 ead0580ce0fa9e2b4bfe84e69bd40c1d7dcd50d8 t/05svm-rm.t
 SHA1 abe3d92cc5e93ca62941efc9f6474b8bea159298 t/05svm.t
 SHA1 4c844cf4623048240028b7ee03836ccb3270c884 t/06keyword.t
 SHA1 89a0e62b5838acc08ca8d2e030dcaab1cda100af t/07smerge-anchor-replace.t
@@ -178,7 +179,7 @@ SHA1 d77db4ebc5f3422b187ef548a17790a6fcdfc133 t/34revprop.t
 SHA1 7a1e592b48bf872ac13fed80bcd6ee82e0bd84fa t/35admin.t
 SHA1 0aa36b6e674df22bcf80dab75f30b1e425090d45 t/36push-pull.t
 SHA1 16b1d21b27de8f6f98aaeba307b6cf059f2118bb t/37revspec.t
-SHA1 946c1c777c5785a28200c9a3b40f58f200641c40 t/50dav.t
+SHA1 5fe4922b5f767531bf199efdd285592bcb52271c t/50dav.t
 SHA1 cbabe00be1e2dadb01c67c2fc737f36f8fa53ac5 t/70symlink.t
 SHA1 5db49ffd66d14d8dc3dc1bef28d98fd6c98b5f06 t/71autovivify.t
 SHA1 511fca50957fb1999f7be919fd197c4245e69ca2 t/72sign.t
@@ -192,7 +193,7 @@ SHA1 93cdfec7b5348cf0b9a4a7789290ae4c53078c0c utils/svk-ediff.el
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.0 (FreeBSD)
 
-iD8DBQFCwcd/k1XldlEkA5YRAm7yAKCLsNO+xyvVU7eHvQ3kxb2HUd0bvQCfWaMO
-Q9cr72G2UErUsfIPNPGDA4g=
-=TMe3
+iD8DBQFCyc+5k1XldlEkA5YRArhwAJ9sS92j+I7zLt14U8FVLl7rUn+ukACfVUtQ
+IbYN7z5fZRf+o9wGZ262aSo=
+=HIzq
 -----END PGP SIGNATURE-----
