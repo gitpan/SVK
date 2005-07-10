@@ -14,9 +14,9 @@ not run its Makefile.PL or Build.PL.
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA1
 
-SHA1 19cf6bdc41402d7788baa4d4c6c786575cb55732 CHANGES
+SHA1 adf77c032c585468b7e5e3aa2ee4c37c90208e84 CHANGES
 SHA1 7d4b77478a1f325acbceecf614e6a533e6c5c413 MANIFEST
-SHA1 ffa9fa38b983f166e9f3ae320009d357d2c01278 META.yml
+SHA1 f9c682321fc3cc826f2f8cd208e571c2c3334297 META.yml
 SHA1 406886c57efa27555b824f8b80f7e19bdd28c688 Makefile.PL
 SHA1 fd93391727a558e73ede92bde2f3f521a6297707 README
 SHA1 b7397251879055a7b8f942ee897d0a4925588ecf bin/svk
@@ -43,7 +43,7 @@ SHA1 bba24f80a70343f73e9e060b6b1a02c1d2d796ae lib/SVK/Command/Checkout.pm
 SHA1 8ea49420d1e796cbcae689ef6e30f845b512f031 lib/SVK/Command/Cleanup.pm
 SHA1 5795422e735f61f4f3a93cfebdc36dcb8739f5df lib/SVK/Command/Cmerge.pm
 SHA1 1f71479e8e26c26aec1d52f0db7db6c4dbe1bb55 lib/SVK/Command/Commit.pm
-SHA1 0161a328e8e51ce3212ff4c7cca6858a1180aa1c lib/SVK/Command/Copy.pm
+SHA1 dd00f2ba90b89aa7484562b674d38b2c038a6512 lib/SVK/Command/Copy.pm
 SHA1 38b74f5be12e900dfe0208ec5b399585af35e03c lib/SVK/Command/Delete.pm
 SHA1 470c2052f114259d3db597b26282b21cadcf5bc6 lib/SVK/Command/Depotmap.pm
 SHA1 e0fc253ac04151addfea256b18ef12bb9559b64e lib/SVK/Command/Describe.pm
@@ -111,9 +111,9 @@ SHA1 9c50d50768873085129e445d6939098e65ef0143 lib/SVK/Resolve/Vim.pm
 SHA1 4e884b69d61942f12484b37d5e8b2e42253af5b0 lib/SVK/Resolve/XXDiff.pm
 SHA1 30da978959754ad75c491ac8174e6c9f9d94d316 lib/SVK/Target.pm
 SHA1 43503adbbe3ce7c91fa20f29a7d35717c8a4b05d lib/SVK/Target/Universal.pm
-SHA1 44de0e5a0fecb59f19f9fe34953cb9a17eb90175 lib/SVK/Util.pm
-SHA1 35a0128efd153f496f7af781dfc58bdf3d51556c lib/SVK/Version.pm
-SHA1 61e7d45d58af17766507f5e66e0995ec9671afcc lib/SVK/XD.pm
+SHA1 ef05a2b69999f7da5322c58608fa011508233883 lib/SVK/Util.pm
+SHA1 4d58f2bd247f68398f145cce57501b3ff56e7f7b lib/SVK/Version.pm
+SHA1 430683352571b61dcf5e43d04675b20fe6e48acc lib/SVK/XD.pm
 SHA1 4614afbbb389f429104240ccdb13fb8480465e4a t/00use.t
 SHA1 a5fef310982ee1be8f396b06e9878612c5bc3c97 t/01depotmap.t
 SHA1 49f4858dc1d6f8064dbaf8e8fd4c7f088b6ab96e t/01editor.t
@@ -137,7 +137,7 @@ SHA1 89a0e62b5838acc08ca8d2e030dcaab1cda100af t/07smerge-anchor-replace.t
 SHA1 5926da51406927ae65b531bf7535db8ff06622f8 t/07smerge-anchor.t
 SHA1 d1b64c980f38585af025b3dda4ab2eb0388e658f t/07smerge-baseless.t
 SHA1 2b32a43147f6bd0f0d8a267759895b5a92484919 t/07smerge-delete.t
-SHA1 c4bf4e35fad659872562034d3a0e21e7ffe05428 t/07smerge-external.t
+SHA1 0a531bd4a1e85d2b2d99eb64138bb7c160bb8114 t/07smerge-external.t
 SHA1 eb40d8a3626afcd8b22f5f6e2f45ec27da3201c7 t/07smerge-file.t
 SHA1 46a372e593acacca1d0b25ed2216f8c80f154a39 t/07smerge-foreign.t
 SHA1 9693c553697cff20984f6e9ed470fd4fd5b0bd66 t/07smerge-incremental.t
@@ -145,16 +145,16 @@ SHA1 57eb4ee052e5ffd5cd666b11ba0278b9796dcb5d t/07smerge-log.t
 SHA1 e6c954fb5f3f488f4b9c16ffd3c6543eb5bab240 t/07smerge-mixanchor.t
 SHA1 9a8602dd6bbd7c74ae7f951f38979531a92a7da2 t/07smerge-moved.t
 SHA1 124514651c82e9943a1f10a461f8c963cf4f83f1 t/07smerge-multi.t
-SHA1 d4f013a5a1a3ac11fe6f30c13b847d3e71182474 t/07smerge-prop.t
+SHA1 3d1cbc9c1aeee6652080b9f0a3aac07fd2e4a460 t/07smerge-prop.t
 SHA1 b9148f371fc1229853bed4052915c86f36a69fc8 t/07smerge-relayed.t
 SHA1 0119e15a6743d0016e69555cf4a2c2f634cf36fd t/07smerge-to-from.t
 SHA1 ccedad46737c4d73d8820aeb1050aad338886413 t/07smerge-upload.t
 SHA1 29db698648560ed7a01c9ed35a36a9bc1ccbe0c5 t/07smerge.t
 SHA1 fa043150a0090cae8974e4ccdf7cfc6b24265cd0 t/09cmerge.t
-SHA1 388cf2891a4b0e1c21adf7e52c6b6be4632da957 t/10switch.t
+SHA1 1811db3aa06e9fdf82f89b91cf1f38a5ee685eb5 t/10switch.t
 SHA1 f816c83414059523f958ef87ff5f5248b816a94b t/11checkout.t
 SHA1 592e9779dd65675c229820ef28dc6c5391c953cc t/12copy-cache.t
-SHA1 3c28d4fd9ac29da3605676671737417a878bbc2f t/12copy.t
+SHA1 577e515f143ed8f4d06e5606f3b3e2c7fe6847e3 t/12copy.t
 SHA1 83c74c0469b634e4d5fb6cd5118fc5172cdb4b9d t/13patch.t
 SHA1 08ac64fdd4c6d47c537306b184444a27cc1394d0 t/14move.t
 SHA1 fc0bca855fc3d9940b48e98f0c75ae25af7130aa t/18replaced.t
@@ -186,14 +186,14 @@ SHA1 511fca50957fb1999f7be919fd197c4245e69ca2 t/72sign.t
 SHA1 58dadea3a491ec55283723a59fb63c5b9351e02f t/73i18n.t
 SHA1 0b6c32c3ca87ae2fc8920d888c8aa7b9c535adf2 t/svk-sec.gpg
 SHA1 637852a103eaf889505651be19bf51e3a357fc30 t/svk.gpg
-SHA1 b1820e9527b6a3baf9c3ab7230d463adcd1d367f t/tree.pl
+SHA1 b4a74b3c77a955f6c6ef10d63615c75bbb19a110 t/tree.pl
 SHA1 a00db6d1ab31844a441287ee4e75ea980dca84ec utils/extract-docs
 SHA1 1fd50c254bb3ef48f229bed50e0e6c459d486716 utils/extract-message-catalog
 SHA1 93cdfec7b5348cf0b9a4a7789290ae4c53078c0c utils/svk-ediff.el
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.0 (FreeBSD)
 
-iD8DBQFCyc+5k1XldlEkA5YRArhwAJ9sS92j+I7zLt14U8FVLl7rUn+ukACfVUtQ
-IbYN7z5fZRf+o9wGZ262aSo=
-=HIzq
+iD8DBQFC0bJsk1XldlEkA5YRAh/hAJ0WTpFjE3ks7Cepr39lrY92crEPygCePfdJ
+y59pwuwqLaUKWfQqw6UU6B8=
+=Ieef
 -----END PGP SIGNATURE-----
