@@ -94,11 +94,11 @@ sub _get_logs {
         path        => $path,
         cross       => $cross,
         callback    => sub {
-            return 0 if !$limit--; # last
-
             my $rev = $_[1];
             return 1 if $rev > $fromrev; # next
             return 0 if $rev < $torev;   # last
+
+            return 0 if !$limit--; # last
 
             if ($reverse) {
                 unshift @revs, $rev;
@@ -183,11 +183,22 @@ SVK::Command::Log - Show log messages for revisions
 
  log DEPOTPATH
  log PATH
+ log -r N[:M] [DEPOT]PATH
 
 =head1 OPTIONS
 
- -r [--revision] REV	: act on revision REV instead of the head revision
- -l [--limit] REV	: stop after displaying REV revisions
+ -r [--revision] ARG      : ARG (some commands also take ARG1:ARG2 range)
+
+                          A revision argument can be one of:
+
+                          "HEAD"       latest in repository
+                          NUMBER       revision number
+                          NUM1:NUM2    revision range
+
+                          Unlike other commands,  negative NUMBER has no
+                          meaning.
+
+ -l [--limit] REV       : stop after displaying REV revisions
  -x [--cross]           : track revisions copied from elsewhere
  -v [--verbose]         : print extra information
 

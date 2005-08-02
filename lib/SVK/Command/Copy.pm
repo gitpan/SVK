@@ -7,6 +7,7 @@ use SVK::I18N;
 
 sub options {
     ($_[0]->SUPER::options,
+     'q|quiet'         => 'quiet',
      'r|revision=i' => 'rev');
 }
 
@@ -75,29 +76,15 @@ sub handle_co_item {
     die loc ("Path %1 already exists.\n", $copath)
 	if -e $copath;
     my $entry = $self->{xd}{checkout}->get ($copath);
-    $src->normalize;
-    $src->anchorify; $dst->anchorify;
-    unless (-e $dst->{copath}) {
-	die loc ("Parent directory %1 doesn't exist, use -p.\n", $dst->{report})
-	    unless $self->{parent};
-	# this sucks
-	make_path($dst->{report});
-	my $add = $self->command('add');
-	$add->run($add->parse_arg($dst->{report}));
-    }
-    unless (-d $dst->{copath}) {
-	die loc ("%1 is not a directory.\n", $dst->{report});
-    }
-    unless ($dst->root($self->{xd})->check_path ($dst->{path})) {
-	my $info = $self->{xd}{checkout}->get($dst->{copath});
-	die loc ("Parent directory %1 is unknown, add first.\n", $dst->{report})
-	    unless $info->{'.schedule'};
-    }
+    $src->normalize; $src->anchorify;
+    $self->ensure_parent($dst);
+    $dst->anchorify;
 
+    my $notify = $self->{quiet} ? SVK::Notify->new(quiet => 1) : undef;
     # if SVK::Merge could take src being copath to do checkout_delta
     # then we have 'svk cp copath... copath' for free.
     SVK::Merge->new (%$self, repos => $dst->{repos}, nodelay => 1,
-		     report => $report,
+		     report => $report, notify => $notify,
 		     base => $src->new (path => '/', revision => 0),
 		     src => $src, dst => $dst)->run ($self->get_editor ($dst));
 
@@ -111,7 +98,7 @@ sub handle_co_item {
 }
 
 sub handle_direct_item {
-    my ($self, $editor, $anchor, $m, $src, $dst) = @_;
+    my ($self, $editor, $anchor, $m, $src, $dst, $other_call) = @_;
     $src->normalize;
     # if we have targets, ->{path} must exist
     if (!$self->{parent} && $dst->{targets} && !$dst->root->check_path ($dst->{path})) {
@@ -126,8 +113,9 @@ sub handle_direct_item {
     else {
 	$path = "file://$src->{repospath}$path";
     }
-    $editor->close_directory
-	($editor->add_directory (abs2rel ($dst->path, $anchor => undef, '/'), 0, $path, $rev));
+    my $baton = $editor->add_directory (abs2rel ($dst->path, $anchor => undef, '/'), 0, $path, $rev);
+    $other_call->($baton) if $other_call;
+    $editor->close_directory($baton);
     $self->adjust_anchor ($editor);
 }
 
@@ -145,7 +133,7 @@ sub _unmodified {
 	      })),
 	  # need tests: only useful for move killing the src with unknown entries
 	  cb_unknown => sub {
-	      die loc ("%1 is missing.\n", $target->copath ($_[0]))});
+	      die loc ("%1 is unknown.\n", $target->copath ($_[0]))});
 }
 
 sub check_src {
@@ -229,13 +217,16 @@ SVK::Command::Copy - Make a versioned copy
 
 =head1 OPTIONS
 
- -r [--revision] REV	: act on revision REV instead of the head revision
- -m [--message] MESSAGE : specify commit message MESSAGE
- -F [--file] FILENAME	: read commit message from FILENAME
+ -r [--revision] REV    : act on revision REV instead of the head revision
  -p [--parent]          : create intermediate directories as required
- -P [--patch] NAME	: instead of commit, save this change as a patch
- -C [--check-only]      : try operation but make no changes
+ -m [--message] MESSAGE : specify commit message MESSAGE
+ -F [--file] FILENAME   : read commit message from FILENAME
+ --template             : use the specified message as the template to edit
+ --encoding ENC         : treat -m/-F value as being in charset encoding ENC
+ -P [--patch] NAME      : instead of commit, save this change as a patch
  -S [--sign]            : sign this change
+ -C [--check-only]      : try operation but make no changes
+ --direct               : commit directly even if the path is mirrored
 
 =head1 AUTHORS
 

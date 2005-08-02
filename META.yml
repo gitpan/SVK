@@ -1,228 +1,228 @@
 ---
 name: SVK
-version: 1.01
+version: 1.02
 author: Chia-liang Kao <clkao@clkao.org>
 abstract: A Distributed Version Control System
 license: unknown
 provides:
   SVK:
     file: lib/SVK.pm
-    version: 1.01
+    version: 1.02
   SVK::Command:
     file: lib/SVK/Command.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Add:
     file: lib/SVK/Command/Add.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Admin:
     file: lib/SVK/Command/Admin.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Annotate:
     file: lib/SVK/Command/Annotate.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Cat:
     file: lib/SVK/Command/Cat.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Checkout:
     file: lib/SVK/Command/Checkout.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Checkout::detach:
     file: lib/SVK/Command/Checkout.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Checkout::list:
     file: lib/SVK/Command/Checkout.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Checkout::purge:
     file: lib/SVK/Command/Checkout.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Checkout::relocate:
     file: lib/SVK/Command/Checkout.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Cleanup:
     file: lib/SVK/Command/Cleanup.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Cmerge:
     file: lib/SVK/Command/Cmerge.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Commit:
     file: lib/SVK/Command/Commit.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Copy:
     file: lib/SVK/Command/Copy.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Delete:
     file: lib/SVK/Command/Delete.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Depotmap:
     file: lib/SVK/Command/Depotmap.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Depotmap::add:
     file: lib/SVK/Command/Depotmap.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Depotmap::detach:
     file: lib/SVK/Command/Depotmap.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Depotmap::list:
     file: lib/SVK/Command/Depotmap.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Depotmap::relocate:
     file: lib/SVK/Command/Depotmap.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Describe:
     file: lib/SVK/Command/Describe.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Diff:
     file: lib/SVK/Command/Diff.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Help:
     file: lib/SVK/Command/Help.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Import:
     file: lib/SVK/Command/Import.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Info:
     file: lib/SVK/Command/Info.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::List:
     file: lib/SVK/Command/List.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Log:
     file: lib/SVK/Command/Log.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Merge:
     file: lib/SVK/Command/Merge.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Mirror:
     file: lib/SVK/Command/Mirror.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Mirror::detach:
     file: lib/SVK/Command/Mirror.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Mirror::list:
     file: lib/SVK/Command/Mirror.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Mirror::recover:
     file: lib/SVK/Command/Mirror.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Mirror::relocate:
     file: lib/SVK/Command/Mirror.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Mirror::unlock:
     file: lib/SVK/Command/Mirror.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Mirror::upgrade:
     file: lib/SVK/Command/Mirror.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Mkdir:
     file: lib/SVK/Command/Mkdir.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Move:
     file: lib/SVK/Command/Move.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch::FileRequired:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch::apply:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch::delete:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch::dump:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch::list:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch::regen:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch::test:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch::update:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Patch::view:
     file: lib/SVK/Command/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Propdel:
     file: lib/SVK/Command/Propdel.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Propedit:
     file: lib/SVK/Command/Propedit.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Propget:
     file: lib/SVK/Command/Propget.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Proplist:
     file: lib/SVK/Command/Proplist.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Propset:
     file: lib/SVK/Command/Propset.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Pull:
     file: lib/SVK/Command/Pull.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Push:
     file: lib/SVK/Command/Push.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Resolved:
     file: lib/SVK/Command/Resolved.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Revert:
     file: lib/SVK/Command/Revert.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Smerge:
     file: lib/SVK/Command/Smerge.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Status:
     file: lib/SVK/Command/Status.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Switch:
     file: lib/SVK/Command/Switch.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Sync:
     file: lib/SVK/Command/Sync.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Update:
     file: lib/SVK/Command/Update.pm
-    version: 1.01
+    version: 1.02
   SVK::Command::Verify:
     file: lib/SVK/Command/Verify.pm
-    version: 1.01
+    version: 1.02
   SVK::Editor::Combine:
     file: lib/SVK/Editor/Combine.pm
-    version: 1.01
+    version: 1.02
   SVK::Editor::Delay:
     file: lib/SVK/Editor/Delay.pm
-    version: 1.01
+    version: 1.02
   SVK::Editor::Diff:
     file: lib/SVK/Editor/Diff.pm
-    version: 1.01
+    version: 1.02
   SVK::Editor::Merge:
     file: lib/SVK/Editor/Merge.pm
-    version: 1.01
+    version: 1.02
   SVK::Editor::Patch:
     file: lib/SVK/Editor/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Editor::Rename:
     file: lib/SVK/Editor/Rename.pm
-    version: 1.01
+    version: 1.02
   SVK::Editor::Sign:
     file: lib/SVK/Editor/Sign.pm
   SVK::Editor::Status:
     file: lib/SVK/Editor/Status.pm
-    version: 1.01
+    version: 1.02
   SVK::Editor::Translate:
     file: lib/SVK/Editor/Translate.pm
-    version: 1.01
+    version: 1.02
   SVK::Editor::XD:
     file: lib/SVK/Editor/XD.pm
-    version: 1.01
+    version: 1.02
   SVK::I18N:
     file: lib/SVK/I18N.pm
   SVK::Merge:
@@ -233,10 +233,10 @@ provides:
     file: lib/SVK/Notify.pm
   SVK::Patch:
     file: lib/SVK/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Patch::CommitEditor:
     file: lib/SVK/Patch.pm
-    version: 1.01
+    version: 1.02
   SVK::Resolve:
     file: lib/SVK/Resolve.pm
   SVK::Resolve::AraxisMerge:
@@ -267,23 +267,23 @@ provides:
     file: lib/SVK/Resolve/XXDiff.pm
   SVK::Target:
     file: lib/SVK/Target.pm
-    version: 1.01
+    version: 1.02
   SVK::Target::Universal:
     file: lib/SVK/Target/Universal.pm
-    version: 1.01
+    version: 1.02
   SVK::Util:
     file: lib/SVK/Util.pm
-    version: 1.01
+    version: 1.02
   SVK::VerifyEditor:
     file: lib/SVK/Command/Verify.pm
-    version: 1.01
+    version: 1.02
   SVK::XD:
     file: lib/SVK/XD.pm
-    version: 1.01
+    version: 1.02
   SVK::XD::Root:
     file: lib/SVK/XD.pm
-    version: 1.01
+    version: 1.02
   SVK::XD::Signature:
     file: lib/SVK/XD.pm
-    version: 1.01
+    version: 1.02
 generated_by: Module::Build version 0.261
