@@ -44,7 +44,8 @@ The anchor of the editor calls.
 
 =item target
 
-The target path of the editor calls.  Used only for path reporting translation.
+The target path of the editor calls.  Used for deciding if the root's
+meta data needs to be updated in update mode.
 
 =item xd
 
@@ -73,6 +74,10 @@ Path for reporting modifications.
 =item ignore_checksum
 
 Don't do checksum verification.
+
+=item ignore_keywords
+
+Don't do keyword translations.
 
 =back
 
@@ -135,7 +140,8 @@ sub apply_textdelta {
 				-l $basename ? () : [stat($base)]];
     }
     # XXX: should test merge to co with keywords
-    delete $self->{props}{$path}{'svn:keywords'} unless $self->{update};
+    delete $self->{props}{$path}{'svn:keywords'}
+	if !$self->{update} or $self->{ignore_keywords};
     my $fh = SVK::XD::get_fh ($self->{newroot}, '>', $spath, $copath,
 			      $self->{added}{$path} ? $self->{props}{$path} || {}: undef)
 	or return undef;
@@ -156,7 +162,7 @@ sub close_file {
 	delete $self->{base}{$path};
     }
     elsif (!$self->{update} && !$self->{check_only}) {
-	$self->{xd}{checkout}->store_fast ($copath, { '.schedule' => 'add' });
+	$self->_schedule_entry($copath);
     }
     if ($self->{update}) {
 	my (undef, $file) = get_anchor (1, $copath);
@@ -188,8 +194,9 @@ sub add_directory {
 	    return undef;
 	}
     }
-    $self->{xd}{checkout}->store_fast ($copath, { '.schedule' => 'add' })
-	if !$self->{update} && !$self->{check_only};
+    if (!$self->{update} && !$self->{check_only}) {
+	$self->_schedule_entry($copath);
+    }
     $self->{added}{$path} = 1;
     push @{$self->{cursignature}}, $self->{signature}->load ($copath)
 	if $self->{update};
@@ -279,6 +286,13 @@ sub close_edit {
 
 sub abort_edit {
     my ($self) = @_;
+}
+
+sub _schedule_entry {
+    my ($self, $copath) = @_;
+    my (undef, $schedule) = $self->{xd}->get_entry($copath);
+    $self->{xd}{checkout}->store_fast
+	($copath, { '.schedule' => $schedule ? 'replace' : 'add' });
 }
 
 =head1 AUTHORS

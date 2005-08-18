@@ -131,7 +131,7 @@ sub load {
     $info ||= { depotmap => {'' => catdir($self->{svkpath}, 'local') },
 	        checkout => Data::Hierarchy->new( sep => $SEP ) };
     $self->{$_} = $info->{$_} for keys %$info;
-
+    $self->{updated} = 0;
     $self->create_depots('');
 }
 
@@ -173,16 +173,39 @@ giant is unlocked.
 
 =cut
 
-sub _store_self {
+sub _store_config {
     my ($self, $hash) = @_;
-    local $SIG{INT};
+    local $SIG{INT} = sub { warn loc("Please hold on a moment. SVK is writing out a critical configuration file.\n")};
+
     my $file = $self->{statefile};
     my $tmpfile = $file."-$$";
+    my $oldfile = "$file~";
+    my $ancient_backup = $file.".bak.".$$;
+
+
     DumpFile ($tmpfile,
 	      { map { $_ => $hash->{$_}} qw/checkout depotmap/ });
-    unlink ("$file~");
-    rename ($file => "$file~");
-    rename ($tmpfile => $file);
+
+    if (not -f $tmpfile ) {
+        die loc("Couldn't write your new configuration file to %1. Please try again.", $tmpfile);
+    }
+
+    if (-f $oldfile ) { 
+      rename ( $oldfile => $ancient_backup ) ||
+	die loc("Couldn't remove your old backup configuration file %1 while writing the new one.", $oldfile);
+    }
+    if (-f $file ) {
+        rename ($file => $oldfile) ||
+        	die loc("Couldn't remove your old configuration file %1 while writing the new one.", $file);
+    }
+    rename ($tmpfile => $file) ||
+	die loc("Couldn't write your new configuration file %1. A backup has been stored in %2. Please replace %1 with %2 immediately.", $file, $tmpfile);
+
+    if (-f $ancient_backup ) {
+      unlink ($ancient_backup) ||
+	die loc("Couldn't remove your old backup configuration file %1 while writing the new one.", $oldfile);
+
+    }
 }
 
 sub store {
@@ -191,15 +214,15 @@ sub store {
     return unless $self->{statefile};
     local $@;
     if ($self->{giantlocked}) {
-	$self->_store_self ($self, $self);
+	$self->_store_config ($self);
     }
     elsif ($self->{modified}) {
 	$self->giant_lock ();
 	my $info = LoadFile ($self->{statefile});
-	my @paths = $info->{checkout}->find ('/', {lock => $$});
+	my @paths = $info->{checkout}->find ('', {lock => $$});
 	$info->{checkout}->merge ($self->{checkout}, $_)
 	    for @paths;
-	$self->_store_self ($self, $info);
+        $self->_store_config($info);
     }
     $self->giant_unlock ();
 }
@@ -219,10 +242,7 @@ sub lock {
     }
     $self->{checkout}->store ($path, {lock => $$});
     $self->{modified} = 1;
-    DumpFile ($self->{statefile}, { checkout => $self->{checkout},
-				    depotmap => $self->{depotmap}} )
-	if $self->{statefile};
-
+    $self->_store_config($self) if $self->{statefile};
     $self->giant_unlock ();
 }
 
@@ -396,15 +416,13 @@ sub condense {
 	    $anchor = $copath;
 	    $report = $_[0];
 	}
-	my $cinfo = $self->{checkout}->get ($anchor);
-	my $schedule = $cinfo->{'.schedule'} || '';
+	my ($cinfo, $schedule) = $self->get_entry($anchor);
 	while (!-d $anchor || $cinfo->{scheduleanchor} ||
 	       $schedule eq 'add' || $schedule eq 'delete' || $schedule eq 'replace' ||
 	       ($anchor ne $copath && $anchor.$SEP ne substr ($copath, 0, length($anchor)+1))) {
 	    ($anchor, $report) = get_anchor (0, $anchor, $report);
 	    # XXX: put .. to report if it's anchorified beyond
-	    $cinfo = $self->{checkout}->get ($anchor);
-	    $schedule = $cinfo->{'.schedule'} || '';
+	    ($cinfo, $schedule) = $self->get_entry($anchor);
 	}
     }
     return ($report, $anchor, $#targets == 0 && $targets[0] eq $anchor ? ()
@@ -567,11 +585,7 @@ sub xd_storage_cb {
 				     depth => 1,
 				     editor => $editor,
 				     absent_as_delete => 1,
-				     cb_unknown =>
-				     sub {
-					 my $unknown = abs2rel($_[0], $path);
-					 $modified->{$unknown} = '?';
-				     },
+				     cb_unknown => \&SVK::Editor::Status::unknown,
 				   );
 			       return $modified;
 			   },
@@ -699,8 +713,7 @@ sub do_delete {
 				})),
 			    cb_unknown => sub {
 				die loc("%1 is not under version control.\n",
-					abs2rel($_[1], $arg{copath} => $arg{report}));
-
+					SVK::Target->copath ($arg{report}, $_[1]));
 			    }
 			  );
 
@@ -739,11 +752,10 @@ sub do_proplist {
 sub do_propset {
     my ($self, %arg) = @_;
     my ($xdroot, %values);
-    my $entry = $self->{checkout}->get ($arg{copath});
-    $entry->{'.schedule'} ||= '';
+    my ($entry, $schedule) = $self->get_entry($arg{copath});
     $entry->{'.newprop'} ||= {};
 
-    unless ($entry->{'.schedule'} eq 'add' || !$arg{repos}) {
+    unless ($schedule eq 'add' || !$arg{repos}) {
 	$xdroot = $self->xdroot (%arg);
 	my ($source_path, $source_root) = $self->_copy_source ($entry, $arg{copath}, $xdroot);
 	$source_path ||= $arg{path}; $source_root ||= $xdroot;
@@ -753,13 +765,13 @@ sub do_propset {
 
     #XXX: support working on multiple paths and recursive
     die loc("%1 is already scheduled for delete.\n", $arg{report})
-	if $entry->{'.schedule'} eq 'delete';
+	if $schedule eq 'delete';
     %values = %{$entry->{'.newprop'}}
 	if exists $entry->{'.schedule'};
     my $pvalue = defined $arg{propvalue} ? $arg{propvalue} : \undef;
 
     $self->{checkout}->store ($arg{copath},
-			      { '.schedule' => $entry->{'.schedule'} || 'prop',
+			      { '.schedule' => $schedule || 'prop',
 				'.newprop' => {%values,
 					    $arg{propname} => $pvalue
 					      }});
@@ -853,6 +865,10 @@ and treat all copied descendents as added too.
 
 Called for ignored items if defined.
 
+=item cb_unchanged
+
+Called for unchanged files if defined.
+
 =back
 
 =cut
@@ -903,7 +919,7 @@ sub _unknown_verbose {
 		$now .= $now ? "/$dir" : $dir;
 		my $copath = SVK::Target->copath ($arg{copath}, $now);
 		next if $seen{$copath};
-		$arg{cb_unknown}->(catdir($arg{entry}, $now), $copath);
+		$arg{cb_unknown}->($arg{editor}, catdir($arg{entry}, $now), $arg{baton});
 		$seen{$copath} = 1;
 	    }
 	}
@@ -917,7 +933,7 @@ sub _unknown_verbose {
 		my $schedule = $self->{checkout}->get ($copath)->{'.schedule'} || '';
 		return if $schedule eq 'delete';
 		my $dpath = abs2rel($copath, $arg{copath} => $arg{entry}, '/');
-		$arg{cb_unknown}->($dpath, $copath);
+		$arg{cb_unknown}->($arg{editor}, $dpath, $arg{baton});
 	  }}, defined $arg{targets} ?
 	  map { SVK::Target->copath ($arg{copath}, $_) } @{$arg{targets}} : $arg{copath});
 }
@@ -952,13 +968,15 @@ sub _node_deleted_or_absent {
     }
 
     if ($arg{type}) {
-	if ($arg{kind} && (($arg{type} eq 'file') xor ($arg{kind} == $SVN::Node::file))) {
+	if ($arg{kind} && !$schedule &&
+	    (($arg{type} eq 'file') xor ($arg{kind} == $SVN::Node::file))) {
 	    if ($arg{obstruct_as_replace}) {
 		$self->_node_deleted (%arg);
 	    }
 	    else {
 		$arg{cb_obstruct}->($arg{editor}, $arg{entry}, $arg{baton})
 		    if $arg{cb_obstruct};
+		return 1;
 	    }
 	}
     }
@@ -1077,8 +1095,13 @@ sub _delta_file {
 
     $arg{base} = 0 if $arg{in_copy} || $schedule eq 'replace';
 
-    return $modified unless $schedule || $arg{add} ||
-	($arg{base} && $mymd5 ne ($md5 = $arg{base_root}->file_md5_checksum ($arg{base_path})));
+    unless ($schedule || $arg{add} ||
+	($arg{base} && $mymd5 ne ($md5 = $arg{base_root}->file_md5_checksum ($arg{base_path})))) {
+	$arg{cb_unchanged}->($arg{editor}, $arg{entry}, $arg{baton},
+			     $arg{cb_rev}->($arg{entry})
+			    ) if ($arg{cb_unchanged} && !$modified);
+	return $modified;
+    }
 
     $baton = $arg{editor}->add_file ($arg{entry}, $arg{baton},
 				     $cinfo->{'.copyfrom'} ?
@@ -1144,7 +1167,7 @@ sub _delta_dir {
     $arg{cb_conflict}->($arg{editor}, $arg{entry}, $arg{baton})
 	if $thisdir && $arg{cb_conflict} && $cinfo->{'.conflict'};
 
-    return if $self->_node_deleted_or_absent (%arg, pool => $pool);
+    return 1 if $self->_node_deleted_or_absent (%arg, pool => $pool);
     # if a node is replaced, it has no base, unless it was replaced with history.
     $arg{base} = 0 if $schedule eq 'replace' && $arg{path} eq $arg{base_path};
     my ($entries, $baton) = ({});
@@ -1188,28 +1211,36 @@ sub _delta_dir {
 	my $kind = $entries->{$entry}->kind;
 	my $unchanged = ($kind == $SVN::Node::file && $signature && !$signature->changed ($entry));
 	$copath = SVK::Target->copath ($arg{copath}, $copath);
-	my $ccinfo = $self->{checkout}->get ($copath);
+	my ($ccinfo, $ccschedule) = $self->get_entry($copath);
 	# a replace with history node requires handling the copy anchor in the
 	# latter direntries loop.  we should really merge the two.
-	if ($ccinfo->{'.schedule'} && $ccinfo->{'.schedule'} eq 'replace'
-	    && $ccinfo->{'.copyfrom'}) {
+	if ($ccschedule eq 'replace' && $ccinfo->{'.copyfrom'}) {
 	    delete $entries->{$entry};
+	    $targets->{$entry} = $newtarget if defined $targets;
 	    next;
 	}
-	next if $unchanged && !$ccinfo->{'.schedule'} && !$ccinfo->{'.conflict'};
+	my $newentry = defined $arg{entry} ? "$arg{entry}/$entry" : $entry;
+	if ($unchanged && !$ccschedule && !$ccinfo->{'.conflict'}) {
+	    $arg{cb_unchanged}->($arg{editor}, $newentry, $baton,
+				 $arg{cb_rev}->($newentry)
+				) if $arg{cb_unchanged};
+	    next;
+	}
 	my ($type, $st) = _node_type ($copath);
 	next unless defined $type;
 	my $delta = $type ? $type eq 'directory' ? \&_delta_dir : \&_delta_file
 	                  : $kind == $SVN::Node::file ? \&_delta_file : \&_delta_dir;
 	my $newpath = $arg{path} eq '/' ? "/$entry" : "$arg{path}/$entry";
 	my $obs = $type ? ($kind == $SVN::Node::dir xor $type eq 'directory') : 0;
+	# if the sub-delta returns 1 it means the node is modified. invlidate
+	# the signature cache
 	$self->$delta ( %arg,
 			add => $arg{in_copy} || ($obs && $arg{obstruct_as_replace}),
 			type => $type,
 			# if copath exist, we have base only if they are of the same type
 			base => !$obs,
 			depth => defined $arg{depth} ? defined $targets ? $arg{depth} : $arg{depth} - 1: undef,
-			entry => defined $arg{entry} ? "$arg{entry}/$entry" : $entry,
+			entry => $newentry,
 			kind => $arg{xdroot} eq $arg{base_root} ? $kind : $arg{xdroot}->check_path ($newpath),
 			base_kind => $kind,
 			targets => $newtarget,
@@ -1262,14 +1293,13 @@ sub _delta_dir {
 			 targets => $newtarget, base_kind => $SVN::Node::none);
 	$newpaths{kind} = $arg{xdroot} eq $arg{base_root} ? $SVN::Node::none :
 	    $arg{xdroot}->check_path ($newpaths{path}) != $SVN::Node::none;
-	my $ccinfo = $self->{checkout}->get ($newpaths{copath});
-	my $sche = $ccinfo->{'.schedule'} || '';
+	my ($ccinfo, $sche) = $self->get_entry($newpaths{copath});
 	my $add = $sche || $arg{auto_add} || $newpaths{kind};
 	# If we are not at intermediate path, process ignore
 	# for unknowns, as well as the case of auto_add (import)
 	if (!defined $targets) {
 	    if ((!$add || $arg{auto_add}) && $entry =~ m/$ignore/) { 
-		$arg{cb_ignored}->($newpaths{entry}, $newpaths{copath})
+		$arg{cb_ignored}->($arg{editor}, $newpaths{entry}, $arg{baton})
 		    if $arg{cb_ignored};
 		next;
 	    }
@@ -1280,7 +1310,7 @@ sub _delta_dir {
 	}
 	unless ($add || $ccinfo->{'.conflict'}) {
 	    if ($arg{cb_unknown}) {
-		$arg{cb_unknown}->($newpaths{entry}, $newpaths{copath});
+		$arg{cb_unknown}->($arg{editor}, $newpaths{entry}, $arg{baton});
 		$self->_unknown_verbose (%arg, %newpaths)
 		    if $arg{unknown_verbose};
 	    }
@@ -1351,6 +1381,18 @@ sub checkout_delta {
     $self->_delta_dir (%arg, baton => $baton, root => 1, base => 1, type => 'directory');
     $arg{editor}->close_directory ($baton);
     $arg{editor}->close_edit ();
+}
+
+=item get_entry($copath)
+
+Returns the L<Data::Hierarchy> entry and the schedule of the entry.
+
+=cut
+
+sub get_entry {
+    my ($self, $copath) = @_;
+    my $entry = $self->{checkout}->get($copath);
+    return ($entry, $entry->{'.schedule'} || '');
 }
 
 sub resolved_entry {
