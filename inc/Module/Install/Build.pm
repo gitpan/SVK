@@ -16,6 +16,7 @@ sub write {
 
     $args{dist_name} = $self->name || $self->determine_NAME($self->{args});
     $args{license} = $self->license;
+    $args{test_files} = $self->tests;
     $args{dist_version} = $self->version || $self->determine_VERSION($self->{args});
     $args{dist_abstract} = $self->abstract;
     $args{dist_author} = $self->author;
@@ -60,4 +61,4 @@ sub ACTION_dist {
 
 __END__
 
-#line 175
+#line 176

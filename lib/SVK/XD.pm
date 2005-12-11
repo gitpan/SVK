@@ -336,6 +336,7 @@ sub find_repos {
     my ($depot, $path) = $depotpath =~ m|^/([^/]*)(/.*?)/?$|
 	or die loc("%1 is not a depot path.\n", $depotpath);
 
+    $path = File::Spec::Unix->canonpath($path);
     my $repospath = $self->{depotmap}{$depot} or die loc("No such depot: %1.\n", $depot);
 
     return ($repospath, $path, $open && _open_repos ($repospath));
@@ -471,17 +472,20 @@ sub create_xd_root {
 
     my @paths = $self->{checkout}->find ($copath, {revision => qr'.*'});
 
-    return (undef, $fs->revision_root
-	    ($self->{checkout}->get ($paths[0] || $copath)->{revision}))
+    # In the simple case - only one revision entry found, it can be
+    # for some descendents.  If so we actually need to construct
+    # txnroot.
+    my ($simple, $revbase) = $self->{checkout}->get($paths[0] || $copath);
+    unshift @paths, $revbase unless $revbase eq $copath;
+    return (undef, $fs->revision_root($simple->{revision}))
 	if $#paths <= 0;
 
     my $pool = SVN::Pool->new;
-    my $base_rev;
     for (@paths) {
 	my $cinfo = $self->{checkout}->get ($_);
 	my $path = abs2rel($_, $copath => $arg{path}, '/');
 	unless ($root) {
-	    $base_rev = $cinfo->{revision};
+	    my $base_rev = $cinfo->{revision};
 	    $txn = $fs->begin_txn ($base_rev);
 	    $root = $txn->root();
 	    if ($base_rev == 0) {
@@ -495,7 +499,8 @@ sub create_xd_root {
 	    }
 	    next;
 	}
-	next if $cinfo->{revision} == $base_rev;
+	my ($parent) = get_anchor(0, $path);
+	next if $cinfo->{revision} == $root->node_created_rev($parent, $pool);
 	$root->delete ($path, $pool)
 	    if eval { $root->check_path ($path, $pool) != $SVN::Node::none };
 	SVN::Fs::revision_link ($fs->revision_root ($cinfo->{revision}, $pool),
@@ -949,10 +954,10 @@ sub _node_deleted {
     if ($arg{kind} == $SVN::Node::dir && $arg{delete_verbose}) {
 	foreach my $file (sort $self->{checkout}->find
 			  ($arg{copath}, {'.schedule' => 'delete'})) {
+	    next if $file eq $arg{copath};
 	    $file = abs2rel($file, $arg{copath} => undef, '/');
 	    from_native($file, 'path', $arg{encoder});
-	    $arg{editor}->delete_entry ("$arg{entry}/$file", @arg{qw/rev baton pool/})
-		if $file;
+	    $arg{editor}->delete_entry ("$arg{entry}/$file", @arg{qw/rev baton pool/});
 	}
     }
 }
