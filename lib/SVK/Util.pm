@@ -27,11 +27,13 @@ use Config ();
 use SVK::I18N;
 use SVN::Core;
 use SVN::Ra;
-use autouse 'Encode'            => qw(resolve_alias decode encode);
+use autouse 'Encode'            => qw(resolve_alias($) decode encode);
 use File::Glob qw(bsd_glob);
 use autouse 'File::Basename' 	=> qw(dirname);
 use autouse 'File::Spec::Functions' => 
                                qw(catdir catpath splitpath splitdir tmpdir);
+
+use Class::Autouse qw( File::Type );
 
 
 =head1 NAME
@@ -457,8 +459,8 @@ Calculate MD5 checksum for data in the input filehandle.
 }
 
 sub md5_fh {
+    require Digest::MD5;
     my $fh = shift;
-
     my $ctx = Digest::MD5->new;
     $ctx->addfile($fh);
 

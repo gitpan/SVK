@@ -1,6 +1,12 @@
 #line 1 "inc/Module/Install/AutoInstall.pm - /usr/local/lib/perl5/site_perl/5.8.5/Module/Install/AutoInstall.pm"
 package Module::Install::AutoInstall;
-use Module::Install::Base; @ISA = qw(Module::Install::Base);
+
+use Module::Install::Base;
+@ISA = qw{Module::Install::Base};
+
+$VERSION = '0.57';
+
+use strict;
 
 sub AutoInstall { $_[0] }
 

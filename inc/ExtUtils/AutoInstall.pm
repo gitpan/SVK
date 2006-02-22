@@ -9,7 +9,7 @@ use strict;
 use Cwd ();
 use ExtUtils::MakeMaker ();
 
-#line 308
+#line 307
 
 # special map on pre-defined feature sets
 my %FeatureMap = (
@@ -646,4 +646,4 @@ installdeps ::
 
 __END__
 
-#line 973
+#line 972

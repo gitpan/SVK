@@ -1,10 +1,23 @@
 #line 1 "/home/clkao/work/svk-1.0/inc/Module/Install.pm - /usr/local/lib/perl5/site_perl/5.8.5/Module/Install.pm"
 package Module::Install;
+
 use 5.004;
+use strict 'vars';
 
-$VERSION = '0.41';
+use vars qw{$VERSION};
+BEGIN {
+    # All Module::Install core packages now require synchronised versions.
+    # This will be used to ensure we don't accidentally load old or
+    # different versions of modules.
+    # This is not enforced yet, but will be some time in the next few
+    # releases once we can make sure it won't clash with custom
+    # Module::Install extensions.
+    $VERSION = '0.57';
+}
 
-die << "." unless $INC{join('/', inc => split(/::/, __PACKAGE__)).'.pm'};
+# inc::Module::Install must be loaded first
+unless ( $INC{join('/', inc => split(/::/, __PACKAGE__)).'.pm'} ) {
+    die <<"END_DIE";
 Please invoke ${\__PACKAGE__} with:
 
     use inc::${\__PACKAGE__};
@@ -13,28 +26,28 @@ not:
 
     use ${\__PACKAGE__};
 
-.
+END_DIE
+}
 
-use strict 'vars';
-use Cwd qw(cwd abs_path);
-use FindBin;
+use Cwd        ();
 use File::Find ();
 use File::Path ();
+use FindBin;
 
-@inc::Module::Install::ISA = 'Module::Install';
 *inc::Module::Install::VERSION = *VERSION;
+@inc::Module::Install::ISA     = 'Module::Install';
 
 sub autoload {
     my $self   = shift;
     my $caller = $self->_caller;
-
-    my $cwd = cwd();
-    my $sym = "$caller\::AUTOLOAD";
+    my $cwd    = Cwd::cwd();
+    my $sym    = "$caller\::AUTOLOAD";
 
     $sym->{$cwd} = sub {
-        my $pwd = cwd();
-        if (my $code = $sym->{$pwd}) {
-            goto &$code unless $cwd eq $pwd; # delegate back to parent dirs
+        my $pwd = Cwd::cwd();
+        if ( my $code = $sym->{$pwd} ) {
+            # delegate back to parent dirs
+            goto &$code unless $cwd eq $pwd;
         }
         $$sym =~ /([^:]+)$/ or die "Cannot autoload $caller - $sym";
         unshift @_, ($self, $1);
@@ -44,9 +57,9 @@ sub autoload {
 
 sub import {
     my $class = shift;
-    my $self = $class->new(@_);
+    my $self  = $class->new(@_);
 
-    if (not -f $self->{file}) {
+    unless ( -f $self->{file} ) {
         require "$self->{path}/$self->{dispatch}.pm";
         File::Path::mkpath("$self->{prefix}/$self->{author}");
         $self->{admin} = 
@@ -67,19 +80,20 @@ sub import {
 sub preload {
     my ($self) = @_;
 
-    $self->load_extensions(
-        "$self->{prefix}/$self->{path}", $self
-    ) unless $self->{extensions};
+    unless ( $self->{extensions} ) {
+        $self->load_extensions(
+            "$self->{prefix}/$self->{path}", $self
+        );
+    }
 
     my @exts = @{$self->{extensions}};
-
-    unless (@exts) {
+    unless ( @exts ) {
         my $admin = $self->{admin};
         @exts = $admin->load_all_extensions;
     }
 
     my %seen_method;
-    foreach my $obj (@exts) {
+    foreach my $obj ( @exts ) {
         while (my ($method, $glob) = each %{ref($obj) . '::'}) {
             next unless defined *{$glob}{CODE};
             next if $method =~ /^_/;
@@ -101,8 +115,10 @@ sub new {
     my ($class, %args) = @_;
 
     # ignore the prefix on extension modules built from top level.
-    my $base_path = abs_path($FindBin::Bin);
-    delete $args{prefix} unless abs_path(cwd()) eq $base_path;
+    my $base_path = Cwd::abs_path($FindBin::Bin);
+    unless ( Cwd::abs_path(Cwd::cwd()) eq $base_path ) {
+        delete $args{prefix};
+    }
 
     return $args{_self} if $args{_self};
 
@@ -116,7 +132,7 @@ sub new {
     $args{name}     ||= $class;
     $args{version}  ||= $class->VERSION;
 
-    unless ($args{path}) {
+    unless ( $args{path} ) {
         $args{path}  = $args{name};
         $args{path}  =~ s!::!/!g;
     }
@@ -145,10 +161,10 @@ sub load {
         return $obj if $obj->can($method);
     }
 
-    my $admin = $self->{admin} or die << "END";
+    my $admin = $self->{admin} or die <<"END_DIE";
 The '$method' method does not exist in the '$self->{prefix}' path!
 Please remove the '$self->{prefix}' directory and run $0 again to load it.
-END
+END_DIE
 
     my $obj = $admin->load($method, 1);
     push @{$self->{extensions}}, $obj;
@@ -169,7 +185,10 @@ sub load_extensions {
 
         local $@;
         my $new = eval { require $file; $pkg->can('new') };
-        if (!$new) { warn $@ if $@; next; }
+        unless ( $new ) {
+            warn $@ if $@;
+            next;
+        }
         $self->{pathnames}{$pkg} = delete $INC{$file};
         push @{$self->{extensions}}, &{$new}($pkg, _top => $top_obj );
     }
@@ -179,23 +198,23 @@ sub load_extensions {
 
 sub find_extensions {
     my ($self, $path) = @_;
-    my @found;
 
-    File::Find::find(sub {
+    my @found;
+    File::Find::find( sub {
         my $file = $File::Find::name;
         return unless $file =~ m!^\Q$path\E/(.+)\.pm\Z!is;
         return if $1 eq $self->{dispatch};
 
         $file = "$self->{path}/$1.pm";
         my $pkg = "$self->{name}::$1"; $pkg =~ s!/!::!g;
-        push @found, [$file, $pkg];
-    }, $path) if -d $path;
+        push @found, [ $file, $pkg ];
+    }, $path ) if -d $path;
 
     @found;
 }
 
 sub _caller {
-    my $depth = 0;
+    my $depth  = 0;
     my $caller = caller($depth);
 
     while ($caller eq __PACKAGE__) {

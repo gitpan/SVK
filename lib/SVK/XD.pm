@@ -9,6 +9,7 @@ use SVK::Util qw( get_anchor abs_path abs_path_noexist abs2rel splitdir catdir s
 		  HAS_SYMLINK is_symlink is_executable mimetype mimetype_is_text
 		  md5_fh get_prompt traverse_history make_path dirname
 		  from_native to_native get_encoder get_depot_anchor );
+use Data::Hierarchy;
 use autouse 'File::Find' => qw(find);
 use autouse 'File::Path' => qw(rmtree);
 use autouse 'YAML'	 => qw(LoadFile DumpFile);
@@ -16,6 +17,8 @@ use autouse 'Regexp::Shellish' => qw( compile_shellish ) ;
 use PerlIO::eol 0.10 qw( NATIVE LF );
 use PerlIO::via::dynamic;
 use PerlIO::via::symlink;
+
+use Class::Autouse qw( SVK::Editor::XD SVK::Editor::Delay );
 
 
 =head1 NAME
@@ -407,6 +410,14 @@ sub find_depotname {
 
 sub condense {
     my $self = shift;
+
+    for (@_) {
+	if ($_ =~ m/([\x00-\x19\x7f])/) { # XXX: why isn't \c[ working?
+	    die loc("Invalid control character '%1' in path '%2'\n",
+		    sprintf("0x%02X", ord($1)), $_);
+	}
+    }
+
     my @targets = map {abs_path($_)} @_;
     my ($anchor, $report);
     for my $path (@_) {
@@ -420,7 +431,7 @@ sub condense {
 	my ($cinfo, $schedule) = $self->get_entry($anchor);
 	while (!-d $anchor || $cinfo->{scheduleanchor} ||
 	       $schedule eq 'add' || $schedule eq 'delete' || $schedule eq 'replace' ||
-	       ($anchor ne $copath && $anchor.$SEP ne substr ($copath, 0, length($anchor)+1))) {
+	       ($anchor ne $copath && $anchor ne $SEP && $anchor.$SEP ne substr ($copath, 0, length($anchor)+1))) {
 	    ($anchor, $report) = get_anchor (0, $anchor, $report);
 	    # XXX: put .. to report if it's anchorified beyond
 	    ($cinfo, $schedule) = $self->get_entry($anchor);
