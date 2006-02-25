@@ -92,18 +92,18 @@ sub preload {
         @exts = $admin->load_all_extensions;
     }
 
-    my %seen_method;
+    my %seen;
     foreach my $obj ( @exts ) {
         while (my ($method, $glob) = each %{ref($obj) . '::'}) {
             next unless defined *{$glob}{CODE};
             next if $method =~ /^_/;
             next if $method eq uc($method);
-            $seen_method{$method}++;
+            $seen{$method}++;
         }
     }
 
     my $caller = $self->_caller;
-    foreach my $name (sort keys %seen_method) {
+    foreach my $name ( sort keys %seen ) {
         *{"${caller}::$name"} = sub {
             ${"${caller}::AUTOLOAD"} = "${caller}::$name";
             goto &{"${caller}::AUTOLOAD"};
