@@ -1,5 +1,5 @@
 This file contains message digests of all files listed in MANIFEST,
-signed via the Module::Signature module, version 0.44.
+signed via the Module::Signature module, version 0.54.
 
 To verify the content in this distribution, first make sure you have
 Module::Signature installed, then type:
@@ -14,28 +14,28 @@ not run its Makefile.PL or Build.PL.
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA1
 
-SHA1 c1e65240e2a391de55e9124d09858978c64024ad CHANGES
-SHA1 1d117e0a4defecbf8edf72638e8e69eaa30bfa10 MANIFEST
-SHA1 ae9449f1ed4a91c3860a2882ce43c3d5febb4d2b META.yml
-SHA1 0335fca63489811375ae41bd50f22b4144195bbc Makefile.PL
+SHA1 764c981e8019dbc826240b975a2029c1659a3246 CHANGES
+SHA1 a9faeb36ea2fa0282ce19e304d4c3eff857def3d MANIFEST
+SHA1 feb1ed62fb762d7c2493af9c70f2b6ddb9cc7bce META.yml
+SHA1 c91c28f2dddabb004fbbd7defca46a1eacc5efd2 Makefile.PL
 SHA1 fd93391727a558e73ede92bde2f3f521a6297707 README
 SHA1 6b3d653779ab1bdd9b742baa5afeb9707e107c92 bin/svk
 SHA1 bbc53908efa088ab3f191046de349e49d3462d50 contrib/svk-completion.pl
 SHA1 65153fc0922f3e6f6ce8d9893c2de97f05838daf contrib/svkopendiff
-SHA1 d13ceb277670e1d3732acc061c3ed398e55cce9e inc/ExtUtils/AutoInstall.pm
-SHA1 847bd55711d66a801cc5362036a24c313c1d60e8 inc/Module/AutoInstall.pm
-SHA1 0d371b3bb9918ef2f2dd8c3dc1eb41b8c7e652a1 inc/Module/Install.pm
-SHA1 f6bef765dcf80fcfb7a09b34d7cc1ffd9966f922 inc/Module/Install/AutoInstall.pm
-SHA1 291c2b61797f1afe255f20d4d38f90427e5da0a4 inc/Module/Install/Base.pm
-SHA1 f3d179e6c07b5391537f7e89fb87328692d3a235 inc/Module/Install/Build.pm
-SHA1 7db45675d1d61174341ae7aa99f57148345da4f3 inc/Module/Install/Can.pm
-SHA1 843febc2b3414044a2c59b70a2d3355bfb87b352 inc/Module/Install/Fetch.pm
-SHA1 dec3d3ea0b3598be5c5b9b181808f3c6fde80612 inc/Module/Install/Include.pm
-SHA1 e3e17804d452c405f25b6abcf855a615fc1e82b5 inc/Module/Install/Makefile.pm
-SHA1 5766f7bc3321110598e8c5de5842c5e20713bf68 inc/Module/Install/Metadata.pm
-SHA1 32e189e248ac1785a678c2aa930112d01667ad39 inc/Module/Install/Scripts.pm
-SHA1 c82ef880fb36cd81c0b4ab64e4a4fbfc2227f4fa inc/Module/Install/Win32.pm
-SHA1 a2d78e61bdbe9f255892f6d21086a0d3734034d0 inc/Module/Install/WriteAll.pm
+SHA1 5b52cbdabc56a44e4c0a90a3f5a5609a90d26f84 inc/ExtUtils/AutoInstall.pm
+SHA1 e974f78178f53c88fb7e3f8d20f7df184d13e1d0 inc/Module/AutoInstall.pm
+SHA1 017bedfcba1e0c72b36301e6ef21b8712b84d175 inc/Module/Install.pm
+SHA1 bcfb15c6a158831c45b5100a7aa94e0f88fced9f inc/Module/Install/AutoInstall.pm
+SHA1 b1a70869c098ba602151631386fc510b5bfd3511 inc/Module/Install/Base.pm
+SHA1 a99b9f364efdf726ce4ab51e3b66d7af4b7104ef inc/Module/Install/Build.pm
+SHA1 dd7313db23119d49ae78593bfa576554fb5b0fd8 inc/Module/Install/Can.pm
+SHA1 7c3a5153a5574556d895f23e121a41e680da11c1 inc/Module/Install/Fetch.pm
+SHA1 2e9c012e58c778a4a83c5eaea20c3aed306ad0c5 inc/Module/Install/Include.pm
+SHA1 176d68fe7c07b6ab7cfe09093078b8127bbde786 inc/Module/Install/Makefile.pm
+SHA1 8b37b38215d14f922b3d5132ce33d11d21d531ba inc/Module/Install/Metadata.pm
+SHA1 1d8f4739eda5d665bbfe4206bd87274ad104ba77 inc/Module/Install/Scripts.pm
+SHA1 7eb44b00058c44795038d7fa4c0c77470f20a7f8 inc/Module/Install/Win32.pm
+SHA1 6d05967a5e1680b5f118315aaa6b8a1e143d79d8 inc/Module/Install/WriteAll.pm
 SHA1 61c399a4b4f3d7318f55b65c5760e2be2ad5a069 lib/SVK.pm
 SHA1 ade0b3007ad3912c3ff5cf9e3fe17c9b8181445e lib/SVK/Command.pm
 SHA1 074e0098e560287bd9011aff096af1a0a7756158 lib/SVK/Command/Add.pm
@@ -55,10 +55,10 @@ SHA1 55c1bd52a7cbce78ae619b41790594666644a52d lib/SVK/Command/Help.pm
 SHA1 17a5701c00efc41738696770e2d019c8620b2773 lib/SVK/Command/Import.pm
 SHA1 8a9d66810e86575efbae003ac9ee5c6f79e220bb lib/SVK/Command/Info.pm
 SHA1 39959ed11a424591dd8ba678a447de319f50d207 lib/SVK/Command/List.pm
-SHA1 21026b2c5a5125bf4e64120a95b3ddae46f68770 lib/SVK/Command/Log.pm
+SHA1 c223eb81909799c3e3ffb4e2273ca7eaa054bd7d lib/SVK/Command/Log.pm
 SHA1 d0858646afbf3a25d75d81f7c2fcc9ec12192d0b lib/SVK/Command/Merge.pm
 SHA1 4b694b1e5928d44dd05cfe6188498f4bf47cf763 lib/SVK/Command/Mirror.pm
-SHA1 85c2334585d496fdaf1dff65fda0fde3adefe2b0 lib/SVK/Command/Mkdir.pm
+SHA1 bfafbb61c0100fcecddc688df34468c71a542ebb lib/SVK/Command/Mkdir.pm
 SHA1 dc26e51a302850e2bdb7b0b9b0b15f657ebe77dc lib/SVK/Command/Move.pm
 SHA1 f706c57bc6bed12925a6c720fb63d9c58fd6ef0f lib/SVK/Command/Patch.pm
 SHA1 591384632b880b14e33c1f13165035c808deaca3 lib/SVK/Command/Propdel.pm
@@ -85,7 +85,7 @@ SHA1 b825e6851fda5b5aa1313b5c201bcdf588f26258 lib/SVK/Editor/Rename.pm
 SHA1 7816cda681793b4dc84050b4d5c6c5dae309cf43 lib/SVK/Editor/Sign.pm
 SHA1 eb4026d6d009c28442345542518b0090fa07dbbb lib/SVK/Editor/Status.pm
 SHA1 0359908c152e7c0cf0b0cd9e7ee060368b865035 lib/SVK/Editor/Translate.pm
-SHA1 d2c3bd97fd65075ad909f6674fca3e1fe8289332 lib/SVK/Editor/XD.pm
+SHA1 f959cb88a8caf4de17fb4c425d2133d3f02b8f38 lib/SVK/Editor/XD.pm
 SHA1 46cb106fbdc95c484d9e95e4ebe6f7eb2ade50be lib/SVK/Help/Environment.pod
 SHA1 72fe92abc878343d17ab59ebd5e6705702165204 lib/SVK/Help/Index.pod
 SHA1 f9953b14a008d67977c4b99d57051455267830f0 lib/SVK/Help/Intro.pod
@@ -112,10 +112,10 @@ SHA1 aba289ece480e822535772bfbfce21d2de4a996f lib/SVK/Resolve/TkDiff.pm
 SHA1 6a51dbee7b94e806d775633a77dae955437aca98 lib/SVK/Resolve/TortoiseMerge.pm
 SHA1 9c50d50768873085129e445d6939098e65ef0143 lib/SVK/Resolve/Vim.pm
 SHA1 4e884b69d61942f12484b37d5e8b2e42253af5b0 lib/SVK/Resolve/XXDiff.pm
-SHA1 8cf75831b39da01893fe46d6368393d20553d53c lib/SVK/Target.pm
+SHA1 03d898a77e80cbe801e6d3a4253632e089a8e59c lib/SVK/Target.pm
 SHA1 b80f774ced3aa8ebd705f51876164e637f9f6205 lib/SVK/Target/Universal.pm
 SHA1 6baf693550fcdec8660e298a950eaf1bb1134616 lib/SVK/Util.pm
-SHA1 481ef86f5412ff0966123c47aeea11e7f7ea177b lib/SVK/Version.pm
+SHA1 ae46ab2bd59b17ad59ce0b6fc919fe6754e79587 lib/SVK/Version.pm
 SHA1 b20d1ff77715905ebb326a479f76e829b7fb84e0 lib/SVK/XD.pm
 SHA1 4614afbbb389f429104240ccdb13fb8480465e4a t/00use.t
 SHA1 a5fef310982ee1be8f396b06e9878612c5bc3c97 t/01depotmap.t
@@ -184,6 +184,7 @@ SHA1 96b94827f97b187bc7923a85c02a7d1dcdfd465c t/34revprop.t
 SHA1 7a1e592b48bf872ac13fed80bcd6ee82e0bd84fa t/35admin.t
 SHA1 774a59fbc3e7d82190f01f54ced9f02d5619d4b7 t/36push-pull.t
 SHA1 7e1125514eee4cfa95d15fa1fd5a67a22ad2ba0e t/37revspec.t
+SHA1 9442dd87236df8a538fd572a68c61ce091896106 t/38stall-schedule.t
 SHA1 27b59680dbf740ecc892f497c50a97b52d654d1e t/50dav.t
 SHA1 bc5255f0c04b148e14cd05acaa04b5705646d719 t/70symlink.t
 SHA1 5db49ffd66d14d8dc3dc1bef28d98fd6c98b5f06 t/71autovivify.t
@@ -192,14 +193,14 @@ SHA1 cb617302146611ed2bff8ac2b09b378bcc5fe8d4 t/73i18n.t
 SHA1 89bc46a989a4f6bf168959ccd828b3f36f901c12 t/75hook.t
 SHA1 0b6c32c3ca87ae2fc8920d888c8aa7b9c535adf2 t/svk-sec.gpg
 SHA1 637852a103eaf889505651be19bf51e3a357fc30 t/svk.gpg
-SHA1 06e3e6e5e5b8730e12f2c91511c273911d3e271c t/tree.pl
+SHA1 9e7d2003abc9d6060f08106fe976703aef2012ab t/tree.pl
 SHA1 a00db6d1ab31844a441287ee4e75ea980dca84ec utils/extract-docs
 SHA1 1fd50c254bb3ef48f229bed50e0e6c459d486716 utils/extract-message-catalog
 SHA1 93cdfec7b5348cf0b9a4a7789290ae4c53078c0c utils/svk-ediff.el
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.0 (FreeBSD)
 
-iD8DBQFD//Iok1XldlEkA5YRAoLSAJ9DSmcX0WMgWCxU9ANdpPl9tB32WQCdG6QF
-gO+qGueePw8EdyQ8SbEasVU=
-=M8L9
+iD8DBQFEpZEhk1XldlEkA5YRAk6lAJ9Lrc4mdXFsDs28CAhdDFeqvL0pJACfRagJ
+EtdKZZ9rv+LlMXtZO74yVRw=
+=a/x7
 -----END PGP SIGNATURE-----

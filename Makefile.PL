@@ -27,13 +27,14 @@ requires(
         'PerlIO::via::symlink'  => '0.02',
         'IO::Digest'		=> '0',
         'SVN::Simple::Edit'     => '0.27',
-        'Date::Parse'           => '0',
+        'Date::Parse'           => '2.27',
         'File::Type'            => '0',
         'URI'                   => '0',
         'PerlIO::eol'           => '0.13',
 	'Class::Autouse'	=> '1.15',
 	'Getopt::Long'		=> '2.34',
 	'Encode'		=> '2.10',
+        'File::Spec'            => '3.18',
 );
 features(
     'Localized messages' => [
