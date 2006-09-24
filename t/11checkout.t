@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 61;
+use Test::More tests => 65;
 use strict;
 BEGIN { require 't/tree.pl' };
 our($output, $answer);
@@ -36,13 +36,15 @@ ok (-e "$copath/co-root-v3.1/A/Q/qu");
 chdir ($copath);
 $svk->checkout('//V-3.1/A', 'foo/bar');
 ok (-e 'foo/bar/Q/qu');
+
+is_output ($svk, 'update', ['foo/bar/oz'], ["Path //V-3.1/A/oz does not exist."]);
 is_output ($svk, 'update', ['foo/bar'], ["Syncing //V-3.1/A(/V-3.1/A) in ".__"$corpath/foo/bar to 6."]);
 is_output ($svk, 'update', [-r5 => 'foo/bar/P'],
-	   ["Syncing //V-3.1/A(/V-3.1/A/P) in ".__"$corpath/foo/bar/P to 5.",
+	   ["Syncing //V-3.1/A/P(/V-3.1/A/P) in ".__"$corpath/foo/bar/P to 5.",
 	    __('A   foo/bar/P/pe'),
 	   ]);
 is_output ($svk, 'update', [-r6 => 'foo/bar/P'],
-	   ["Syncing //V-3.1(/V-3.1/A) in ".__"$corpath/foo/bar to 6.",
+	   ["Syncing //V-3.1/A(/V-3.1/A) in ".__"$corpath/foo/bar to 6.",
 	    __('D   foo/bar/P'),
 	   ]);
 is_output ($svk, 'st', ['foo/bar'], []);
@@ -172,6 +174,13 @@ is_output ($svk, 'checkout', ['--relocate', "//V-3.1"],
 	   ["Do you mean svk switch //V-3.1?"],
 	  );
 chdir ('..');
+is_output($svk, 'update', [-r3 =>'co-root-a'],
+	  ['Syncing //V/A(/V/A) in '.__("$corpath/co-root-a").' to 3.',
+	   __('A   co-root-a/P'),
+	   __('A   co-root-a/P/pe')]);
+is_output($svk, 'co', ['//V/A' =>'co-root-a'],
+	  ['Syncing //V/A(/V/A) in '.__("$corpath/co-root-a").' to 6.',
+	   __('D   co-root-a/P')]);
 
 rmtree ['co-root-a'];
 is_output ($svk, 'update', ['co-root-a'],
@@ -180,7 +189,7 @@ is_output ($svk, 'update', ['co-root-a'],
 
 SKIP: {
 chmod (0555, '.');
-skip 'no working chmod', 1 if -w '.' || $^O eq 'MSWin32';
+skip 'no working chmod', 1 if -w '.' || chmod_probably_useless();
 is_output ($svk, 'checkout', ['//V/A', 'co-root-a'],
 	   ["Syncing //V/A(/V/A) in ".__"$corpath/co-root-a to 6.",
 	    "Can't create directory co-root-a for checkout: Permission denied."]);
@@ -215,7 +224,7 @@ is_output ($svk, 'checkout', ['--relocate', __("$corpath/baz/boo"), __("$corpath
 $svk->checkout (-r5 => '//V-3.1', "3.1");
 SKIP: {
 chmod 0500, "3.1/B";
-skip 'no working chmod', 4 if -w "3.1/B" || $^O eq 'MSWin32';
+skip 'no working chmod', 4 if -w "3.1/B" || chmod_probably_useless();
 
 is_sorted_output ($svk, 'up', ["3.1"],
 	   ["Syncing //V-3.1(/V-3.1) in ".__"$corpath/3.1 to 6.",
@@ -245,6 +254,8 @@ TODO: {
 local $TODO = 'unwritable subdirectory should remain old state';
 is_output_like ($svk, 'diff', ['3.1'], qr'revision 7');
 }
+
+chmod 0700, "3.1/D";            # clean up
 
 #$svk->up (-r5 => '3.1');
 #warn $output;
@@ -312,4 +323,11 @@ is_output ($svk, 'checkout', ['--list'], [
             "  //V-3.1/A/Q/qu                \t".__("$corpath/qu"),
 	    "  //V/A                         \t".__("$corpath/co-root-deep/there"),
             "? //V/A                         \t".__("$corpath/co-root-a"),
+            ]);
+
+# make sure we can detach multiple checkouts at once
+is_output ($svk, 'checkout', ['--detach', __("$corpath/qu"), __("$corpath/Q"), __("$corpath/3.1")], [
+            __("Checkout path '$corpath/qu' detached."),
+            __("Checkout path '$corpath/Q' detached."),
+            __("Checkout path '$corpath/3.1' detached."),
             ]);

@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
 BEGIN { require 't/tree.pl';};
-plan_svm tests => 30;
+plan_svm tests => 31;
 our $output;
 
 # build another tree to be mirrored ourself
@@ -34,6 +34,9 @@ $svk->commit ('-m', 'commit on local branch', $copath);
 $svk->sync ('//m');
 
 my ($suuid, $srev) = ($srepos->fs->get_uuid, $srepos->fs->youngest_rev);
+
+is_output ($svk, 'smerge', ['-c6', '//m/be', '//l/be'],
+	   ["Can't merge with specified revisions with smart merge."]);
 
 is_output ($svk, 'smerge', ['-C', '//m/be', '//l/be'],
 	   ['Auto-merging (2, 6) /m/be to /l/be (base /m/be:2).',
@@ -74,12 +77,13 @@ is_output ($svk, 'smerge', ['-C', '//l', '//m/'],
 $svk->merge ('-a', '-m', 'simple smerge from source', '//m', '//l');
 $srev = $srepos->fs->youngest_rev;
 $svk->update ($copath);
-is_deeply ($xd->do_proplist (SVK::Target->new
-			     ( repos => $repos,
-			       copath => $corpath,
+is_deeply (($xd->create_path_object
+			     ( copath_anchor => $corpath,
+			       xd => $xd,
+			       repos => $repos,
 			       path => '/l',
 			       revision => $repos->fs->youngest_rev,
-			     )),
+			     )->root->node_proplist('/l')),
 	   {'svk:merge' => "$suuid:/A:$srev",
 	    'svm:source' => uri($srepos->path).'!/A',
 	    'svm:uuid' => $suuid }, 'simple smerge from source');
@@ -96,11 +100,11 @@ is_output ($svk, 'smerge', ['-m', 'simple smerge from local', '//l', '//m'],
 	    'Committed revision 8 from revision 4.'], 'merge up');
 $svk->sync ('//m');
 
-is_deeply ($xd->do_proplist (SVK::Target->new
-			     ( repos => $repos,
-			       path => '/m',
-			       revision => $repos->fs->youngest_rev,
-			     )),
+is_deeply ((SVK::Path->real_new
+			     ({ repos => $repos,
+				path => '/m',
+				revision => $repos->fs->youngest_rev,
+			       })->root->node_proplist('/m')),
 	   {'svk:merge' => "$uuid:/l:$rev",
 	    'svm:source' => uri($srepos->path).'!/A',
 	    'svm:uuid' => $suuid },
@@ -108,11 +112,11 @@ is_deeply ($xd->do_proplist (SVK::Target->new
 
 $svk->smerge ('-C', '//m', '//l');
 is_output ($svk, 'smerge', ['-m', 'mergedown', '//m', '//l'],
-	   ['Auto-merging (6, 8) /m to /l (base /l:7).',
+	   ['Auto-merging (6, 8) /m to /l (base */m:6).',
 	    'Empty merge.'], 'merge down - empty');
 $svk->pl ('-v', '//m');
 is_output ($svk, 'smerge', ['-m', 'mergedown', '//m', '//l'],
-	   ['Auto-merging (6, 8) /m to /l (base /l:7).',
+	   ['Auto-merging (6, 8) /m to /l (base */m:6).',
 	    'Empty merge.'], 'merge up - empty');
 $svk->update ($scopath);
 append_file ("$scopath/A/be", "more modification on trunk\n");
@@ -272,8 +276,7 @@ is_output ($svk, 'smerge', ['-m', 'merge back', '//l', '//m'],
 $svk->update ($scopath);
 overwrite_file ("$scopath/A/Q/qu", "on trunk\nfirst line in qu\non cp branch\n2nd line in qu\nExtra stuff\n");
 $svk->commit ('-m', 'commit on source', $scopath);
-# osx is not happy with too many files opened by default
-SVK::XD->_reset_repos;
+
 $svk->sync ('-a', '/client2/');
 is_output ($svk, 'smerge', ['-C', '/client2/m-all/A-cp', '/client2/m-all/A'],
 	   ['Auto-merging (0, 13) /m-all/A-cp to /m-all/A (base /m-all/A:12).',

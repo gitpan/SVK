@@ -1,5 +1,6 @@
 package SVK::Command;
 use strict;
+use base qw(App::CLI App::CLI::Command);
 use SVK::Version;  our $VERSION = $SVK::VERSION;
 use Getopt::Long qw(:config no_ignore_case bundling);
 
@@ -7,9 +8,10 @@ use SVK::Util qw( get_prompt abs2rel abs_path is_uri catdir bsd_glob from_native
 		  find_svm_source $SEP IS_WIN32 HAS_SVN_MIRROR catdepot traverse_history);
 use SVK::I18N;
 use Encode;
+use constant subcommands => '*';
 
 use Class::Autouse
-    qw( SVK::Target SVK::Notify
+    qw( Path::Class SVK::Path SVK::Path::Checkout SVK::Notify
 	SVK::Editor::Status SVK::Editor::Diff
 	Pod::Simple::Text SVK::Merge );
 
@@ -38,7 +40,8 @@ information is displayed instead.
 
 =cut
 
-my %alias = qw( ann		annotate
+use constant alias =>
+            qw( ann		annotate
                 blame		annotate
                 praise		annotate
 		co		checkout
@@ -77,65 +80,15 @@ my %alias = qw( ann		annotate
 		ver		version
 	    );
 
+use constant global_options => ( 'h|help|?'   => 'help',
+				 'encoding=s' => 'encoding',
+				 'ignore=s@'  => 'ignore',
+			       );
+
+my %alias = alias;
 my %cmd2alias = map { $_ => [] } values %alias;
 while( my($alias, $cmd) = each %alias ) {
     push @{$cmd2alias{$cmd}}, $alias;
-}
-
-
-=head3 new ($xd)
-
-Base constructor for all commands.
-
-=cut
-
-sub new {
-    my ($class, $xd) = @_;
-    my $self = bless { xd => $xd }, $class;
-    return $self;
-}
-
-=head3 get_cmd ($cmd, $xd)
-
-Load the command subclass specified in C<$cmd>, and return a new
-instance of it, populated with C<$xd>.  Command aliases are handled here.
-
-To construct a command object from another command object, use the
-C<command> instance method instead.
-
-=cut
-
-sub get_cmd {
-    my ($pkg, $cmd, $xd) = @_;
-    die "Command not recognized, try $0 help.\n"
-	unless $cmd =~ m/^[?a-z]+$/;
-    $pkg = join('::', 'SVK::Command', _cmd_map ($cmd));
-    my $file = "$pkg.pm";
-    $file =~ s!::!/!g;
-
-    unless (eval {require $file; 1} and $pkg->can('run')) {
-	warn $@ if $@ and exists $INC{$file};
-	die "Command not recognized, try $0 help.\n";
-    }
-    $pkg->new ($xd);
-}
-
-sub _cmd_map {
-    my ($cmd) = @_;
-    $cmd = $alias{$cmd} if exists $alias{$cmd};
-    $cmd =~ s/^(.)/\U$1/;
-    return $cmd;
-}
-
-# rebless to subcommand class if it exists
-sub _subcommand {
-    my ($self) = @_;
-    no strict 'refs';
-    for (grep {$self->{$_}} values %{{$self->options}}) {
-	if (exists ${ref($self).'::'}{$_.'::'}) {
-	    return bless ($self, (ref($self)."::$_"));
-	}
-    }
 }
 
 =head3 invoke ($xd, $cmd, $output_fh, @args)
@@ -153,57 +106,14 @@ sub invoke {
     my ($pkg, $xd, $cmd, $output, @args) = @_;
     my ($help, $ofh, $ret);
     my $pool = SVN::Pool->new_default;
+
+    local *ARGV = [$cmd, @args];
     $ofh = select $output if $output;
-    print $ret if $ret && $ret !~ /^\d+$/;
-    local $SVN::Error::handler = sub {
-	my $error = $_[0];
-	my $error_message = $error->expanded_message();
-	$error->clear();
-	if ($cmd->handle_error ($error)) {
-	    die \'error handled';
-        }
-	die $error_message."\n";
-    };
-
-    local $@;
-    eval {
-	$cmd = get_cmd ($pkg, $cmd, $xd);
-	$cmd->{svnconfig} = $xd->{svnconfig} if $xd;
-	$cmd->getopt (\@args, 'h|help|?' => \$help, 'encoding=s' => \$cmd->{encoding});
-	$cmd->_subcommand;
-
-	# Fake shell globbing on Win32 if we are called from main
-	if (IS_WIN32 and caller(1) eq 'main') {
-	    @args = map {
-		/[?*{}\[\]]/
-		    ? bsd_glob($_, File::Glob::GLOB_NOCHECK())
-		    : $_
-	    } @args;
-	}
-
-	# XXX: xd needs to know encoding too
-	$xd->{encoding} = $cmd->{encoding}
-	    if $xd;
-	if ($help || !(@args = $cmd->parse_arg(@args))) {
-	    select STDERR unless $output;
-	    $cmd->usage;
-	}
-	else {
-	    $cmd->msg_handler ($SVN::Error::FS_NO_SUCH_REVISION);
-	    eval { $cmd->lock (@args);
-		   $xd->giant_unlock if $xd && !$cmd->{hold_giant};
-		   $ret = $cmd->run (@args) };
-	    $xd->unlock if $xd;
-	    die $@ if $@;
-	}
-    };
-
-    # in case parse_arg dies
-    $xd->giant_unlock if $xd && ref ($cmd) && !$cmd->{hold_giant};
+    $ret = eval {$pkg->dispatch ($xd ? (xd => $xd, svnconfig => $xd->{svnconfig}) : (),
+				 output => $output) };
 
     $ofh = select STDERR unless $output;
     print $ret if $ret && $ret !~ /^\d+$/;
-    # if an error handler terminates editor call, there will be stack trace
     unless (ref($@)) {
 	if ($SVN::Core::VERSION gt '1.2.2') {
 	    print $@ if $@;
@@ -214,10 +124,69 @@ sub invoke {
 	}
     }
     $ret = 1 if ($ret ? $ret !~ /^\d+$/ : $@);
-    undef $cmd; undef $pool; # this needs to happen before finish select
-    select $ofh if $ofh;
 
+    undef $pool;
+    select $ofh if $ofh;
     return ($ret || 0);
+}
+
+sub run_command {
+    my ($self, @args) = @_;
+    my $ret;
+
+    local $SVN::Error::handler = sub {
+	my $error = $_[0];
+	my $error_message = $error->expanded_message();
+	$error->clear();
+	if ($self->handle_error ($error)) {
+	    die \'error handled';
+        }
+
+        if ($ENV{SVKSVNBACKTRACE}) {
+            require Carp;
+            Carp::confess($error_message);
+        } else {
+            die $error_message."\n";
+        }
+    };
+
+    # XXX: this eval is too nasty
+    eval {
+	# Fake shell globbing on Win32 if we are called from main
+	if (IS_WIN32 and caller(1) eq 'main') {
+	    @args = map {
+		/[?*{}\[\]]/
+		    ? bsd_glob($_, File::Glob::GLOB_NOCHECK())
+			: $_
+		    } @args;
+	}
+	# XXX: xd needs to know encoding and ignore too
+	$self->{xd}{encoding} = $self->{encoding}
+	    if $self->{xd};
+	$self->{xd}{ignore} = $self->{ignore}
+	    if $self->{ignore};
+	if ($self->{help} || !(@args = $self->parse_arg(@args))) {
+	    select STDERR unless $self->{output};
+	    $self->usage;
+	}
+	else {
+	    $self->msg_handler ($SVN::Error::FS_NO_SUCH_REVISION);
+	    eval { $self->lock (@args);
+		   $self->{xd}->giant_unlock if $self->{xd} && !$self->{hold_giant};
+		   $ret = $self->run (@args) };
+	    $self->{xd}->unlock if $self->{xd};
+	    die $@ if $@;
+	}
+
+    };
+    # in case parse_arg dies, unlock giant
+    $self->{xd}->giant_unlock if $self->{xd} && ref ($self) && !$self->{hold_giant};
+    die $@ if $@;
+    return $ret;
+}
+
+sub error_cmd {
+    loc ("Command not recognized, try %1 help.\n", $0);
 }
 
 =head3 getopt ($argv, %opt)
@@ -242,6 +211,16 @@ sub getopt {
 	if defined $recursive;
 }
 
+sub command_options {
+    my $self = shift;
+    $self->{recursive} = $self->opt_recursive;
+    my %opt;
+    $opt{$self->{recursive} ? 'N|non-recursive' : 'R|recursive'} =
+	sub { $self->{recursive} = !$self->{recursive} }
+	    if defined $self->{recursive};
+    ($self->options, %opt);
+}
+
 =head2 Instance Methods
 
 C<SVK::Command-E<gt>invoke> loads the corresponding class
@@ -263,13 +242,6 @@ Defines if the command needs the recursive flag and its default.  The
 value will be stored in C<recursive>.
 
 =cut
-
-sub options { () }
-
-sub _opt_map {
-    my ($self, %opt) = @_;
-    return map {$_ => \$self->{$opt{$_}}} sort keys %opt;
-}
 
 =head3 parse_arg (@args)
 
@@ -310,7 +282,7 @@ sub run {
 =head2 Utility Methods
 
 Except for C<arg_depotname>, all C<arg_*> methods below returns a
-L<SVK::Target> object, which consists of a hash with the following keys:
+L<SVK::Path> object, which consists of a hash with the following keys:
 
 =over
 
@@ -341,41 +313,22 @@ Argument is a number of checkout paths.
 =cut
 
 sub arg_condensed {
-    my ($self, @arg) = @_;
-    return if $#arg < 0;
-
-    s{[/\Q$SEP\E]$}{}o for @arg; # XXX band-aid
-
-    my ($report, $copath, @targets )= $self->{xd}->condense (@arg);
-
+    my $self = shift;
+    my @args = map { $self->arg_copath($_) } @_;
     if ($self->{recursive}) {
 	# remove redundant targets when doing recurisve
 	# if have '' in targets then it means everything
-	my @newtarget = @targets;
-	for my $anchor (sort {length $a <=> length $b} @targets) {
-	    @newtarget = grep { length $anchor ? $_ eq $anchor || index ($_, "$anchor/") != 0
-				               : 0} @newtarget;
+	my @newtarget = @args;
+	for my $anchor (sort {length $a->copath <=> length $b->copath} @args) {
+	    local $SIG{__WARN__} = sub {};# path::class bug on /foo/bar vs /foo
+	    @newtarget = grep {
+		$anchor->copath eq $_->copath ||
+		!Path::Class::dir($anchor->copath)->subsumes($_->copath) } @newtarget;
 	}
-	@targets = @newtarget;
+	@args = @newtarget;
     }
 
-    my ($repospath, $path, undef, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($copath, 1);
-    my $target = SVK::Target->new
-	( repos => $repos,
-	  repospath => $repospath,
-	  depotpath => $cinfo->{depotpath},
-	  copath => $copath,
-	  path => $path,
-	  report => $report,
-	  targets => @targets ? \@targets : undef );
-    my $root = $target->root ($self->{xd});
-    until ($root->check_path ($target->{path}) == $SVN::Node::dir) {
-	my $targets = delete $target->{targets};
-	$target->anchorify;
-	$target->{targets} = [map {"$target->{targets}[0]/$_"} @$targets]
-	    if $targets;
-    }
-    return $target;
+    return $self->{xd}->target_condensed(@args);
 }
 
 =head3 arg_uri_maybe ($arg, $no_new_mirror)
@@ -399,12 +352,9 @@ sub arg_uri_maybe {
     my $map = $self->{xd}{depotmap};
     foreach my $depot (sort keys %$map) {
         my $repos = eval { ($self->{xd}->find_repos ("/$depot/", 1))[2] } or next;
-	foreach my $path ( SVN::Mirror::list_mirror ($repos) ) {
-	    my $m = eval {SVN::Mirror->new (
-                repos => $repos,
-                get_source => 1,
-                target_path => $path,
-            ) } or next;
+	my %mirrors = $self->{xd}->mirror($repos)->entries;
+	foreach my $path (sort keys %mirrors) {
+	    my $m = $mirrors{$path}->mirror;
 
             my $rel_uri = $uri->rel(URI->new("$m->{source}/")->canonical) or next;
             next if $rel_uri->eq($uri);
@@ -481,10 +431,9 @@ usually good enough.
     # If we're mirroring via svn::mirror, not mirroring the whole history
     # is an option
     my ($m, $answer);
-    ($m,undef) = SVN::Mirror::is_mirrored ($target->{'repos'}, 
-                                           $target->{'path'}) if (HAS_SVN_MIRROR);
-    # If the user is mirroring from svn                                       
-    if (UNIVERSAL::isa($m,'SVN::Mirror::Ra'))  {                                
+    $m = $target->is_mirrored;
+    # If the user is mirroring from svn
+    if (UNIVERSAL::isa($m,'SVN::Mirror::Ra'))  {
         print loc("
 svk needs to mirror the remote repository so you can work locally.
 If you're mirroring a single branch, it's safe to use any of the options
@@ -523,7 +472,7 @@ break history-sensitive merging within the mirrored path.
         }
     )->run ($target);
 
-    my $depotpath = length ($rel_uri) ? "$target->{depotpath}/$rel_uri" : $target->{depotpath};
+    my $depotpath = length ($rel_uri) ? $target->depotpath."/$rel_uri" : $target->depotpath;
     return $self->arg_depotpath($depotpath);
 }
 
@@ -537,21 +486,30 @@ handles it via C<arg_uri_maybe>.
 sub arg_co_maybe {
     my ($self, $arg, $no_new_mirror) = @_;
 
-    $arg = $self->arg_uri_maybe($arg, $no_new_mirror)->{depotpath}
+    $arg = $self->arg_uri_maybe($arg, $no_new_mirror)->depotpath
 	if is_uri($arg);
 
     my $rev = $arg =~ s/\@(\d+)$// ? $1 : undef;
     my ($repospath, $path, $copath, $cinfo, $repos) =
 	$self->{xd}->find_repos_from_co_maybe ($arg, 1);
     from_native ($path, 'path', $self->{encoding});
-    return SVK::Target->new
+    my ($view, $revision, $subpath);
+    if (($view, $revision, $subpath) = $path =~ m{^/\^([\w/\-_]+)(?:\@(\d+)(.*))?$}) {
+	$revision ||= $repos->fs->youngest_rev;
+	($path, $view) = SVK::Command->create_view ($repos, $view, $revision, $subpath);
+    }
+
+    $rev ||= $cinfo->{revision} if defined $copath;
+    return $self->{xd}->create_path_object
 	( repos => $repos,
 	  repospath => $repospath,
 	  depotpath => $cinfo->{depotpath} || $arg,
-	  copath => $copath,
-	  report => $copath ? File::Spec->canonpath ($arg) : $arg,
+	  mirror => $self->{xd}->mirror($repos),
 	  path => $path,
+	  view => $view,
 	  revision => $rev,
+	  copath_anchor => $copath,
+	  report => File::Spec->canonpath($arg),
 	);
 }
 
@@ -564,22 +522,31 @@ Argument is a checkout path.
 sub arg_copath {
     my ($self, $arg) = @_;
     my ($repospath, $path, $copath, $cinfo, $repos) = $self->{xd}->find_repos_from_co ($arg, 1);
+    my ($root);
+    my ($view, $rev, $subpath);
 
     if ($copath =~ m/([\x00-\x19\x7f])/) { # XXX: why isn't \c[ working?
 	die loc("Invalid control character '%1' in path '%2'\n",
 		sprintf("0x%02X", ord($1)), $arg);
     }
 
+    if (($view, $rev, $subpath) = $path =~ m{^/\^([\w/\-_]+)(?:\@(\d+)(.*))?$}) {
+	($path, $view) = $self->create_view ($repos, $view, $rev, $subpath);
+    }
+
     from_native ($path, 'path', $self->{encoding});
-    return SVK::Target->new
-	( repos => $repos,
-	  repospath => $repospath,
-	  report => File::Spec->canonpath ($arg),
-	  copath => $copath,
-	  path => $path,
-	  cinfo => $cinfo,
-	  depotpath => $cinfo->{depotpath},
-	);
+    return SVK::Path::Checkout->real_new
+	({ report => File::Spec->canonpath ($arg),
+	   copath_anchor => $copath,
+	   xd => $self->{xd},
+	   source => $self->{xd}->create_path_object
+	   ( repos => $repos,
+	     repospath => $repospath,
+	     mirror => $self->{xd}->mirror($repos),
+	     path => $path,
+	     view => $view,
+	     revision => $cinfo->{revision}, # make this sane!
+	     depotpath => $cinfo->{depotpath} ) });
 }
 
 =head3 arg_depotpath ($arg)
@@ -588,22 +555,86 @@ Argument is a depotpath, including the slashes and depot name.
 
 =cut
 
+sub _resolve_anchor {
+    my ($repos, $base, $anchor) = @_;
+    # XXX
+    $anchor = Path::Class::Dir->new_foreign('Unix', $anchor);
+    $anchor =~ s/^\&\:// or return $anchor;
+    $anchor = Path::Class::Dir->new_foreign('Unix', $anchor);
+    my ($uuid, $path) = find_svm_source($repos, $base);
+    return $anchor->relative($path)->absolute($base);
+
+}
+
+sub create_view {
+    my ($self, $repos, $view, $rev, $subpath) = @_;
+    my $fs = $repos->fs;
+    my $viewspec = Path::Class::File->new_foreign('Unix', '/', "$view");
+    my ($viewbase, $viewname) = ($viewspec->parent, $viewspec->basename);
+    $rev = $fs->youngest_rev unless defined $rev;
+    require SVK::View;
+    my $viewobj = SVK::View->new
+	({ name => $viewname, base => $viewbase,
+	   revision => $rev, pool => SVN::Pool->new });
+    $viewobj->pool(SVN::Pool->new);
+    my $root = $fs->revision_root($rev);
+    my $content = $root->node_prop ($viewbase, "svk:view:$viewname");
+    die loc("Unable to create view '%1' from on %2 for revision %3.\n",
+	    $viewname, $viewbase, $rev)
+	unless defined $content;
+    my ($anchor, @content) = grep { $_ && !m/^#/ } $content =~ m/^.*$/mg;
+    $anchor = _resolve_anchor($repos, $viewbase, $anchor);
+    die loc("Unable to create view '%1' from on %2 for revision %3.\n",
+	    $viewname, $viewbase, $rev)
+	unless $root->check_path("$anchor");
+    $viewobj->anchor($anchor);
+
+    $root->dir_entries($anchor); # XXX: for some reasons fsfs needs refresh
+
+    for (@content) {
+	my ($del, $path, $target) = m/\s*(-)?(\S+)\s*(\S+)?\s*$/ or die "can't parse $_";
+	my $abspath = Path::Class::Dir->new_foreign('Unix', $path)
+	    ->absolute($anchor);
+	if (defined $target) {
+	    $target = Path::Class::Dir->new_foreign('Unix', $target);
+	    $target = $target->absolute($anchor)
+		unless $target->is_absolute;
+	}
+	if ($del) {
+	    warn "path not required" if defined $target;
+	    $viewobj->add_map($abspath, undef);
+	}
+	else {
+	    die "path required" unless defined $target;
+	    $viewobj->add_map($abspath, $target);
+	}
+    }
+
+    $subpath = '' unless defined $subpath;
+    return (length $subpath ? $anchor eq '/' ? $subpath : $anchor.$subpath
+	    : $anchor->stringify, $viewobj);
+}
+
 sub arg_depotpath {
     my ($self, $arg) = @_;
-
+    my $root;
     my $rev = $arg =~ s/\@(\d+)$// ? $1 : undef;
     my ($repospath, $path, $repos) = $self->{xd}->find_repos ($arg, 1);
+    my $view;
     from_native ($path, 'path', $self->{encoding});
-    my $target = SVK::Target->new
+    if (($view) = $path =~ m{^/\^([\w\-_/]+)$}) {
+	($path, $view) = $self->create_view($repos, $view, $rev);
+    }
+
+    return $self->{xd}->create_path_object
 	( repos => $repos,
 	  repospath => $repospath,
 	  path => $path,
 	  report => $arg,
 	  revision => $rev,
 	  depotpath => $arg,
+	  view => $view,
 	);
-    $target->{depotpath} = '/'.$target->depotname.$path;
-    return $target;
 }
 
 =head3 arg_depotroot ($arg)
@@ -619,9 +650,7 @@ sub arg_depotroot {
     local $@;
     $arg = eval { $self->arg_co_maybe ($arg || '')->new (path => '/') }
            || $self->arg_depotpath ("//");
-    $arg->as_depotpath;
-
-    return $arg;
+    return $arg->as_depotpath->refresh_revision;
 }
 
 =head3 arg_depotname ($arg)
@@ -649,6 +678,20 @@ sub arg_path {
     return abs_path ($arg);
 }
 
+=head3 apply_revision($target)
+
+Apply the given revision from command line to C<$target>.
+
+=cut
+
+sub apply_revision {
+    my ($self, $target) = @_;
+    $target = $target->source if $target->isa('SVK::Path::Checkout');
+    return $target unless defined $self->{rev};
+
+    return $target->seek_to( $self->resolve_revision($target, $self->{rev}) );
+}
+
 =head3 parse_revlist ()
 
 Parse -c or -r to a list of [from, to] pairs.
@@ -656,32 +699,17 @@ Parse -c or -r to a list of [from, to] pairs.
 =cut
 
 sub parse_revlist {
-    my $self = shift;
+    my ($self,$target) = @_;
     die loc("Revision required.\n") unless $self->{revspec} or $self->{chgspec};
     die loc("Can't assign --revision and --change at the same time.\n")
 	if $self->{revspec} and $self->{chgspec};
     my ($fromrev, $torev);
-    if ($self->{chgspec}) {
-	my @revlist;
-	for (split (',', $self->{chgspec})) {
-	    my $reverse;
-	    if (($fromrev, $torev) = m/^(\d+)-(\d+)$/) {
-		--$fromrev;
-	    }
-	    elsif (($reverse, $torev) = m/^(-?)(\d+)$/) {
-		$fromrev = $torev - 1;
-		($fromrev, $torev) = ($torev, $fromrev) if $reverse;
-	    }
-	    else {
-		die loc("Change spec %1 not recognized.\n", $_);
-	    }
-	    push @revlist , [$fromrev, $torev];
-	}
-	return @revlist;
-    }
+
+    my @revlist = $self->resolve_chgspec($target);
+    return @revlist if(@revlist);
 
     # revspec
-    if (($fromrev, $torev) = $self->{revspec} =~ m/^(\d+):(\d+)$/) {
+    if (($fromrev, $torev) = $self->resolve_revspec($target)) {
 	return ([$fromrev, $torev]);
     }
     else {
@@ -701,8 +729,8 @@ XXX Undocumented
 sub lock_target {
     my $self = shift;
     for my $target (@_) {
-	$self->{xd}->lock ($target->{copath})
-	    if $target->{copath};
+	$self->{xd}->lock ($target->copath_anchor)
+	    if $target->isa('SVK::Path::Checkout');
     }
 }
 
@@ -714,8 +742,8 @@ XXX Undocumented
 
 sub lock_coroot {
     my $self = shift;
-    my @tgt = map { $_->{copath} }
-	grep { defined $_->{copath} } @_;
+    my @tgt = map { $_->copath($_->{copath_target}) }
+	grep { $_->isa('SVK::Path::Checkout') } @_;
     return unless @tgt;
     my %roots;
     for (@tgt) {
@@ -881,7 +909,7 @@ sub command {
 
     my $cmd = (
         $is_rebless ? bless($self, "SVK::Command::$command")
-                    : "SVK::Command::$command"->new ($self->{xd})
+                    : "SVK::Command::$command"->new (xd => $self->{xd})
     );
     $cmd->{$_} = $args->{$_} for sort keys %$args;
 
@@ -904,14 +932,14 @@ sub rebless {
 sub find_checkout_anchor {
     my ($self, $target, $track_merge, $track_sync) = @_;
 
-    my $entry = $self->{xd}{checkout}->get ($target->{copath});
+    my $entry = $self->{xd}{checkout}->get ($target->copath_anchor);
     my $anchor_target = $self->arg_depotpath ($entry->{depotpath});
 
     return ($anchor_target, undef) unless $track_merge;
 
     my @rel_path = split(
         '/',
-        abs2rel ($target->{path}, $anchor_target->{path}, undef, '/')
+        abs2rel ($target->path_anchor, $anchor_target->path_anchor, undef, '/')
     );
 
     my $copied_from;
@@ -974,9 +1002,35 @@ svk use the default.
     return $path;
 }
 
+## Resolve the correct revision numbers given by "-c"
+sub resolve_chgspec {
+    my ($self,$target) = @_;
+    my @revlist;
+    my ($fromrev,$torev);
+    if(my $chgspec = $self->{chgspec}) {
+	for (split (',', $self->{chgspec})) {
+	    my $reverse;
+	    if (($fromrev, $torev) = m/^(\d+)-(\d+)$/) {
+		--$fromrev;
+	    }
+	    elsif (($reverse, $torev) = m/^(-?)(\d+)$/) {
+		$fromrev = $torev - 1;
+		($fromrev, $torev) = ($torev, $fromrev) if $reverse;
+	    }
+	    else {
+		eval { $torev = $self->resolve_revision($target,$_); };
+		die loc("Change spec %1 not recognized.\n", $_) if($@);
+		$fromrev = $torev - 1;
+	    }
+	    push @revlist , [$fromrev, $torev];
+	}
+    }
+    return @revlist;
+}
+
 sub resolve_revspec {
     my ($self,$target) = @_;
-    my $fs = $target->{repos}->fs;
+    my $fs = $target->repos->fs;
     my $yrev = $fs->youngest_rev;
     my ($r1,$r2);
     if (my $revspec = $self->{revspec}) {
@@ -995,22 +1049,24 @@ sub resolve_revspec {
 sub resolve_revision {
     my ($self,$target,$revstr) = @_;
     return unless defined $revstr;
-    my $fs = $target->{repos}->fs;
+    my $fs = $target->repos->fs;
     my $yrev = $fs->youngest_rev;
     my $rev;
-    if($revstr =~ /^HEAD$/) {
+    if($revstr =~ /^HEAD$/i) {
         $rev = $self->find_head_rev($target);
-    } elsif ($revstr =~ /^BASE$/) {
+    } elsif ($revstr =~ /^BASE$/i) {
         $rev = $self->find_base_rev($target);
     } elsif ($revstr =~ /\{(\d\d\d\d-\d\d-\d\d)\}/) { 
         my $date = $1; $date =~ s/-//g;
         $rev = $self->find_date_rev($target,$date);
     } elsif (HAS_SVN_MIRROR && (my ($rrev) = $revstr =~ m'^(\d+)@$')) {
-	if (my ($m) = SVN::Mirror::is_mirrored ($target->{repos}, $target->{path})) {
+	if (my $m = $target->is_mirrored) {
 	    $rev = $m->find_local_rev ($rrev);
 	}
 	die loc ("Can't find local revision for %1 on %2.\n", $rrev, $target->path)
 	    unless defined $rev;
+    } elsif ($revstr =~ /^-\d+$/) {
+        $rev = $self->find_head_rev($target) + $revstr;
     } elsif ($revstr =~ /\D/) {
         die loc("%1 is not a number.\n",$revstr)
     } else {
@@ -1022,7 +1078,7 @@ sub resolve_revision {
 sub find_date_rev {
     my ($self,$target,$date) = @_;
     # $date should be in yyyymmdd format
-    my $fs = $target->{repos}->fs;
+    my $fs = $target->repos->fs;
     my $yrev = $fs->youngest_rev;
 
     my ($rev,$last);
@@ -1048,15 +1104,15 @@ sub find_date_rev {
 sub find_base_rev {
     my ($self,$target) = @_;
     die(loc("BASE can only be issued with a check-out path\n"))
-        unless(defined($target->{copath}));
+        unless $target->isa('SVK::Path::Checkout');
     my $rev = $self->{xd}{checkout}->get($target->copath)->{revision};
     return $rev;
 }
 
 sub find_head_rev {
     my ($self,$target) = @_;
-    $target->as_depotpath;
-    my $fs = $target->{repos}->fs;
+    $target = $target->as_depotpath;
+    my $fs = $target->repos->fs;
     my $yrev = $fs->youngest_rev;
     my $rev;
     traverse_history (

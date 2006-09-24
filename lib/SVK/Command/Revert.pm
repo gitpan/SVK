@@ -17,7 +17,7 @@ sub parse_arg {
     my @arg = @_;
     @arg = ('') if $#arg < 0;
 
-    return $self->arg_condensed (@arg);
+    return $self->arg_condensed(@arg);
 }
 
 sub lock {
@@ -26,22 +26,22 @@ sub lock {
 
 sub run {
     my ($self, $target) = @_;
-    my $xdroot = $self->{xd}->xdroot (%$target);
+    my $xdroot = $target->create_xd_root;
 
 	$self->{xd}->checkout_delta
-	    ( %$target,
+	    ( $target->for_checkout_delta,
 	      xdroot => $xdroot,
 	      depth => $self->{recursive} ? undef : 0,
 	      delete_verbose => 1,
 	      absent_verbose => 1,
 	      nodelay => 1,
-	      cb_conflict => \&SVK::Editor::Status::conflict,
-	      cb_unknown => \&SVK::Editor::Status::unknown,
+	      cb_conflict => sub { shift->conflict(@_) },
+	      cb_unknown => sub { shift->unknown(@_) },
 	      editor => SVK::Editor::Status->new
 	      ( notify => SVK::Notify->new
 		( cb_flush => sub {
 		      my ($path, $status) = @_;
-		      my $dpath = length $path ? "$target->{path}/$path" : $target->{path};
+		      my $dpath = length $path ? $target->path_anchor."/$path" : $target->path_anchor;
 	              to_native($path);
 		      my $st = $status->[0];
 		      my $copath = $target->copath ($path);
@@ -58,10 +58,9 @@ sub run {
 			  return;
 		      }
 
-                      if ($target->{targets}) {
-                          # Check that we are not reverting parents
-                          $target->contains_copath ($copath) or return;
-                      }
+		      # Check that we are not reverting parents
+		      $target->contains_copath($copath) or return;
+
                       $self->do_unschedule($target, $copath);
 		  },
 		),
@@ -97,8 +96,8 @@ sub do_revert {
 
 sub do_unschedule {
     my ($self, $target, $copath) = @_;
-    $self->{xd}{checkout}->store ($copath, { $self->_schedule_empty,
-					     '.conflict' => undef });
+    $self->{xd}{checkout}->store($copath, { $self->_schedule_empty,
+					    '.conflict' => undef }, {override_descendents => 0});
     print loc("Reverted %1\n", $target->report_copath ($copath))
 	unless $self->{quiet};
 

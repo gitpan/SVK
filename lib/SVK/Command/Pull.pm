@@ -7,6 +7,7 @@ use SVK::XD;
 
 sub options {
    ('a|all'		=> 'all',
+    'force-incremental' => 'force_incremental',
     'l|lump'		=> 'lump');
 }
 
@@ -15,14 +16,17 @@ sub parse_arg {
 
     @arg = ('') if $#arg < 0;
 
-    $self->{lump} = 1; # -- XXX -- will break otherwise -- XXX ---
+    # -- XXX -- will break otherwise -- XXX ---
+    # (Possibly fixed now, so we'll add an undocumented option to override
+    # this, to enable testing.)
+    $self->{lump} = 1 unless $self->{force_incremental};
     $self->{incremental} = !$self->{lump};
 
     if ($self->{all}) {
         my $checkout = $self->{xd}{checkout}{hash};
         @arg = sort grep $checkout->{$_}{depotpath}, keys %$checkout;
     } 
-    elsif ( @arg == 1 and !$self->arg_co_maybe($arg[0])->{'copath'}) {
+    elsif ( @arg == 1 and !$self->arg_co_maybe($arg[0])->isa('SVK::Path::Checkout')) {
         # If the last argument is a depot path, rather than a copath
         # then we should do a merge to the local depot, rather than 
         # an update to the path
@@ -65,7 +69,7 @@ SVK::Command::Pull - Bring changes from another repository
 
  -a [--all]             : pull into all checkout paths
  -l [--lump]            : merge everything into a single commit log
-                          (always enabled for 'pull PATH' for now)
+                          (always enabled by default for now)
 
 =head1 AUTHORS
 

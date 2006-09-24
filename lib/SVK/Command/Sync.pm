@@ -31,7 +31,7 @@ sub lock_message {
     my $i = 0;
     sub {
 	my ($mirror, $what, $who) = @_;
-	print loc("Waiting for %1 lock on %2: %3.\n", $what, $target->{depotpath}, $who);
+	print loc("Waiting for %1 lock on %2: %3.\n", $what, $target->depotpath, $who);
 	if (++$i % 3 == 0) {
 	    print loc ("
 The mirror is currently locked. This might be because the mirror is
@@ -41,7 +41,7 @@ if $who is a running, valid process
 
 If the mirror lock is stalled, please interrupt this process and run:
     svk mirror --unlock %1
-", $target->{depotpath});
+", $target->depotpath);
 	}
     }
 }
@@ -90,7 +90,7 @@ sub run {
                 "/$depot$_/" =~ /$arg_re/
                     ? $self->arg_depotpath("/$depot$_")
                     : ()
-                } SVN::Mirror::list_mirror( $target->{repos} );
+                } SVN::Mirror::list_mirror( $target->repos );
 
             unless ( @tempnewarg
                 || !exists $arg{$orig_arg}
@@ -105,29 +105,21 @@ sub run {
     }
 
     for my $target (@arg) {
-        my $repos = $target->{repos};
+        my $repos = $target->repos;
         my $fs    = $repos->fs;
-        my $m     = SVN::Mirror->new(
-            target_path    => $target->{path},
-            target         => $target->{repospath},
-            repos          => $repos,
-            pool           => SVN::Pool->new,
-            config         => $self->{svnconfig},
-            cb_copy_notify => sub { $self->copy_notify(@_) },
-            lock_message   => lock_message($target),
-            revprop        => ['svk:signature'],
-            get_source     => 1,
-            skip_to        => $self->{skip_to}
-        );
-        $m->init();
+        my $m     = $self->{xd}->mirror($repos)
+	    ->load_from_path($target->path_anchor);
 
+	my $run_sync = sub {
+	    $m->sync( torev => $self->{torev}, skip_to => $self->{skip_to},
+		      cb_copy_notify => sub { $self->copy_notify(@_) },
+		      lock_message   => lock_message($target));
+	    find_prev_copy( $fs, $fs->youngest_rev );
+	    1;
+	};
         if ( $self->{sync_all} ) {
-            print loc( "Starting to synchronize %1\n", $target->{depotpath} );
-            eval {
-                $m->run( $self->{torev} );
-                find_prev_copy( $fs, $fs->youngest_rev );
-                1;
-            };
+            print loc( "Starting to synchronize %1\n", $target->depotpath );
+            eval { $run_sync->() };
             if ($@) {
                 warn $@;
                 last if ( $@ =~ /^Interrupted\.$/m );
@@ -135,8 +127,7 @@ sub run {
             next;
         }
         else {
-            $m->run( $self->{torev} );
-
+	    $run_sync->();
             # build the copy cache after sync.
             # we should do this in svn::mirror::committed, with a
             # hook provided here.

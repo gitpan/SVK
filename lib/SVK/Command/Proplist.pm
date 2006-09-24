@@ -23,7 +23,6 @@ sub parse_arg {
 
 sub run {
     my ($self, @arg) = @_;
-
     die loc ("Revision required.\n")
 	if $self->{revprop} && !defined $self->{rev};
 
@@ -31,14 +30,14 @@ sub run {
         if ($self->{revprop}) {
             $self->_show_props
 		( $target,
-		  $target->{repos}->fs->revision_proplist($self->{rev}),
+		  $target->repos->fs->revision_proplist($self->{rev}),
 		  $self->{rev}
 		);
             next;
         }
 
-	$target->as_depotpath ($self->{rev}) if defined $self->{rev};
-        $self->_show_props ($target, $self->{xd}->do_proplist ( $target ));
+	$target = $target->as_depotpath ($self->{rev}) if defined $self->{rev};
+        $self->_show_props( $target, $target->root->node_proplist($target->path) );
     }
 
     return;
@@ -53,7 +52,7 @@ sub _show_props {
         print loc("Unversioned properties on revision %1:\n", $rev);
     }
     else {
-        print loc("Properties on %1:\n", $target->{report} || '.');
+        print loc("Properties on %1:\n", length $target->report ? $target->report : '.');
     }
 
     for my $key (sort keys %$props) {
@@ -70,13 +69,13 @@ sub _arg_revprop {
 sub _proplist {
     my ($self, $target) = @_;
 
-    return $target->{repos}->fs->revision_proplist($self->{rev})
+    return $target->repos->fs->revision_proplist($self->{rev})
 	if $self->{revprop};
 
     if (defined $self->{rev}) {
-        $target->as_depotpath ($self->{rev});
+        $target = $target->as_depotpath ($self->{rev});
     }
-    return $self->{xd}->do_proplist ($target);
+    return $target->root->node_proplist($target->path);
 }
 
 

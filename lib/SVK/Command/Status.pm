@@ -26,7 +26,8 @@ sub flush_print {
     my ($crev, $author);
     my $fs = $root->fs;
     if ($from_path) {
-	$from_path =~ s{^file://\Q$target->{repospath}\E}{};
+	my $repospath = $target->repospath;
+	$from_path =~ s{^file://\Q$repospath\E}{};
         $crev = $fs->revision_root ($from_rev)->node_created_rev ($from_path);
 	$author = $fs->revision_prop ($crev, 'svn:author');
 	$baserev = '-';
@@ -37,16 +38,16 @@ sub flush_print {
     } elsif ($status->[0] eq 'A') {
 	$baserev = 0;
     } elsif ($status->[0] !~ '[!~]') {
-        my $p = $target->{path};
+        my $p = $target->path_anchor;
 	my $path = $p eq '/' ? "/$entry" : (length $entry ? "$p/$entry" : $p);
 	$crev = $root->node_created_rev ($path);
 	$author = $fs->revision_prop($crev, 'svn:author') unless $crev == -1;
     }
 
-    my $report = $target->{report};
+    my $report = $target->report;
     my $newentry = length $entry
-	? SVK::Target->copath ($report, $entry)
-	: SVK::Target->copath ('', length $report ? $report : '.');
+	? SVK::Path::Checkout->copath ($report, $entry)
+	: SVK::Path::Checkout->copath ('', length $report ? $report : '.');
     no warnings 'uninitialized';
     print sprintf ("%1s%1s%1s %8s %8s %-12.12s \%s\n", @{$status}[0..2],
                    defined $baserev ? $baserev : '? ',
@@ -57,43 +58,39 @@ sub flush_print {
 
 sub run {
     my ($self, $target) = @_;
-    my $xdroot = $self->{xd}->xdroot (%$target);
-    my $report = $target->{report};
-    $report .= '/' if $report;
     my $editor = SVK::Editor::Status->new (
-	  report => $target->{report},
 	  ignore_absent => $self->{quiet},
 	  $self->{verbose} ?
 	  (notify => SVK::Notify->new (
 	       flush_baserev => 1,
 	       flush_unchanged => 1,
-	       cb_flush => sub { flush_print ($xdroot, $target, @_); }
+	       cb_flush => sub { flush_print ($target->root, $target, @_); }
 	   )
 	  )                :
-	  (notify => SVK::Notify->new_with_report ($target->{report},
+	  (notify => SVK::Notify->new_with_report ($target->report,
 		undef, 1)
 	  )
       );
     $self->{xd}->checkout_delta
-	( %$target,
-	  xdroot => $xdroot,
+	( $target->for_checkout_delta,
+	  xdroot => $target->create_xd_root,
 	  nodelay => 1,
 	  delete_verbose => 1,
 	  editor => $editor,
-	  cb_conflict => \&SVK::Editor::Status::conflict,
-	  cb_obstruct => \&SVK::Editor::Status::obstruct,
+	  cb_conflict => sub { shift->conflict(@_) },
+	  cb_obstruct => sub { shift->obstruct(@_) },
 	  $self->{verbose} ?
-	      (cb_unchanged => \&SVK::Editor::Status::unchanged
+	      (cb_unchanged => sub { shift->unchanged(@_) },
 	      )            :
 	      (),
 	  $self->{recursive} ? () : (depth => 1),
 	  $self->{no_ignore} ?
-              (cb_ignored => \&SVK::Editor::Status::ignored
+              (cb_ignored => sub { shift->ignored(@_) },
               )              :
               (),
 	  $self->{quiet} ?
               ()         :
-              (cb_unknown => \&SVK::Editor::Status::unknown)
+              (cb_unknown => sub { shift->unknown(@_) } )
 	);
     return;
 }

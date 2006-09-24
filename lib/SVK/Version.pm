@@ -1,7 +1,6 @@
 package SVK;
-use strict;
 
-our $VERSION = '1.08';
+our $VERSION = '1.99_01';
 
 =head1 NAME
 

@@ -47,6 +47,7 @@ sub print_report {
 		goto \&$print;
 	    };
     return $print_native unless defined $report;
+    $report = "$report";
     from_native($report, 'path', $enc);
     sub {
 	my $path = shift;
@@ -59,12 +60,12 @@ sub print_report {
 	    }
 	}
 	if (length $path) {
-	    $print_native->($is_copath ? SVK::Target->copath ($report, $path)
+	    $print_native->($is_copath ? SVK::Path::Checkout->copath ($report, $path)
 			               : length $report ? "$report/$path" : $path, @_);
 	}
 	else {
 	    my $r = length $report ? $report : '.';
-	    $print_native->($is_copath ? SVK::Target->copath('', $r) : $r,
+	    $print_native->($is_copath ? SVK::Path::Checkout->copath('', $r) : $r,
 			    @_);
 	}
     };
@@ -99,6 +100,7 @@ sub notify_translate {
 
 sub node_status {
     my ($self, $path, $s) = @_;
+    Carp::cluck unless defined $path;
     $self->{status}{$path}[0] = $s if defined $s;
     return exists $self->{status}{$path} ? $self->{status}{$path}[0] : undef;
 }

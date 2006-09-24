@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 25;
+use Test::More tests => 27;
 use strict;
 BEGIN { require 't/tree.pl' };
 our $output;
@@ -28,7 +28,6 @@ $svk->add ('-N', 'A');
 $svk->add ('A/foo');
 is_output ($svk, 'status', [],
 	   [ map __($_), 'A   A', '?   A/bar', '?   A/deep', 'A   A/foo'], 'status - unknown');
-
 chdir('A');
 is_output ($svk, 'status', ['../A'],
 	   [ map __($_), 'A   ../A', '?   ../A/bar', '?   ../A/deep', 'A   ../A/foo'], 'status - unknown');
@@ -116,11 +115,14 @@ $svk->rm ('-m', 'delete', '//A/deeper');
 overwrite_file ("A/deeper/deeper/baz", "boo");
 $svk->up;
 chdir ('A');
+TODO: {
+local $TODO = 'target_condensed and report being .';
 is_output ($svk, 'status', ['deeper/deeper'],
 	   [__('C   deeper'),
 	    __('C   deeper/deeper'),
 	    __('C   deeper/deeper/baz')
 	   ]);
+}
 chdir ('..');
 $svk->revert ('-R', 'A');
 $svk->add ('A/deeper');
@@ -206,3 +208,23 @@ is_output ($svk, 'st', ['--verbose'],
 	     '~         ?        ?   ?           A/deep',
 	     '           6        6 user6        A',
 	     '           6        6 user6        .')]);
+
+overwrite_file("A/deeper-copy/bah", "ignore me");
+is_output($svk, 'ignore', ["A/bar", "A/deeper-copy/bah"],
+          [   ' M  A',
+           __(' M  A/deeper-copy')]);
+$svk->diff('A');
+
+is_output($svk, 'status', ['--verbose'],
+          [map {__($_)}
+           ('           6        2 user2        A/another',
+            '           6        6 user6        A/deeper/deeper/baz',
+            '           6        6 user6        A/deeper/deeper',
+            '           6        6 user6        A/deeper',
+            '           6        3 user3        A/foo',
+            'A +        -        6 user6        A/deeper-copy',
+            'M +        -        6 user6        A/deeper-copy/deeper/baz',
+            '  +        -        6 user6        A/deeper-copy/deeper',
+            '~         ?        ?   ?           A/deep',
+            ' M         6        6 user6        A',
+            '           6        6 user6        .')]);

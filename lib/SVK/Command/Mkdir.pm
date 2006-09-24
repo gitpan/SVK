@@ -26,23 +26,22 @@ sub ensure_parent {
     my ($self, $target) = @_;
     my $dst = $target->new;
     $dst->anchorify;
-    die loc("Path %1 is not a checkout path.\n", $dst->{report})
-	unless defined $dst->{copath};
-    unless (-e $dst->{copath}) {
-	die loc ("Parent directory %1 doesn't exist, use -p.\n", $dst->{report})
+    die loc("Path %1 is not a checkout path.\n", $dst->report)
+	unless $dst->isa('SVK::Path::Checkout');
+    unless (-e $dst->copath) {
+	die loc ("Parent directory %1 doesn't exist, use -p.\n", $dst->report)
 	    unless $self->{parent};
 	# this sucks
-	my ($added_root) = make_path($dst->{report});
+	my ($added_root) = make_path($dst->report);
 	my $add = $self->command('add', { recursive => 1 });
-	$add->run($add->parse_arg($added_root));
+	$add->run($add->parse_arg("$added_root"));
     }
-    unless (-d $dst->{copath}) {
-	die loc ("%1 is not a directory.\n", $dst->{report});
+    unless (-d $dst->copath) {
+	die loc ("%1 is not a directory.\n", $dst->report);
     }
-    unless ($dst->root($self->{xd})->check_path ($dst->{path})) {
-	my $info = $self->{xd}{checkout}->get($dst->{copath});
-	die loc ("Parent directory %1 is unknown, add first.\n", $dst->{report})
-	    unless $info->{'.schedule'};
+
+    if ($dst->root->check_path($dst->path_anchor) == $SVN::Node::unknown) {
+	die loc ("Parent directory %1 is unknown, add first.\n", $dst->report);
     }
 }
 
@@ -50,14 +49,14 @@ sub run {
     my ($self, @target) = @_;
 
     # XXX: better check for @target being the same type
-    if (grep {$_->{copath}} @target) {
+    if (grep {$_->isa('SVK::Path::Checkout')} @target) {
 	$self->ensure_parent($_) for @target;
 	for (@target) {
 	    make_path($_->{report});
 	}
 	for (@target) {
 	    my $add = $self->command('add');
-	    $add->run($add->parse_arg($_->{report}));
+	    $add->run($add->parse_arg("$_->{report}"));
 	}
 	return ;
     }
@@ -65,7 +64,12 @@ sub run {
     die loc("Mkdir for more than one depotpath is not supported yet.\n")
 	if scalar @target > 1;
 
+    # die if the path already exists
     my ($target) = @target;
+    die loc("The path %1 already exists.\n", $target->depotpath)
+        if $target->inspector->exist( $target->path );
+
+    # otherwise, proceed
     $self->get_commit_message ();
     my ($anchor, $editor) = $self->get_dynamic_editor ($target);
     $editor->close_directory

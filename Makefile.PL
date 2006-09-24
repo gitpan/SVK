@@ -1,9 +1,9 @@
 #!/usr/bin/perl
-my $required_svn = '1.0.7';
-my $required_svm = '0.66';
+my $required_svn = '1.2.0';
+my $required_svm = '0.69_2';
 
 use strict;
-use inc::Module::Install 0.41;
+use inc::Module::Install;
 
 name		('SVK');
 author		('Chia-liang Kao <clkao@clkao.org>');
@@ -13,28 +13,29 @@ version_from	('lib/SVK/Version.pm');
 install_script	('bin/svk');
 clean_files	('t/checkout', 't/apache_svn');
 requires(
-#        'SVN::Core'   => $required_svn,
-        'Algorithm::Annotate'   => '0',
-        'Algorithm::Diff'       => '0',
-        'YAML'                  => '0.38',
-        'Regexp::Shellish'      => '0',
-        'Data::Hierarchy'       => '0.21',
-        'File::Temp'            => '0.14',
-        'Clone'	                => '0',
-        'Pod::Escapes'          => '0',
-        'Pod::Simple'           => '0',
-        'PerlIO::via::dynamic'  => '0.11',
-        'PerlIO::via::symlink'  => '0.02',
-        'IO::Digest'		=> '0',
-        'SVN::Simple::Edit'     => '0.27',
-        'Date::Parse'           => '2.27',
-        'File::Type'            => '0',
-        'URI'                   => '0',
-        'PerlIO::eol'           => '0.13',
-	'Class::Autouse'	=> '1.15',
-	'Getopt::Long'		=> '2.34',
-	'Encode'		=> '2.10',
-        'File::Spec'            => '3.18',
+    # 'SVN::Core'                => $required_svn,
+    'Algorithm::Annotate'      => '0',
+    'Algorithm::Diff'          => '0',
+    'YAML::Syck'               => '0.60',
+    'Data::Hierarchy'          => '0.30',
+    'PerlIO::via::dynamic'     => '0.11',
+    'PerlIO::via::symlink'     => '0.02',
+    'IO::Digest'               => '0',
+    'SVN::Simple::Edit'        => '0.27',
+    'URI'                      => '0',
+    'PerlIO::eol'              => '0.13',
+    'Class::Autouse'           => '1.15',
+    'App::CLI'                 => '0',
+    'List::MoreUtils'          => '0',
+    'Class::Accessor::Fast'    => '0',
+    'Class::Data::Inheritable' => '0',
+    'Path::Class'              => '0.15',
+    'File::Temp'               => '0.14',    # in core since 5.8.1
+    'Encode'                   => '2.10',    # in core since 5.8.7
+    'Getopt::Long'             => '2.35',    # in core since 5.8.8
+    'Pod::Escapes'             => '0',       # in core since 5.9.3
+    'Pod::Simple'              => '0',       # in core since 5.9.3
+    'File::Spec'               => '3.14',    # in core since 5.9.3
 );
 features(
     'Localized messages' => [
@@ -66,8 +67,12 @@ features(
     ],
 );
 
+# Include subdirectory tests too.
+tests("t/*.t t/*/*.t");
+
 include('ExtUtils::AutoInstall');
 auto_install();
+
 auto_provides();
 WriteAll( sign => 1 );
 

@@ -13,12 +13,17 @@ our @EXPORT_OK = qw(
     find_prev_copy
 
     read_file write_file slurp_fh md5_fh bsd_glob mimetype mimetype_is_text
+    is_binary_file
 
     abs_path abs2rel catdir catfile catpath devnull dirname get_anchor 
     move_path make_path splitpath splitdir tmpdir tmpfile get_depot_anchor
     catdepot abs_path_noexist 
 
     is_symlink is_executable is_uri can_run
+
+    str2time time2str reformat_svn_date
+
+    find_dotsvk
 );
 use SVK::Version;  our $VERSION = $SVK::VERSION;
 
@@ -26,14 +31,11 @@ use SVK::Version;  our $VERSION = $SVK::VERSION;
 use Config ();
 use SVK::I18N;
 use SVN::Core;
-use SVN::Ra;
 use autouse 'Encode'            => qw(resolve_alias($) decode encode);
 use File::Glob qw(bsd_glob);
 use autouse 'File::Basename' 	=> qw(dirname);
 use autouse 'File::Spec::Functions' => 
                                qw(catdir catpath splitpath splitdir tmpdir);
-
-use Class::Autouse qw( File::Type );
 
 
 =head1 NAME
@@ -383,6 +385,8 @@ XXX Undocumented
 
 =cut
 
+# XXX: deprecated, only used in command::verify now. use
+# $target->is_mirrored instead
 sub resolve_svm_source {
     my ($repos, $uuid, $path) = @_;
     my $myuuid = $repos->fs->get_uuid;
@@ -475,22 +479,20 @@ is missing on the system.
 =cut
 
 sub mimetype {
-    my $fh = shift;
+    my ($filename) = @_;
+    my $mm if 0;  # C<state $mm>, yuck
 
-    return 'text/plain' if -z $fh;
-
-    binmode($fh);
-    read $fh, my $data, 16*1024 or return undef;
-
-    my $type = File::Type->checktype_contents($data);
-
-    # On fallback, use the same logic as File::MimeInfo to detect text
-    if ($type eq 'application/octet-stream') {
-        substr($data, 0, 32) =~ m/[\x00-\x07\x0B\x0E-\x1A\x1C-\x1F]/
-            or return 'text/plain';
+    # find an implementation module if necessary
+    if ( !$mm ) {
+        my $module = $ENV{SVKMIME} || 'Internal';
+        $module =~ s/:://;
+        $module = "SVK::MimeDetect::$module";
+        eval "require $module";
+        die $@ if $@;
+        $mm = $module->new();
     }
 
-    return $type;
+    return $mm->checktype_filename($filename);
 }
 
 =head3 mimetype_is_text ($mimetype)
@@ -512,6 +514,21 @@ sub mimetype_is_text {
                                           |awk
                                           |shellscript)
                          |image/x-x(?:bit|pix)map)$}x;
+}
+
+=head3 is_binary_file ($filename OR $filehandle)
+
+Returns true if the given file or filehandle contains binary data.  Otherwise,
+returns false.
+
+=cut
+
+sub is_binary_file {
+    my ($file) = @_;
+
+    # let Perl do the hard work
+    return 1 if -f $file && !-T _;  # !-T handles empty files correctly
+    return;
 }
 
 =head2 Path and Filename Handling
@@ -579,11 +596,11 @@ sub abs_path_noexist {
 Replace the base directory in the native pathname to another base directory
 and return the result.
 
-If the pathname is not under C<$old_basedir>, it is not unmodified.
+If the pathname is not under C<$old_basedir>, it is returned unmodified.
 
 If C<$new_basedir> is an empty string, removes the old base directory but
-keeps the trailing slash.  If C<$new_basedir> is C<undef>, also removes
-the trailing slash.
+keeps the leading slash.  If C<$new_basedir> is C<undef>, also removes
+the leading slash.
 
 By default, the return value of this function will use C<$SEP> as its
 path separator.  Setting C<$sep> to C</> will turn native path separators
@@ -823,6 +840,16 @@ sub move_path {
     );
 }
 
+=head3 traverse_history (root => $fs_root, path => $path,
+    cross => $cross, callback => $cb($path, $revision))
+
+Traverse the history of $path in $fs_root backwards until the first
+copy, unless $cross is true.  We do cross renames regardless of the
+value of $cross.  We invoke $cb for each $path, $revision we
+encounter.  If cb returns a nonzero value we stop traversing as well.
+
+=cut
+
 sub traverse_history {
     my %args = @_;
 
@@ -830,14 +857,60 @@ sub traverse_history {
     my $new_pool = SVN::Pool->new;
     my $spool = SVN::Pool->new_default;
 
-    my $hist = $args{root}->node_history ($args{path}, $old_pool);
-    my $rv;
+    my ($root, $path) = @args{qw/root path/};
+    # If the root is txn root, get a similar one.
+    # XXX: We actually want to move this to SVK::Path::, and
+    # svk::checkout should respect copies on checkout
+    if ($root->can('txn') && $root->txn) {
+	($root, $path) = $root->get_revision_root
+	    ($path, $root->txn->base_revision );
+    }
 
-    while ($hist = $hist->prev(($args{cross} || 0), $new_pool)) {
-        $rv = $args{callback}->($hist->location ($new_pool));
-        last if !$rv;
+    my $hist = $root->node_history ($path, $old_pool);
+    my $rv;
+    my $revision;
+
+    while (1) {
+        my $ohist = $hist;
+        $hist = $hist->prev(($args{cross} || 0), $new_pool);
+        if (!$hist) {
+            last if $args{cross};
+            last unless $hist = $ohist->prev((1), $new_pool);
+            # We are not supposed to cross copies, ($path,$revision)
+            # refers to a node in $ohist that is a copy and that has a
+            # prev if we ask svn to traverse copies.
+            # Let's find out if the copy was actually a rename instead
+            # of a copy.
+            my $root = $root->fs->revision_root($revision, $spool);
+            my $frompath;
+            my $fromrev = -1;
+            # We know that $path was a real copy and it that it has a
+            # prev, so find the node from which it was copied.
+            do {
+                ($fromrev, $frompath) = $root->copied_from($path, $spool);
+            } until ($fromrev >= 0 || !($path =~ s{/[^/]*$}{}));
+            die "Assertion failed: $path in $revision isn't a copy."
+                if $fromrev < 0;
+            # Ok, $path in $root was a copy of ($frompath,$fromrev).
+            # If $frompath was deleted in $root then the copy was really
+            # a rename.
+            my $entry = $root->paths_changed($spool)->{$frompath};
+            last unless $entry &&
+                $entry->change_kind == $SVN::Fs::PathChange::delete;
+
+            # XXX Do we need to worry about a parent of $frompath having
+            # been deleted instead?  If so the 2 lines below might work as
+            # an alternative, to the previous 3 lines.  However this also
+            # treats a delete followed by a copy of an older revision in
+            # two separate commits as a rename, which technically it's not.
+            #last unless $root->check_path($frompath, $spool) ==
+            #    $SVN::Node::none;
+        }
+        ($path, $revision) = $hist->location ($new_pool);
         $old_pool->clear;
-	$spool->clear;
+        $rv = $args{callback}->($path, $revision);
+        last if !$rv;
+        $spool->clear;
         ($old_pool, $new_pool) = ($new_pool, $old_pool);
     }
 
@@ -895,45 +968,88 @@ sub find_prev_copy {
     return ($root, $copy);
 }
 
+sub reformat_svn_date {
+    my ($format, $svn_date) = @_;
+    return time2str($format, str2time($svn_date));
+}
 
-# this is the cached and faster version of svn::mirror::has_local,
-# which should be deprecated eventually.
-my %mirror_cached;
+sub str2time {
+    require Time::Local;
+    my ($year, $month, $day, $hh, $mm, $ss) = split /[-T:]/, $_[0];
+    $year -= 1900;
+    $month--;
+    chop($ss);  # remove the 'Z'
+    my $zone = 0;  # UTC
+
+    my @lt = localtime(time);
+
+    my $frac = $ss - int($ss);
+    $ss = int $ss;
+
+    for ( $year, $month, $day, $hh, $mm, $ss ) {
+        return undef unless defined($_) 
+    }
+    return undef
+      unless ( $month <= 11
+        && $day >= 1
+        && $day <= 31
+        && $hh <= 23
+        && $mm <= 59
+        && $ss <= 59 );
+
+    my $result;
+
+    $result = eval {
+        local $SIG{__DIE__} = sub { };    # Ick!
+        Time::Local::timegm( $ss, $mm, $hh, $day, $month, $year );
+    };
+    return undef
+        if !defined $result
+        or $result == -1
+        && join( "", $ss, $mm, $hh, $day, $month, $year ) ne "595923311169";
+
+    return $result + $frac;
+}
+
+sub time2str {
+    my ($format, $time) = @_;
+    require POSIX;
+    return POSIX::strftime($format, localtime($time) );
+}
+
+
+sub find_dotsvk {
+    require Cwd;
+    require Path::Class;
+
+    my $p = Path::Class::Dir->new( Cwd::cwd() );
+
+    my $prev = "not $p";
+    my $found = q{};
+    while ( $p && $p ne $prev && -r $p ) {
+	$prev = $p;
+	my $svk = $p->subdir('.svk');
+	return $svk if -e $svk;
+	$p = $p->parent();
+    }
+
+    return
+}
 
 sub _list_mirror_cached {
     my $repos = shift;
-    my $rev = $repos->fs->youngest_rev;
-    delete $mirror_cached{$repos}
-	unless ($mirror_cached{$repos}{rev} || -1) == $rev;
-    return %{$mirror_cached{$repos}{hash}}
-	if exists $mirror_cached{$repos};
-    my %mirrored = map {
-	my $m = SVN::Mirror->new( target_path => $_,
-				  repos => $repos,
-				  pool => SVN::Pool->new,
-				  get_source => 1 );
-	local $@;
-	eval { $m->init };
-	$@ ? () : ($_ => join(':', $m->{source_uuid}, $m->{source_path}))
-    } SVN::Mirror::list_mirror($repos);
-
-    $mirror_cached{$repos} = { rev => $rev, hash => \%mirrored};
-    return %mirrored;
+    SVK::Mirror->new({repos => $repos})->entries;
 }
 
 sub _has_local {
     my ($repos, $spec) = @_;
     my %mirrored = _list_mirror_cached($repos);
-    while (my ($path, $mspec) = each(%mirrored)) {
+    while (my ($path, $m) = each(%mirrored)) {
+	my $mspec = $m->spec;
 	my $mpath = $spec;
 	next unless $mpath =~ s/^\Q$mspec\E//;
-	my $m = SVN::Mirror->new (target_path => $path,
-				  repos => $repos,
-				  pool => SVN::Pool->new,
-				  get_source => 1);
-	$m->init;
 	$mpath = '' if $mpath eq '/';
-	return ($m, $mpath);
+	return ($m->mirror, $mpath);
     }
     return;
 }

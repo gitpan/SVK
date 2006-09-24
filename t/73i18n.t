@@ -8,7 +8,7 @@ setlocale (LC_CTYPE, $ENV{LC_CTYPE} = 'zh_TW.Big5')
     or plan skip_all => 'cannot set locale to zh_TW.Big5';
 setlocale (LC_CTYPE, $ENV{LC_CTYPE} = 'en_US.UTF-8')
     or plan skip_all => 'cannot set locale to en_US.UTF-8';;
-plan skip_all => "darwin wants all filename in utf8." if $^O eq 'darwin';
+plan skip_all => "darwin wants all filenames in utf8." if $^O eq 'darwin';
 
 plan tests => 54;
 our ($answer, $output);
@@ -45,8 +45,8 @@ my $oldwd = Cwd::getcwd;
 chdir ($copath);
 is_output ($svk, 'commit', [],
 	   ['Waiting for editor...',
-	    "Can't decode commit message as $utf8.", "try --encoding.",
 	    qr'Commit message saved in (.*)\.',
+	    "Can't decode commit message as $utf8.", "try --encoding.",
 	   ]);
 chdir ($oldwd);
 is_output ($svk, 'commit', [$copath, '--encoding', 'big5'],
@@ -65,8 +65,7 @@ overwrite_file ("$copath/$msgutf8-dir/newfile", "new file\n");
 overwrite_file ("$copath/$msgutf8-dir/newfile2", "new file\n");
 overwrite_file ("$copath/$msgutf8-dir/$msg", "new file\n"); # nasty file
 is_output ($svk, 'add', ["$copath/$msgutf8-dir/$msg"],
-	   [__"$msg: Can't decode path as $utf8.",
-	    __"Unknown target: $msg."]);
+	   [__"Can't decode path as $utf8."]);
 is_output ($svk, 'add', ["$copath/$msgutf8-dir/newfile2"],
 	   [__"$msg: Can't decode path as $utf8.",
 	    __"A   $copath/$msgutf8-dir/newfile2"]);

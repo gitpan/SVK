@@ -10,9 +10,11 @@ sub loc {
     local $SIG{__WARN__} = sub {};
     local $@;
 
-    if (eval {
-	require Locale::Maketext::Simple;
-	Locale::Maketext::Simple->VERSION >= 0.12
+    if ( !lang_is_english() && eval {
+        require Locale::Maketext::Lexicon;
+        require Locale::Maketext::Simple;
+        Locale::Maketext::Simple->VERSION >= 0.12 &&
+        Locale::Maketext::Lexicon->VERSION >= 0.42
     }) {
 	Locale::Maketext::Simple->import(
 	    Subclass    => '',
@@ -63,6 +65,19 @@ sub _default_gettext {
 	);
     }egx;
     return $str;
+}
+
+# try to determine if the locale is English.  This might yield a false
+# negative in some corner cases, but then Locale::Maketext::Simple
+# will do a more thorough analysis.  This is just an optimization.
+sub lang_is_english {
+    for my $env_name (qw( LANGUAGE LC_ALL LC_MESSAGES LANG )) {
+        next if !$ENV{$env_name};
+        return 1 if $ENV{$env_name} =~ /^en/;
+        return;
+    }
+
+    return;
 }
 
 1;

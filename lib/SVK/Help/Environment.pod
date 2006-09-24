@@ -60,6 +60,15 @@ If you set this variable, svk's interactive resolver will I<always>
 perform the command it's set to. For more details about the commands
 available in svk's interactive resolver, type C<perldoc SVK::Resolve>.
 
+=item $SVKMIME
+
+Indicates which module is used for automatically detecting the MIME types of
+files.  Implementations included with core SVK are: "File::LibMagic",
+"File::MMagic", "File::Type" and "Internal".  The value "Internal" means to use
+SVK's own internal MIME detection algorithm which requires no external modules.
+This poor, but fast algorithm simply assigns "application/octet-stream" to
+anything that looks binary.  If $SVKMIME has no value, "Internal" is used.
+
 =item $SVKPAGER
 
 When svk needs to pipe long output through a pager, it uses $SVKPAGER
@@ -67,6 +76,12 @@ to send the output to your display.  If this variable is not set or set
 to something that's not executable, the output will not be paged.  svk
 ignores your $PAGER setting, so you must explicitly set $SVKPAGER if
 you want paging.
+
+=item $SVKLOGOUTPUT
+
+By specifying this variable, you change the default output filter used by the
+C<svk log> command.  The value of this variable can be anything that you can
+pass to C<svk log>'s C<--output> option.
 
 =item $SVKPGP
 
@@ -87,6 +102,12 @@ to B<fsfs> or B<bdb>.
 To be able to talk to a remote Subversion server, svk needs the
 SVN::Mirror perl package installed.  If you have SVN::Mirror installed,
 but want svk to operate as if you didn't, set $SVKNOSVM to a true value.
+
+=item $SVKSVNBACKTRACE
+
+(For debugging use only.) If this environment variable is set to a
+true value, any error message which comes from the Subversion
+libraries will be accompanied by a stack backtrace.
 
 =back
 

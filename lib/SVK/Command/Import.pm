@@ -40,10 +40,10 @@ sub lock {
 	return;
     }
     $source = $self->arg_copath ($source);
-    die loc("Import source (%1) is a checkout path; use --from-checkout.\n", $source->{copath})
+    die loc("Import source (%1) is a checkout path; use --from-checkout.\n", $source->copath)
 	unless $self->{from_checkout};
-    die loc("Import path (%1) is different from the copath (%2)\n", $target->{path}, $source->{path})
-	unless $source->{path} eq $target->{path};
+    die loc("Import path (%1) is different from the copath (%2)\n", $target->path_anchor, $source->path_anchor)
+	unless $source->path_anchor eq $target->path_anchor;
     $self->lock_target ($source);
 }
 
@@ -54,22 +54,23 @@ sub _mkpdir {
         mkdir => { message => "Directory for svk import.", parent => 1 },
     )->run ($target);
 
-    print loc("Import path %1 initialized.\n", $target->{depotpath});
+    print loc("Import path %1 initialized.\n", $target->depotpath);
 }
 
 sub run {
     my ($self, $target, $copath) = @_;
     lstat ($copath);
-    die loc ("Path %1 does not exist.\n", $copath) unless -e $copath;
+    die loc ("Path %1 does not exist.\n", $copath) unless -e _;
     my $root = $target->root;
-    my $kind = $root->check_path ($target->{path});
+    my $kind = $root->check_path ($target->path);
 
     die loc("import destination cannot be a file") if $kind == $SVN::Node::file;
 
+    my $basetarget = $target;
     if ($kind == $SVN::Node::none) {
 	if ($self->{check_only}) {
-	    print loc("Import path %1 will be created.\n", $target->{depotpath});
-	    $target = $target->new (revision => 0, path => '/');
+	    print loc("Import path %1 will be created.\n", $target->depotpath);
+	    $basetarget = $target->new (revision => 0, path => '/');
 	}
 	else {
 	    $self->_mkpdir ($target);
@@ -80,10 +81,10 @@ sub run {
 
     unless (exists $self->{xd}{checkout}->get ($copath)->{depotpath}) {
 	$self->{xd}{checkout}->store
-	    ($copath, {depotpath => '/'.$target->depotname.$target->{path},
+	    ($copath, {depotpath => '/'.$target->depotname.$target->path_anchor,
 		       '.newprop' => undef,
 		       '.conflict' => undef,
-		       revision => $target->{revision}});
+		       revision => $target->revision});
         delete $self->{from_checkout};
     }
 
@@ -91,15 +92,16 @@ sub run {
     my $committed =
 	sub { my $yrev = $_[0];
 	      print loc("Directory %1 imported to depotpath %2 as revision %3.\n",
-			$copath, $target->{depotpath}, $yrev);
+			$copath, $target->depotpath, $yrev);
 
 	      if ($self->{to_checkout}) {
-                  $self->{xd}{checkout}->store_recursively (
+                  $self->{xd}{checkout}->store (
                       $copath, {
-                          depotpath => $target->{depotpath},
+                          depotpath => $target->depotpath,
                           revision => $yrev,
                           $self->_schedule_empty,
-                      }
+                      },
+                      {override_sticky_descendents => 1}
                   );
               }
               elsif ($self->{from_checkout}) {
@@ -112,14 +114,16 @@ sub run {
 				 '.schedule' => undef});
 	      }
 	  };
-    my ($editor, %cb) = $self->get_editor ($target, $committed);
+    my ($editor, %cb) = $self->get_editor ($basetarget, $committed);
 
     $self->{import} = 1;
-    $self->run_delta ($target->new (copath => $copath), $root, $editor, %cb);
+    $self->run_delta (SVK::Path::Checkout->real_new
+		      ({ source => $basetarget,
+			 copath_anchor => $copath }), $root, $editor, %cb);
 
     if ($self->{check_only}) {
 	print loc("Directory %1 will be imported to depotpath %2.\n",
-		  $copath, $target->{depotpath});
+		  $copath, $target->depotpath);
 	$self->{xd}{checkout}->store
 	    ($copath, {depotpath => undef,
 		       revision => undef,

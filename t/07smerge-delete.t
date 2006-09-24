@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 24;
+use Test::More tests => 25;
 use strict;
 use File::Path;
 use Cwd;
@@ -98,11 +98,8 @@ is_output ($svk, 'commit', ['-m', 'local modification', $copath],
 is_output ($svk, 'smerge', ['-C', '//trunk', '//local'],
 	   ['Auto-merging (2, 5) /trunk to /local (base /trunk:2).',
 	    'C   A',
-	    'd   A/bar',
-	    'd   A/deep',
-	    'd   A/deep/deeper',
-	    'D   A/deep/foo',
-	    'D   A/deep/stay',
+	    'D   A/bar',
+	    'D   A/deep',
 	    'C   A/foo',
 	    'D   A/normal',
 	    'C   A/unused',
@@ -114,11 +111,8 @@ is_output ($svk, 'smerge', ['-C', '//trunk', '//local'],
 is_output ($svk, 'smerge', ['//trunk', $copath],
 	   ['Auto-merging (2, 5) /trunk to /local (base /trunk:2).',
 	    __"C   $copath/A",
-	    __"d   $copath/A/bar",
-	    __"d   $copath/A/deep",
-	    __"d   $copath/A/deep/deeper",
-	    __"D   $copath/A/deep/foo",
-	    __"D   $copath/A/deep/stay",
+	    __"D   $copath/A/bar",
+	    __"D   $copath/A/deep",
 	    __"C   $copath/A/foo",
 	    __"D   $copath/A/normal",
 	    __"C   $copath/A/unused",
@@ -146,9 +140,9 @@ $svk->commit ('-m', 'local modification', $copath);
 is_output ($svk, 'smerge', ['-C', '//trunk', '//local'],
 	   ['Auto-merging (2, 5) /trunk to /local (base /trunk:2).',
 	    'C   A',
-	    'd   A/bar',
+	    'D   A/bar',
 	    'C   A/deep',
-	    'd   A/deep/deeper',
+	    'D   A/deep/deeper',
 	    'C   A/deep/foo',
 	    'D   A/deep/stay',
 	    'C   A/foo',
@@ -162,9 +156,9 @@ is_output ($svk, 'smerge', ['-C', '//trunk', '//local'],
 is_output ($svk, 'smerge', ['//trunk', $copath],
 	   ['Auto-merging (2, 5) /trunk to /local (base /trunk:2).',
 	    __"C   $copath/A",
-	    __"d   $copath/A/bar",
+	    __"D   $copath/A/bar",
 	    __"C   $copath/A/deep",
-	    __"d   $copath/A/deep/deeper",
+	    __"D   $copath/A/deep/deeper",
 	    __"C   $copath/A/deep/foo",
 	    __"D   $copath/A/deep/stay",
 	    __"C   $copath/A/foo",
@@ -231,4 +225,17 @@ is_output ($svk, 'smerge', ['//trunk', $copath],
 	    '2 conflicts found.']);
 
 ok ($unversioned, 'unversioned file not deleted');
+
+$svk->revert(-R => $copath);
+$svk->switch('//local', $copath);
+
+$svk->rm("$copath/A/foo");
+$svk->mkdir("$copath/A/foo");
+
+$svk->rm(-m => 'hate', '//local/A/foo');
+
+is_output($svk, 'up', [$copath],
+	  ['Syncing //local(/local) in '.__($corpath).' to 13.',
+	   __("C   $copath/A/foo"),
+	   '1 conflict found.']);
 

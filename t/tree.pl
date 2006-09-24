@@ -14,20 +14,35 @@ use File::Path;
 use File::Temp;
 use SVK::Util qw( dirname catdir tmpdir can_run abs_path $SEP $EOL IS_WIN32 HAS_SVN_MIRROR );
 use Test::More;
-use SVK::Target;
-
-require Clone;
+require Storable;
+use SVK::Path::Checkout;
+use Clone;
 
 # Fake standard input
 our $answer = [];
+our $show_prompt = 0;
+
 BEGIN {
     no warnings 'redefine';
     # override get_prompt in XD so devel::cover is happy for
     # already-exported symbols being overridden
     *SVK::Util::get_prompt = *SVK::XD::get_prompt = sub {
+	local $| = 1;
+	print "$_[0]\n" if $show_prompt;
+	print STDOUT "$_[0]\n" if $main::DEBUG;
 	return $answer unless ref($answer); # compat
-	die 'expecting input' unless @$answer;
-	shift @$answer;
+	die "expecting input" unless @$answer;
+	my $ans = shift @$answer;
+	print STDOUT "-> $answer->[0]\n" if $main::DEBUG;
+	return $ans unless ref($ans);
+	
+	if (ref($ans->[0]) eq 'Regexp') {
+	    Carp::cluck "prompt mismatch ($_[0]) vs ($ans->[0])" unless $_[0] =~ m/$ans->[0]/s;
+	}
+	else {
+	    Carp::cluck "prompt mismatch ($_[0]) vs ($ans->[0])" if $_[0] ne $ans->[0];
+	}
+	return $ans->[1];
     } unless $ENV{DEBUG_INTERACTIVE};
 
     chdir catdir(abs_path(dirname(__FILE__)), '..' );
@@ -55,7 +70,7 @@ END {
 our $output = '';
 our $copath;
 
-for (qw/SVKRESOLVE SVKMERGE SVKDIFF SVKPGP LC_CTYPE LC_ALL LANG LC_MESSAGES/) {
+for (qw/SVKRESOLVE SVKMERGE SVKDIFF SVKPGP SVKLOGOUTPUT LC_CTYPE LC_ALL LANG LC_MESSAGES/) {
     $ENV{$_} = '' if $ENV{$_};
 }
 $ENV{LANGUAGE} = $ENV{LANGUAGES} = 'i-default';
@@ -112,9 +127,22 @@ sub build_test {
     return ($xd, $svk);
 }
 
+sub build_floating_test {
+    my ($directory) = @_;
+
+    my $svkpath = File::Spec->catfile($directory, '.svk');
+    my $xd = SVK::XD->new (statefile => File::Spec->catfile($svkpath, 'config'),
+			   svkpath => $svkpath,
+			   floating => $directory);
+    $xd->load;
+    my $svk = SVK->new (xd => $xd, $ENV{DEBUG_INTERACTIVE} ? () : (output => \$output));
+    push @TOCLEAN, [$xd, $svk];
+    return ($xd, $svk);
+}
+
 sub get_copath {
     my ($name) = @_;
-    my $copath = SVK::Target->copath ('t', "checkout/$name");
+    my $copath = SVK::Path::Checkout->copath ('t', "checkout/$name");
     mkpath [$copath] unless -d $copath;
     rmtree [$copath] if -e $copath;
     return ($copath, File::Spec->rel2abs($copath));
@@ -130,9 +158,15 @@ sub rm_test {
 }
 
 sub cleanup_test {
-    return unless $ENV{TEST_VERBOSE};
     my ($xd, $svk) = @{+shift};
-    use YAML;
+    for my $depot (sort keys %{$xd->{depotmap}}) {
+	my $pool = SVN::Pool->new_default;
+	my (undef, undef, $repos) = eval { $xd->find_repos("/$depot/", 1) };
+	diag "uncleaned txn on /$depot/"
+	    if $repos && @{$repos->fs->list_transactions};
+    }
+    return unless $ENV{TEST_VERBOSE};
+    use YAML::Syck;
     print Dump($xd);
     for my $depot (sort keys %{$xd->{depotmap}}) {
 	my $pool = SVN::Pool->new_default;
@@ -167,8 +201,9 @@ sub overwrite_file_raw {
 sub is_file_content {
     my ($file, $content, $test) = @_;
     open my ($fh), '<', $file or confess "Cannot read from $file: $!";
-    local $/;
-    @_ = (<$fh>, $content, $test);
+    my $actual_content = do { local $/; <$fh> };
+
+    @_ = ($actual_content, $content, $test);
     goto &is;
 }
 
@@ -185,7 +220,7 @@ sub _do_run {
     my $unlock = SVK::XD->can('unlock');
     my $giant_unlock = SVK::XD->can('giant_unlock');
     no warnings 'redefine';
-    my $origxd = Clone::clone($svk->{xd}->{checkout});
+    my $origxd = Storable::dclone($svk->{xd}->{checkout});
     require SVK::Command::Checkout;
     my $giant_locked = 1;
     local *SVK::XD::giant_unlock = sub {
@@ -195,17 +230,17 @@ sub _do_run {
     local *SVK::XD::unlock = sub {
 	my $self = shift;
 	unless ($giant_locked) {
-	    my $newxd = Clone::clone($self->{checkout});
+	    my $newxd = Storable::dclone($self->{checkout});
 	    my @paths = $self->{checkout}->find ('', {lock => $$});
 	    my %empty = (lock => undef, '.conflict' => undef,
 			 '.deleted' => undef,
 			  SVK::Command::Checkout::detach->_remove_entry,
 			  SVK::Command->_schedule_empty);
 	    for (@paths) {
-		$origxd->store_recursively($_, \%empty);
-		$newxd->store_recursively($_, \%empty);
+		$origxd->store($_, \%empty, {override_sticky_descendents => 1});
+		$newxd-> store($_, \%empty, {override_sticky_descendents => 1});
 	    }
-	    diag Carp::longmess.YAML::Dump({orig => $origxd, new => $newxd, paths => \@paths})
+	    diag Carp::longmess.YAML::Syck::Dump({orig => $origxd, new => $newxd, paths => \@paths})
 		unless eq_hash($origxd, $newxd);
 	}
 	$unlock->($self, @_);
@@ -282,7 +317,7 @@ sub is_ancestor {
 }
 
 sub copath {
-    SVK::Target->copath ($copath, @_);
+    SVK::Path::Checkout->copath ($copath, @_);
 }
 
 sub status_native {
@@ -443,6 +478,45 @@ sub replace_file {
     open $fh, '>', $file or croak "Cannot open $file: $!";
     print $fh @content;
     close $fh;
+}
+
+# Samples of files with various MIME types
+{
+my %samples = (
+    'empty.txt'     => q{},
+    'false.bin'     => 'LZ  Not application/octet-stream',
+    'foo.pl'        => "#!/usr/bin/perl\n",
+    'foo.jpg'       => "\xff\xd8\xff\xe0\x00this is jpeg",
+    'foo.bin'       => "\x1f\xf0\xff\x01\x00\xffthis is binary",
+    'foo.html'      => "<html>",
+    'foo.txt'       => "test....",
+    'foo.c'         => "/*\tHello World\t*/",
+    'not-audio.txt' => "if\n",  # reported: alley_cat 2006-06-02
+);
+
+# Return the names of mime sample files relative to a particular directory
+sub glob_mime_samples {
+    my ($directory) = @_;
+    my @names;
+    push @names, "$directory/$_" for sort keys %samples;
+    return @names;
+}
+
+# Create a directory and fill it with files of different MIME types.
+# The directory must be specified as the first argument.
+sub create_mime_samples {
+    my ($directory) = @_;
+
+    mkdir $directory;
+    overwrite_file ("mime/not-audio.txt", "if\n"); # reported: alley_cat 2006-06-02
+    while ( my ($basename, $content) = each %samples ) {
+        overwrite_file( "$directory/$basename", $content );
+    }
+}
+}
+
+sub chmod_probably_useless {
+    return $^O eq 'MSWin32' || Cwd::cwd() =~ m!^/afs/!;
 }
 
 END {

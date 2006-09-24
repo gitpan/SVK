@@ -21,8 +21,8 @@ sub parse_arg {
     }
 
     return if $#arg < 0 || $#arg > 1;
-    my $depotpath = $self->arg_depotpath ($arg[0]);
-    return ($depotpath, $self->arg_copath ($arg[1] || ''));
+    return ($self->arg_uri_maybe($arg[0]),
+	    $self->arg_copath($arg[1] || ''));
 }
 
 sub lock { $_[0]->lock_target ($_[2]) }
@@ -31,25 +31,24 @@ sub run {
     my ($self, $target, $cotarget) = @_;
     die loc("different depot") unless $target->same_repos ($cotarget);
 
-    my ($entry, @where) = $self->{xd}{checkout}->get ($cotarget->{copath});
+    my ($entry, @where) = $self->{xd}{checkout}->get ($cotarget->copath_anchor);
     die loc("Can only switch checkout root.\n")
-	unless $where[0] eq $cotarget->{copath};
+	unless $where[0] eq $cotarget->copath;
 
-    $self->{update_target_path} = $target->{path};
+    $target = $target->as_depotpath ($self->{rev});
 #    switch to related_to once the api is ready
     # check if the switch has a base at all
-    die loc("path %1 does not exist.\n", $target->{report})
-	if $target->root->check_path ($target->{path}) == $SVN::Node::none;
-    SVK::Merge->auto (%$self, repos => $target->{repos},
+    die loc("Path %1 does not exist.\n", $target->report)
+	if $target->root->check_path ($target->path_anchor) == $SVN::Node::none;
+    SVK::Merge->auto (%$self, repos => $target->repos,
 		      src => $cotarget, dst => $target);
 #    die loc ("%1 is not related to %2.\n", $cotarget->{report}, $target->{report})
 #	unless $cotarget->new->as_depotpath->related_to ($target);
 
-    $self->SUPER::run ($cotarget);
-
-    $self->{xd}{checkout}->store ($cotarget->{copath},
-				  {depotpath => $target->{depotpath},
-				   revision => $target->{revision}});
+    $self->do_update ($cotarget, $target);
+    $self->{xd}{checkout}->store ($cotarget->copath,
+				  {depotpath => $target->depotpath,
+				   revision => $target->revision});
     return;
 }
 
@@ -64,6 +63,9 @@ SVK::Command::Switch - Switch to another branch and keep local changes
 =head1 SYNOPSIS
 
  switch DEPOTPATH [PATH]
+
+For information about how to change the mirrored location of a remote
+repository, please see the C<--relocate> option to C<svk mirror>.
 
 =head1 OPTIONS
 

@@ -22,56 +22,50 @@ sub parse_arg {
 
 sub run {
     my ($self, $target) = @_;
-    my $m;
-    if(defined $self->{rev}) {
-        my $r = $self->resolve_revision($target,$self->{rev});
-        $target->as_depotpath($r);
-    }
-    if (HAS_SVN_MIRROR) {
-	($m) = SVN::Mirror::is_mirrored ($target->{repos}, $target->path);
-    }
-    my $fs = $target->{repos}->fs;
+    my $m = $target->is_mirrored;
+    my $fs = $target->repos->fs;
     my $ann = Algorithm::Annotate->new;
-    my @revs;
+    my @paths;
+
+    $target = $self->apply_revision($target) if $self->{rev};
 
     traverse_history (
-        root     => $fs->revision_root ($target->{revision}),
-        path     => $target->{path},
+        root     => $target->as_depotpath->root,
+        path     => $target->path,
         cross    => $self->{cross},
         callback => sub {
             my ($path, $rev) = @_;
-            unshift @revs, [ $path, $rev ];
+            unshift @paths,
+		$target->as_depotpath($rev)->new(path => $path);
             1;
         }
     );
 
-    print loc("Annotations for %1 (%2 active revisions):\n", $target->{path}, scalar @revs);
+    print loc("Annotations for %1 (%2 active revisions):\n", $target->path, scalar @paths);
     print '*' x 16;
     print "\n";
-    for (@revs) {
+    for my $t (@paths) {
 	local $/;
-	my ($path, $rev) = @$_;
-	my $content = $fs->revision_root ($rev)->file_contents ($path);
+	my $content = $t->root->file_contents($t->path);
 	$content = [split /\015?\012|\015/, <$content>];
 	no warnings 'uninitialized';
-	my $rrev = ($m && $self->{remoterev}) ? $m->find_remote_rev($rev) : $rev;
+	my $rrev = ($m && $self->{remoterev}) ? $m->find_remote_rev($t->revision) : $t->revision;
 	$ann->add ( sprintf("%6s\t(%8s %10s):\t\t", $rrev,
-			    $fs->revision_prop ($rev, 'svn:author'),
-			    substr($fs->revision_prop ($rev, 'svn:date'),0,10)),
+			    $fs->revision_prop($t->revision, 'svn:author'),
+			    substr($fs->revision_prop ($t->revision, 'svn:date'),0,10)),
 		    $content);
     }
 
+    # TODO: traverse history should just DTRT and we dont need to special case here
+    my $last = $target->isa('SVK::Path::Checkout')
+	? $target : $paths[-1];
     my $final;
-    if ($target->{copath}) {
-	$final = SVK::XD::get_fh ($target->root ($self->{xd}), '<', $target->{path}, $target->{copath});
+    {
 	local $/;
+	$final = $last->root->file_contents($last->path);
 	$final = [split /\015?\012|\015/, <$final>];
-	$ann->add ( "\t(working copy): \t\t", $final );
-    }
-    else {
-	local $/;
-	$final = $fs->revision_root($revs[-1][1])->file_contents($revs[-1][0]);
-	$final = [split /\015?\012|\015/, <$final>];
+	$ann->add ( "\t(working copy): \t\t", $final )
+	    if $target->isa('SVK::Path::Checkout');
     }
 
     my $result = $ann->result;
@@ -100,6 +94,7 @@ SVK::Command::Annotate - Display per-line revision and author info
 
  -r [--revision] REV    : annotate up to revision
  -x [--cross]           : track revisions copied from elsewhere
+ --remoterev            : display remote revision numbers (on mirrors only)
 
 =head1 NOTES
 

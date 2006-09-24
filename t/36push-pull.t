@@ -46,7 +46,7 @@ append_file ("$corpath_default/T/xd", "more content\n");
 $svk->commit ('-m', 'second local modification from branch', "$corpath_default");
 
 chdir ($corpath_default);
-is_sorted_output ($svk, "push", [], [
+is_output ($svk, "push", [], [
         "Auto-merging (0, 6) /l to /m (base /m:3).",
         "===> Auto-merging (0, 4) /l to /m (base /m:3).",
         "Merging back to mirror source $uri/A.",
@@ -122,7 +122,7 @@ $svk->sync ("//m");
 
 is_output ($svk, "push", ['-C', "--from", "//m", "//l"], [
         "Auto-merging (12, 14) /m to /l (base /m:12).",
-        "Incremental merge not guaranteed even if check is successful",
+        '===> Auto-merging (12, 14) /m to /l (base /m:12).',
         "U   new-file",
         "New merge ticket: $test_uuid:/A:7"]);
 
@@ -183,7 +183,7 @@ is_output ($svk, "pull", ["sub"], [
 	__("U   xd"),
 	"New merge ticket: $test_uuid:/A/T:10",
 	"Committed revision 24.",
-	"Syncing //l-sub(/l-sub/sub) in ".__("$corpath_subdir/sub to 24."),
+	"Syncing //l-sub/sub(/l-sub/sub) in ".__("$corpath_subdir/sub to 24."),
        __("U   sub/xd")]);
 
 overwrite_file ("$corpath_second/Q/qz", "asfd orz\n");
@@ -222,9 +222,9 @@ is_output($svk, 'pull', [],
 	   qr'New merge ticket: .*:/A:12',
 	   'Committed revision 29.',
 	   "Syncing //l2(/l2) in $corpath_second to 29.",
-	   'U   T/xd',
-	   'U   new-file',
-	   'A   push-newfile']);
+	   __('U   T/xd'),
+	   __('U   new-file'),
+	   __('A   push-newfile')]);
 
 $svk->up($corpath_test);
 append_file("$corpath_test/new-file", "more modification that will get overwritten if using wrong merge base\n");
@@ -249,9 +249,8 @@ is_output($svk, 'push', [],
 	   'Retrieving log information from 13 to 14',
 	   'Committed revision 30 from revision 13.',
 	   'Committed revision 31 from revision 14.',
-	   '===> Auto-merging (28, 29) /l2 to /m (base /m:27).',
+	   '===> Auto-merging (28, 29) /l2 to /m (base */l2:28).',
 	   "Merging back to mirror source $uri/A.",
-	   'g   be',
 	   'Empty merge.']);
 
 chdir ($initial_cwd);

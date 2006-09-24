@@ -7,7 +7,7 @@ use SVK::XD;
 use SVK::I18N;
 use SVK::Command::Log;
 use SVK::Merge;
-use SVK::Util qw( get_buffer_from_editor find_svm_source resolve_svm_source traverse_history );
+use SVK::Util qw( get_buffer_from_editor traverse_history );
 
 sub options {
     ($_[0]->SUPER::options,
@@ -20,7 +20,7 @@ sub options {
      'I|incremental'	=> 'incremental',
      'verbatim'		=> 'verbatim',
      'no-ticket'	=> 'no_ticket',
-     'r|revision=s'	=> 'revspec',
+     'r|revision=s@'	=> 'revspec',
      'c|change=s',	=> 'chgspec',
      't|to'             => 'to',
      'f|from'           => 'from',
@@ -51,13 +51,13 @@ sub parse_arg {
 
     if ($self->{from}) {
         # When using "from", $target1 must always be a depotpath.
-        if (defined $target1->{copath}) {
+        if ($target1->isa('SVK::Path::Checkout')) {
             # Because merging under the copy anchor is unsafe, we always merge
             # to the most immediate copy anchor under copath root.
             ($target1, $target2) = $self->find_checkout_anchor (
                 $target1, 1, $self->{sync}
-            );
-            delete $target1->{copath};
+               );
+	    $target1 = $target1->as_depotpath;
         }
     }
 
@@ -65,13 +65,12 @@ sub parse_arg {
     if (!defined ($target2)) {
         die loc ("Cannot find the path which '%1' copied from.\n", $arg[0] || '');
     }
-
     return ( ($self->{from}) ? ($target1, $target2) : ($target2, $target1) );
 }
 
 sub lock {
     my $self = shift;
-    $self->lock_target ($_[1]);
+    $self->lock_target($_[1]) if $_[1];
 }
 
 sub get_commit_message {
@@ -83,64 +82,68 @@ sub get_commit_message {
 sub run {
     my ($self, $src, $dst) = @_;
     my $merge;
-    my $repos = $src->{repos};
-    my $fs = $repos->fs;
-    my $yrev = $fs->youngest_rev;
+    my $repos = $src->repos;
 
     if (my @mirrors = $dst->contains_mirror) {
-	die loc ("%1 can not be used as merge target, because it contains mirrored path: ", $dst->{report})
+	die loc ("%1 can not be used as merge target, because it contains mirrored path: ", $dst->report)
 	    .join(",", @mirrors)."\n"
 		unless $mirrors[0] eq $dst->path;
     }
 
     if ($self->{sync}) {
         my $sync = $self->command ('sync');
-	my (undef, $m) = resolve_svm_source($repos, find_svm_source($repos, $src->{path}));
-        if ($m->{target_path}) {
+	if (my $m = $src->is_mirrored) {
             $sync->run($self->arg_depotpath('/' . $src->depotname .  $m->{target_path}));
             $src->refresh_revision;
         }
     }
 
-    if ($dst->root ($self->{xd})->check_path ($dst->path) != $SVN::Node::dir) {
+    if ($dst->root->check_path($dst->path) != $SVN::Node::dir) {
 	$src->anchorify; $dst->anchorify;
     }
 
     # for svk::merge constructor
-    $self->{dst} = $dst;
-    $self->{report} = defined $dst->{copath} ? $dst->{report} : undef;
+    # Report only relative for depot / depot merge, but what user
+    # types for merge to checkout
+    $self->{report} = $dst->isa('SVK::Path::Checkout') ? $dst->report : undef;
     if ($self->{auto}) {
-	die loc("No need to track rename for smerge\n")
+	die loc("Can't merge with specified revisions with smart merge.\n")
+	    if defined $self->{revspec} || defined $self->{chgspec};
+	# Tell svk::merge to only collect for dst.  There must be
+	# better ways doing this.
+	$self->{track_rename} = 'dst'
 	    if $self->{track_rename};
 	++$self->{no_ticket} if $self->{patch};
 	# avoid generating merge ticket pointing to other changes
 	$src->normalize; $dst->normalize;
 	$merge = SVK::Merge->auto (%$self, repos => $repos, target => '',
 				   ticket => !$self->{no_ticket},
-				   src => $src);
+				   src => $src, dst => $dst);
 	print $merge->info;
 	print $merge->log(1) if $self->{summary};
     }
     else {
 	die loc("Incremental merge not supported\n") if $self->{incremental};
-	my @revlist = $self->parse_revlist;
+	my @revlist = $self->parse_revlist($src);
 	die "multi-merge not yet" if $#revlist > 0;
 	my ($baserev, $torev) = @{$revlist[0]};
 	$merge = SVK::Merge->new
 	    (%$self, repos => $repos, src => $src->new (revision => $torev),
+	     dst => $dst,
 	     base => $src->new (revision => $baserev), target => '',
 	     fromrev => $baserev);
     }
 
-    if ($merge->{fromrev} == $merge->{src}{revision}) {
+    $merge->{notice_copy} = 1;
+    if ($merge->{fromrev} == $merge->{src}->revision) {
 	print loc ("Empty merge.\n");
 	return;
     }
 
     $self->get_commit_message ($self->{log} ? $merge->log(1) : undef)
-	unless $dst->{copath};
+	unless $dst->isa('SVK::Path::Checkout');
 
-    if ($self->{incremental} && !$self->{check_only}) {
+    if ($self->{incremental}) {
 	die loc ("Not possible to do incremental merge without a merge ticket.\n")
 	    if $self->{no_ticket};
 	print loc ("-m ignored in incremental merge\n") if $self->{message};
@@ -148,7 +151,7 @@ sub run {
 
         traverse_history (
             root        => $src->root,
-            path        => $src->{path},
+            path        => $src->path_anchor,
             cross       => 0,
             callback    => sub {
                 my $rev = $_[1];
@@ -160,8 +163,14 @@ sub run {
 
 	my $spool = SVN::Pool->new_default;
 	my $previous_base;
+	if ($self->{check_only}) {
+	    require SVK::Path::Txn;
+	    $merge->{dst} = $dst = $dst->clone;
+	    bless $dst, 'SVK::Path::Txn'; # XXX: need a saner api for this
+	}
 	foreach my $rev (@rev) {
-	    $merge = SVK::Merge->auto (%$merge, src => $src->new (revision => $rev));
+	    $merge = SVK::Merge->auto(%$merge,
+				      src => $src->new(revision => $rev));
 	    if ($previous_base) {
 		$merge->{fromrev} = $previous_base;
 	    }
@@ -170,16 +179,14 @@ sub run {
 	    $self->{message} = $merge->log (1);
 	    $self->decode_commit_message;
 
-	    last if $merge->run ($self->get_editor ($dst));
+	    last if $merge->run( $self->get_editor($dst) );
 	    # refresh dst
-	    $dst->{revision} = $fs->youngest_rev;
+	    $dst->refresh_revision;
 	    $previous_base = $rev;
 	    $spool->clear;
 	}
     }
     else {
-	print loc("Incremental merge not guaranteed even if check is successful\n")
-	    if $self->{incremental};
 	$merge->run ($self->get_editor ($dst, undef, $self->{auto} ? $src : undef));
 	delete $self->{save_message};
     }

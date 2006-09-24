@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-use Test::More tests => 33;
+use Test::More tests => 35;
 use strict;
 BEGIN { require 't/tree.pl' };
 our $output;
@@ -29,6 +29,12 @@ is_output ($svk, 'add', ['A/foo'],
 	   [map __($_), 'A   A', 'A   A/foo'], 'add - descendent target only');
 $svk->revert ('-R', '.');
 
+mkdir ('Z');
+is_output ($svk, 'add', ["Z/noexist"], [
+	__"A   Z",
+	__"Unknown target: $corpath/Z/noexist."], "target doesn't exist");
+unlink ('Z');
+
 is_output ($svk, 'add', ['-q', 'A/foo'],
 	   [], 'add - quiet');
 $svk->revert ('-R', '.');
@@ -45,6 +51,19 @@ is_output ($svk, 'add', ['A/deep/baz'],
 	   [map __($_), 'A   A', 'A   A/deep', 'A   A/deep/baz'],
 	   'add - deep descendent target only');
 $svk->revert ('-R', '.');
+chdir('A');
+is_output ($svk, 'add', ['deep'],
+	   [map __($_), 'A   ../A', 'A   ../A/deep', 'A   ../A/deep/baz'],
+	   'add - deep descendent target only');
+is_output ($svk, 'st', [],
+	   [map __($_),
+	    'A   ../A',
+	    '?   ../A/bar',
+	    'A   ../A/deep', 'A   ../A/deep/baz',
+	    '?   ../A/foo'],
+	   'add - deep descendent target only');
+$svk->revert ('-R', '.');
+chdir('..');
 
 is_output ($svk, 'add', ['A'],
 	   [map __($_), 'A   A', 'A   A/bar', 'A   A/foo', 'A   A/deep', 'A   A/deep/baz'],
@@ -55,11 +74,9 @@ is_output ($svk, 'add', ['A/'],
 	   [map __($_), 'A   A', 'A   A/bar', 'A   A/foo', 'A   A/deep', 'A   A/deep/baz'],
 	   'add - anchor with trailing slash');
 $svk->revert ('-R', '.');
-
 is_output ($svk, 'add', [qw/-N A/],
 	   [map __($_), 'A   A'],
 	   'add - nonrecursive anchor');
-
 is_output ($svk, 'add', [qw/-N A/],
 	   ['A already added.'],
 	   'add - nonrecursive anchor already added');
@@ -80,11 +97,14 @@ is_output ($svk, 'add', ['-N', 'A/foo'],
 
 overwrite_file ("A/exe", "foobar");
 chmod (0755, "A/exe");
-TODO: {
-local $TODO = 'notify that added file has executable bit';
 is_output($svk, 'add', ['A/exe'],
 	  [__('A   A'),
-	   __('A   A/exe - (bin)')]);
+	   __('A   A/exe')]);
+SKIP: {
+skip 'No execute bit on win32', 1 if $^O eq 'MSWin32';
+is_output($svk, 'pl', ['-v', 'A/exe'],
+	  [__('Properties on A/exe:'),
+	   '  svn:executable: *']);
 }
 $svk->commit ('-m', 'test exe bit');
 is_output ($svk, 'add', [qw/-N A/],
@@ -105,36 +125,7 @@ is_output ($svk, 'add', ['-N', 'A/exe'],
 
 unlink ('A/exe');
 $svk->revert ('A/exe');
-ok (_x 'A/exe');
-
-mkdir ('A/mime');
-overwrite_file ("A/mime/foo.pl", "#!/usr/bin/perl\n");
-overwrite_file ("A/mime/foo.jpg", "\xff\xd8\xff\xe0this is jpeg");
-overwrite_file ("A/mime/foo.bin", "\x1f\xf0\xff\x01\x00\xffthis is binary");
-overwrite_file ("A/mime/foo.html", "<html>");
-overwrite_file ("A/mime/foo.txt", "test....");
-overwrite_file ("A/mime/foo.c", "/*\tHello World\t*/");
-
-is_output ($svk, 'add', ['A/mime'],
-	   [__('A   A/mime'),
-	    __('A   A/mime/foo.bin'),
-	    __('A   A/mime/foo.c'),
-	    __('A   A/mime/foo.html'),
-	    __('A   A/mime/foo.jpg'),
-	    __('A   A/mime/foo.pl'),
-	    __('A   A/mime/foo.txt'),
-	   ]);
-is_output ($svk, 'pl', ['-v', glob("A/mime/*")],
-	   [__('Properties on A/mime/foo.bin:'),
-	    '  svn:mime-type: application/octet-stream',
-	    __('Properties on A/mime/foo.html:'),
-	    '  svn:mime-type: text/html',
-	    __('Properties on A/mime/foo.jpg:'),
-	    '  svn:mime-type: image/jpeg',
-	   ]);
-
-
-$svk->revert ('-R', 'A');
+ok (_x('A/exe'));
 
 mkdir ('Ai');
 overwrite_file ("Ai/foo", "foobar");
@@ -161,7 +152,7 @@ overwrite_file (File::Spec->catfile ($dir, 'config'), << "EOF");
 [miscellany]
 enable-auto-props = yes
 [auto-props]
-*.txt = svn:eol-style=native;svn:keywords=Revision Id
+*.txt = svn:eol-style = native ; svn:keywords = Revision Id
 *.pl = svn:eol-style=native;svn:mime-type=text/perl
 
 EOF

@@ -2,6 +2,9 @@ package SVK::Target::Universal;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
 use SVK::Util qw(find_svm_source find_local_mirror);
+use base 'Class::Accessor::Fast';
+
+__PACKAGE__->mk_accessors(qw(uuid path rev));
 
 =head1 NAME
 
@@ -17,7 +20,7 @@ SVK::Target::Universal - svk target that might not be local
 
 sub new {
     my $class = shift;
-    return $class->new (find_svm_source ($_[0]->{repos}, $_[0]->path, $_[0]->{revision}))
+    return $class->new (find_svm_source ($_[0]->repos, $_[0]->path, $_[0]->revision))
 	if ref ($_[0]);
 
     my ($uuid, $path, $rev) = @_;
@@ -47,18 +50,24 @@ sub local {
     # ticket
     return unless defined $path && defined $rev;
 
-    SVK::Target->new
-	( repos => $repos,
-	  repospath => $repospath,
-	  path => $path,
-	  revision => $rev,
-	  depotpath => $depot ? "/$depot$path" : undef,
-	);
+    SVK::Path->real_new
+	({ repos => $repos,
+	   mirror => $xd ? $xd->mirror($repos) : undef,
+	   repospath => $repospath,
+	   path => $path, # XXX: use path_anchor accessor
+	   revision => $rev,
+	   depotname => $depot || '',
+	 });
 }
 
 sub same_resource {
     my ($self, $other) = @_;
-    return ($self->{uuid} eq $other->{uuid} && $self->{path} eq $other->{path});
+    return ($self->uuid eq $other->uuid && $self->path eq $other->path);
+}
+
+sub ukey {
+    my $self = shift;
+    return join(':', $self->uuid, $self->path);
 }
 
 =head1 AUTHORS

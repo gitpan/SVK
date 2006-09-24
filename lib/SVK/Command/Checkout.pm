@@ -5,7 +5,7 @@ use SVK::Version;  our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command::Update );
 use SVK::XD;
 use SVK::I18N;
-use SVK::Util qw( get_anchor abs_path move_path splitdir $SEP get_encoding abs_path_noexist );
+use SVK::Util qw( get_anchor abs_path move_path splitdir $SEP get_encoding abs_path_noexist catfile );
 use File::Path;
 
 sub options {
@@ -14,7 +14,8 @@ sub options {
      'd|delete|detach' => 'detach',
      'purge' => 'purge',
      'export' => 'export',
-     'relocate' => 'relocate');
+     'relocate' => 'relocate',
+     'floating' => 'floating');
 }
 
 sub parse_arg {
@@ -29,10 +30,10 @@ sub parse_arg {
 	($src,
 	 eval { $self->arg_co_maybe ($dst, 'Checkout destination') }
 	 ? "path '$dst' is already a checkout" : undef);
-    die loc("don't know where to checkout %1\n", $src) unless length ($dst) || $depotpath->{path} ne '/';
+    die loc("don't know where to checkout %1\n", $src) unless length ($dst) || $depotpath->path_anchor ne '/';
 
     $dst =~ s|/$|| if length $dst;
-    $dst = (splitdir($depotpath->{path}))[-1]
+    $dst = (splitdir($depotpath->path_anchor))[-1]
         if !length($dst) or $dst =~ /^\.?$/;
 
     return ($depotpath, $dst);
@@ -47,12 +48,20 @@ sub lock {
 sub run {
     my ($self, $target, $report) = @_;
 
+    $self->_not_if_floating;
+
     if (-e $report) {
 	my $copath = abs_path($report);
 	my ($entry, @where) = $self->{xd}{checkout}->get($copath);
 
-        return $self->SUPER::run ($target->new(report => $report, copath => $copath))
-	    if exists $entry->{depotpath} && $entry->{depotpath} eq $target->{depotpath};
+        return $self->SUPER::run
+	    ( SVK::Path::Checkout->real_new
+	      ({ source => $target->mclone(revision => $entry->{revision}),
+		 xd => $self->{xd},
+		 report => $report,
+		 copath_anchor => $copath,
+	       }) )
+	    if exists $entry->{depotpath} && $entry->{depotpath} eq $target->depotpath;
 	die loc("Checkout path %1 already exists.\n", $report);
     }
     else {
@@ -69,25 +78,57 @@ sub run {
     # abs_path doesn't work until the parent is created.
     my $copath = abs_path ($report);
     my ($entry, @where) = $self->{xd}{checkout}->get ($copath);
-
     die loc("Overlapping checkout path is not supported (%1); use 'svk checkout --detach' to remove it first.\n", $where[0])
 	if exists $entry->{depotpath} && $#where > 0;
 
-    $self->{xd}{checkout}->store_recursively ( $copath,
-					       { depotpath => $target->{depotpath},
-						 encoding => get_encoding,
-						 revision => 0,
-						 '.schedule' => undef,
-						 '.newprop' => undef,
-						 '.deleted' => undef,
-						 '.conflict' => undef,
-					       });
-    $self->{rev} = $target->{repos}->fs->youngest_rev unless defined $self->{rev};
+    my $xd;
+    if ($self->{floating}) {
+	my ($depotname) = $self->{xd}->find_depotname ($target->depotpath, 0);
+	my ($depotpath) = ($self->{xd}->find_repos ($target->depotpath, 0));
+	my $svkpath = catfile($copath, '.svk');
 
-    $self->SUPER::run ($target->new (report => $report,
-				     copath => $copath));
+	mkdir($copath)
+	    or die loc("Cannot create checkout directory at '%1': %2\n",
+		       $copath, $!);
+	$xd = SVK::XD->new ( giantlock => catfile($svkpath, 'lock'),
+			     statefile => catfile($svkpath, 'config'),
+			     svkpath => $svkpath,
+			     depotmap => { $depotname => $depotpath },
+			     floating => $copath,
+			   );
+
+	my $magic = catfile($svkpath, 'floating');
+	open my $magic_fh, '>', $magic or die $!;
+	print $magic_fh "This is an SVK floating checkout.";
+	close $magic_fh;
+
+	$xd->lock($copath);
+    } else {
+	$xd = $self->{xd};
+    }
+
+    $xd->{checkout}->store ( $copath,
+			     { depotpath => $target->depotpath,
+			       encoding => get_encoding,
+			       revision => 0,
+			       '.schedule' => undef,
+			       '.newprop' => undef,
+			       '.deleted' => undef,
+			       '.conflict' => undef,
+			     },
+			     {override_sticky_descendents => 1});
+
+    my $source = $target->can('source') ? $target->source : $target;
+    my $cotarget = SVK::Path::Checkout->real_new
+	({ copath_anchor => $copath, report => $report,
+	   xd => $xd, source => $source->mclone( revision => 0 ) });
+    $self->do_update( $cotarget,
+		      $target->new->as_depotpath($self->{rev}) );
+
     $self->rebless ('checkout::detach')->run ($copath)
 	if $self->{export};
+
+    $xd->unlock($copath) if $self->{floating};
 
     return;
 }
@@ -105,6 +146,14 @@ sub _find_copath {
         defined $map->{$_}{depotpath}
             and $map->{$_}{depotpath} eq $path
     } keys %$map;
+}
+
+sub _not_if_floating {
+    my ($self, $op) = @_;
+    $op = 'svk checkout ' . $op if $op;
+    $op ||= 'svk checkout';
+    die loc("%1 is not supported inside a floating checkout.\n", $op)
+	if $self->{xd}->{floating};
 }
 
 package SVK::Command::Checkout::list;
@@ -141,6 +190,8 @@ sub lock { ++$_[0]->{hold_giant} }
 
 sub run {
     my ($self, $path, $report) = @_;
+
+    $self->_not_if_floating('--relocate');
 
     my @copath = $self->_find_copath($path)
         or die loc("'%1' is not a checkout path.\n", $path);
@@ -188,15 +239,21 @@ sub lock { ++$_[0]->{hold_giant} }
 sub _remove_entry { (depotpath => undef, revision => undef, encoding => undef) }
 
 sub run {
-    my ($self, $path) = @_;
+    my ($self, @paths) = @_;
 
-    my @copath = $self->_find_copath($path)
-        or die loc("'%1' is not a checkout path.\n", $path);
+    # Alternatively we could delete the entire .svk directory if floating.
+    $self->_not_if_floating('--detach');
 
-    my $checkout = $self->{xd}{checkout};
-    foreach my $copath (sort @copath) {
-        $checkout->store_recursively ($copath, {_remove_entry, $self->_schedule_empty});
-        print loc("Checkout path '%1' detached.\n", $copath);
+    for my $path (@paths) {
+        my @copath = $self->_find_copath($path)
+          or die loc("'%1' is not a checkout path.\n", $path);
+
+        my $checkout = $self->{xd}{checkout};
+        foreach my $copath (sort @copath) {
+            $checkout->store ($copath, {_remove_entry, $self->_schedule_empty},
+                             {override_sticky_descendents => 1});
+            print loc("Checkout path '%1' detached.\n", $copath);
+        }
     }
 
     return;
@@ -214,6 +271,8 @@ sub lock { ++$_[0]->{hold_giant} }
 sub run {
     my ($self) = @_;
     my $map = $self->{xd}{checkout}{hash};
+
+    $self->_not_if_floating('--purge');
 
     $self->rebless('checkout::detach');
 
@@ -257,6 +316,7 @@ SVK::Command::Checkout - Checkout the depotpath
  -d [--detach]          : mark a path as no longer checked out
  -q [--quiet]           : quiet mode
  --export               : export mode; checkout a detached copy
+ --floating             : create a floating checkout
  --relocate             : relocate the checkout to another path
  --purge                : detach checkout directories which no longer exist
 

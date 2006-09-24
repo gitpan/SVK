@@ -37,7 +37,6 @@ info and anchor for the patch to be applied.
 =cut
 
 use SVK::Editor::Patch;
-use SVK::Util qw(find_svm_source find_local_mirror resolve_svm_source);
 use SVK::Merge;
 use SVK::Editor::Diff;
 use SVK::Target::Universal;
@@ -105,7 +104,7 @@ sub load {
     for (qw/source target/) {
 	next unless $self->{$_};
 	my $tmp = $self->{"_$_"} = $self->{$_}->local ($xd, $depot) or next;
-	$tmp = $tmp->new (revision => undef);
+	$tmp = $tmp->new->refresh_revision;
 	if (wantarray) {
 	    eval { $tmp->normalize };
 	    $not_applicable = $@
@@ -114,7 +113,7 @@ sub load {
 	    $tmp->normalize;
 	}
 	$self->{"_${_}_updated"} = 1
-	    if $tmp->{revision} > $self->{"_$_"}->{revision};
+	    if $tmp->{revision} > $self->{"_$_"}->revision;
     }
     (undef, undef, $self->{_repos}) = $self->{_xd}->find_repos ("/$self->{_depot}/", 1);
     return wantarray ? ($self, $not_applicable) : $self;
@@ -163,14 +162,11 @@ sub _path_attribute_text {
     # XXX: check if source / target is updated
     my ($local, $mirrored, $updated);
     if (my $target = $self->{"_$type"}) {
-	if ($target->{repos}->fs->get_uuid eq $self->{$type}{uuid}) {
+	if ($target->repos->fs->get_uuid eq $self->{$type}{uuid}) {
 	    ++$local;
 	}
 	else {
-            my ($repos, $path) = @$target{qw/repos path/};
-            (undef, $mirrored) = resolve_svm_source(
-                $repos, find_svm_source($repos, $path)
-            );
+	    $mirrored = $target->is_mirrored or die;
 	}
     }
     my $label = $no_label ? '' : join(
@@ -212,14 +208,7 @@ sub view {
     my $anchor = $self->{_target}->path;
     $self->editor->drive
 	( SVK::Editor::Diff->new
-	  ( cb_basecontent => sub { my ($path, $pool) = @_;
-				    my $base = $baseroot->file_contents ("$anchor/$path", $pool);
-				    return $base;
-				},
-	    cb_baseprop => sub { my ($path, $pname, $pool) = @_;
-				 return $baseroot->node_prop ("$anchor/$path", $pname, $pool);
-			     },
-	    oldtarget => $self->{_target}, oldroot => $baseroot,
+	  ( base_target => $self->{_target}, base_root => $baseroot,
 	    llabel => "revision $self->{target}{rev}",
 	    rlabel => "patch $self->{name} level $self->{level}",
 	    external => $ENV{SVKDIFF},
@@ -229,8 +218,8 @@ sub view {
 
 sub apply {
     my ($self, $check_only) = @_;
-    my $commit = SVK::Command->get_cmd ('commit', $self->{_xd});
-    my $target = $self->{_target};
+    my $commit = SVK::Command->get_cmd ('commit', xd => $self->{_xd});
+    my $target = $self->{_target}->new->refresh_revision;
     $commit->{message} = "Apply $self->{name}\@$self->{level}";
     $commit->{check_only} = $check_only;
     $self->apply_to ($target, $commit->get_editor ($target));
@@ -248,9 +237,9 @@ sub apply_to {
 	  anchor => $target->path,
 	  target => '',
 	  send_fulltext => !$cb{patch} && !$cb{mirror},
-	  ($target->{copath}
+	  ($target->isa('SVK::Path::Checkout')
 	      ? (notify => SVK::Notify->new_with_report
-		    ($target->{report}, $target, 1))
+		    ($target->report, $target, 1))
 	      : ()
 	  ),
 	  %cb,
@@ -266,14 +255,14 @@ sub update {
 	unless $self->{_target};
 
     return unless $self->{_target_updated};
-    my $target = $self->{_target}->new (revision => undef);
+    my $target = $self->{_target}->new->refresh_revision;
     $target->normalize;
     my $patch = SVK::Editor::Patch->new;
     my $conflict;
 
     if ($conflict = $self->apply_to ($target, $patch, patch => 1,
 				     SVK::Editor::Merge->cb_for_root
-				     ($target->root, $target->path, $target->{revision}))) {
+				     ($target->root, $target->path, $target->revision))) {
 
 	print loc("Conflicts.\n");
 	return $conflict;
@@ -293,7 +282,7 @@ sub regen {
 	print loc("Source of patch %1 not updated or not local, no need to regen patch.\n", $self->{name});
 	return;
     }
-    my $source = $self->{_source}->new (revision => undef);
+    my $source = $self->{_source}->new->refresh_revision;
     $source->normalize;
     my $merge = SVK::Merge->auto (repos => $self->{_repos}, xd => $self->{_xd},
 				  src => $source, dst => $target);
@@ -302,7 +291,7 @@ sub regen {
     # XXX: handle empty
     unless ($conflict = $merge->run ($patch,
 				     SVK::Editor::Merge->cb_for_root
-				     ($target->root, $target->path, $target->{revision}))) {
+				     ($target->root, $target->path, $target->revision))) {
 	$self->{log} = $merge->log (1);
 	++$self->{level};
 	$self->{_source} = $source;

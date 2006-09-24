@@ -29,7 +29,7 @@ $svk->up;
 {
 local $TODO = 'add-merge should unschedule';
 ok(!$xd->{checkout}->get
-   (SVK::Target->copath($corpath, 'A/deep'))->{'.schedule'},
+   (SVK::Path::Checkout->copath($corpath, 'A/deep'))->{'.schedule'},
    'up add-merge clears stalled schedule');
 }
 $svk->mkdir('A/stall');
@@ -59,5 +59,5 @@ is_output($svk, 'st', [],
 	   ' M  .']);
 
 is_output($svk, 'revert', ['-R'],
-	  ['Reverted A/deep',
+	  [__('Reverted A/deep'),
 	   'Reverted .']);
