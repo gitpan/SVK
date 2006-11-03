@@ -1,25 +1,55 @@
-#!/usr/bin/perl
+package SVK::Test;
+use strict;
+use SVK::Version;  our $VERSION = $SVK::VERSION;
+use base 'Exporter';
+
+our @EXPORT = qw(plan_svm new_repos build_test build_floating_test
+		 get_copath append_file overwrite_file
+		 overwrite_file_raw is_file_content
+		 is_file_content_raw _do_run is_output
+		 is_sorted_output is_deeply_like is_output_like
+		 is_output_unlike is_ancestor status_native status
+		 get_editor create_basic_tree waste_rev
+		 tree_from_fsroot tree_from_xdroot __ _x not_x _l
+		 not_l uri set_editor replace_file glob_mime_samples
+		 create_mime_samples chmod_probably_useless
+
+		 catdir HAS_SVN_MIRROR IS_WIN32
+
+		 rmtree mkpath @TOCLEAN $output $answer $show_prompt);
+
+use Test::More;
+push @EXPORT, @Test::More::EXPORT;
+sub import {
+    my $class = shift;
+
+    my $caller = caller;
+    my $tb = Test::More->builder;
+    $tb->exported_to($caller);
+
+    $class->export_to_level(1, @_);
+}
 
 my $pid = $$;
 
+our @TOCLEAN;
 END {
     return unless $$ == $pid;
     rm_test($_) for @TOCLEAN;
 }
 
-use strict;
 use SVK;
-require Data::Hierarchy;
 use File::Path;
 use File::Temp;
 use SVK::Util qw( dirname catdir tmpdir can_run abs_path $SEP $EOL IS_WIN32 HAS_SVN_MIRROR );
-use Test::More;
 require Storable;
 use SVK::Path::Checkout;
 use Clone;
 
 # Fake standard input
 our $answer = [];
+our $output;
+
 our $show_prompt = 0;
 
 BEGIN {
@@ -45,7 +75,7 @@ BEGIN {
 	return $ans->[1];
     } unless $ENV{DEBUG_INTERACTIVE};
 
-    chdir catdir(abs_path(dirname(__FILE__)), '..' );
+#    chdir catdir(abs_path(dirname(__FILE__)), '..' );
 }
 
 sub plan_svm {
@@ -60,15 +90,11 @@ use Carp;
 use SVK;
 use SVK::XD;
 
-our @TOCLEAN;
 END {
     return unless $$ == $pid;
     $SIG{__WARN__} = sub { 1 };
     cleanup_test($_) for @TOCLEAN;
 }
-
-our $output = '';
-our $copath;
 
 for (qw/SVKRESOLVE SVKMERGE SVKDIFF SVKPGP SVKLOGOUTPUT LC_CTYPE LC_ALL LANG LC_MESSAGES/) {
     $ENV{$_} = '' if $ENV{$_};
@@ -159,21 +185,33 @@ sub rm_test {
 
 sub cleanup_test {
     my ($xd, $svk) = @{+shift};
-    for my $depot (sort keys %{$xd->{depotmap}}) {
+    for my $depotname (sort keys %{$xd->{depotmap}}) {
 	my $pool = SVN::Pool->new_default;
-	my (undef, undef, $repos) = eval { $xd->find_repos("/$depot/", 1) };
-	diag "uncleaned txn on /$depot/"
-	    if $repos && @{$repos->fs->list_transactions};
+        my $depot = eval { $xd->find_depot($depotname) } or next;
+        my @txns = @{ $depot->repos->fs->list_transactions };
+        if (@txns) {
+            my $how_many = @txns;
+            diag "uncleaned txns ($how_many) on /$depotname/";
+            if ( $ENV{SVKTESTUNCLEANTXN} ) {
+                for my $txn_name ( sort @txns ) {
+                    my $txn = $depot->repos->fs->open_txn($txn_name);
+                    my $log = $txn->prop('svn:log');
+                    diag "$txn_name: $log";
+                }
+            }
+        }
     }
     return unless $ENV{TEST_VERBOSE};
     use YAML::Syck;
     print Dump($xd);
-    for my $depot (sort keys %{$xd->{depotmap}}) {
+    for my $depotname (sort keys %{$xd->{depotmap}}) {
 	my $pool = SVN::Pool->new_default;
-	my (undef, undef, $repos) = $xd->find_repos ("/$depot/", 1);
-	print "===> depot $depot (".$repos->fs->get_uuid."):\n";
-	$svk->log ('-v', "/$depot/");
-	print ${$svk->{output}};
+        my $depot = eval { $xd->find_depot($depotname) } or next;
+	print "===> depot /$depotname/ (".$depot->repos->fs->get_uuid."):\n";
+	$svk->log ('-v', "/$depotname/");
+        # if DEBUG is set, the log command already printed the log to
+        # stdout; if it isn't, we have to do it ourself
+	print ${$svk->{output}} unless $ENV{DEBUG};
     }
 }
 
@@ -316,15 +354,11 @@ sub is_ancestor {
     goto &is_deeply;
 }
 
-sub copath {
-    SVK::Path::Checkout->copath ($copath, @_);
-}
-
 sub status_native {
     my $copath = shift;
     my @ret;
     while (my ($status, $path) = splice (@_, 0, 2)) {
-	push @ret, join (' ', $status, $copath ? copath ($path) :
+	push @ret, join (' ', $status, $copath ? SVK::Path::Checkout->copath($copath, $path) :
 			 File::Spec->catfile (File::Spec::Unix->splitdir ($path)));
     }
     return @ret;
@@ -355,12 +389,12 @@ sub get_editor {
 }
 
 sub create_basic_tree {
-    my ($xd, $depot) = @_;
+    my ($xd, $depotpath) = @_;
     my $pool = SVN::Pool->new_default;
-    my ($repospath, $path, $repos) = $xd->find_repos ($depot, 1);
+    my ($depot, $path) = $xd->find_depotpath($depotpath);
 
     local $/ = $EOL;
-    my $edit = get_editor ($repospath, $path, $repos);
+    my $edit = get_editor ($depot->repospath, $path, $depot->repos);
     $edit->open_root ();
 
     $edit->modify_file ($edit->add_file ('/me'),
@@ -391,14 +425,14 @@ sub create_basic_tree {
 			    B => {},
 			    C => { child => { R => { child => {}}}}
 			  }};
-    my $rev = $repos->fs->youngest_rev;
-    $edit = get_editor ($repospath, $path, $repos);
+    my $rev = $depot->repos->fs->youngest_rev;
+    $edit = get_editor ($depot->repospath, $path, $depot->repos);
     $edit->open_root ();
     $edit->modify_file ('/me', "first line in me$/2nd line in me - mod$/");
     $edit->modify_file ($edit->add_file ('/B/fe'),
 			"file fe added later$/");
     $edit->delete_entry ('/A/P');
-    $edit->copy_directory('/B/S', "file://${repospath}/${path}/A", $rev);
+    $edit->copy_directory('/B/S', "file://@{[$depot->repospath]}/${path}/A", $rev);
     $edit->modify_file ($edit->add_file ('/D/de'),
 			"file de added later$/");
     $edit->close_edit ();

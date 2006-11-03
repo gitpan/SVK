@@ -1,9 +1,9 @@
 #!/usr/bin/perl -w
 use strict;
 use Test::More;
-BEGIN { require 't/tree.pl' };
+use SVK::Test;
 eval { require SVN::Mirror; 1 } or plan skip_all => 'require SVN::Mirror';
-plan tests => 4;
+plan tests => 7;
 
 my ($xd, $svk) = build_test('test');
 
@@ -51,4 +51,44 @@ is_output($svk, 'log', [-vr5 => '//m'],
 $svk->cat('/test/A/Q/qu');
 my $expected = $output;
 
-is_output($svk, 'cat', ['//m/A/Q/qu'], [split(/\n/,$output)], 'content is the same');
+is_output($svk, 'cat', ['//m/A/Q/qu'], [split(/\n/,$expected)], 'content is the same');
+
+$svk->cp(-m => 'b cp', '/test/B' => '/test/B.cp');
+$svk->up($copath);
+append_file("$copath/B.cp/fe", "modify fe");
+$svk->ci(-m => 'modify fe in B.cp', $copath );
+
+$svk->rm("$copath/B/fe");
+$svk->cp('/test/B.cp/fe', "$copath/B/fe"); # replace with a related file
+append_file("$copath/B/fe", "orz\n");
+$svk->rm("$copath/B/S/be");
+$svk->cp('/test/B.cp/fe', "$copath/B/S/be"); # replace with a unrelated file
+append_file("$copath/B/S/be", "orz\n");
+$svk->cp('/test/A/Q/qz', "$copath/B/fnord");
+$svk->add("$copath/B/fnord");
+$svk->ci(-m => 'replace a file in B from A', $copath );
+
+$svk->rm(-m => 'remove mirror', '//m');
+
+$svk->mirror('//m', "$uri/B");
+
+sleep 1; # so svn:date is definitely different if not mirrored
+
+is_output($svk, 'sync', ['//m'],
+	  ["Syncing $uri/B",
+	   'Retrieving log information from 1 to 7',
+	   'Committed revision 9 from revision 1.',
+	   'Committed revision 10 from revision 2.',
+	   'Committed revision 11 from revision 7.']);
+
+$svk->pg('--revprop', '-r1', 'svn:author', '/test/');
+$expected = $output;
+is_output($svk, 'pg', ['--revprop', '-r9', 'svn:author', '//m'],
+         [split(/\n/, $expected)],
+          'author is mirrored');
+
+$svk->pg('--revprop', '-r1', 'svn:date', '/test/');
+$expected = $output;
+is_output($svk, 'pg', ['--revprop', '-r9', 'svn:date', '//m'],
+         [split(/\n/, $expected)],
+          'date is mirrored');

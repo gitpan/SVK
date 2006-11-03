@@ -14,11 +14,14 @@ use Data::Hierarchy 0.30;
 use autouse 'File::Find' => qw(find);
 use autouse 'File::Path' => qw(rmtree);
 use autouse 'YAML::Syck'	 => qw(LoadFile DumpFile);
-use SVK::Mirror;
+use SVK::MirrorCatalog;
 use PerlIO::eol 0.10 qw( NATIVE LF );
 use PerlIO::via::dynamic;
 use PerlIO::via::symlink;
 use Class::Autouse qw( Path::Class SVK::Editor::Delay );
+use Fcntl qw(:flock);
+use SVK::Depot;
+use SVK::Config;
 
 =head1 NAME
 
@@ -66,7 +69,38 @@ A L<Data::Hierarchy> object for checkout paths mapping.
 
 =item giantlock
 
-A filename for global locking.
+A filename for global locking.  This file protects all read and write
+accesses to the C<statefile>.
+
+When SVK begins to execute any command, it attempt to get a write lock
+on this "giant lock" file.  Once it gets the lock, it writes its PID
+to the file, reads in its C<statefile>, and begins to execute the
+command.  Executing the command consists of a "lock" phase and a "run"
+phase.  During the lock phase, a command can do one of three things:
+request to keep the giant lock for the entire execution (for commands
+which modify large parts of the C<statefile>), request to lock
+individual checkout paths, or not request a lock.
+
+In the first case, the command sets the C<hold_giant> field on the
+L<SVK::Command> object (this should probably change to a real API),
+and the command does not release the giant lock until it is finished;
+it can rewrite the C<statefile> at the end of its execution without
+waiting on the lock, since it already holds it.
+
+In the second case, the command calls C<lock> on the L<SVK::XD> object
+one or more times; this places a "lock" entry inside the
+L<Data::Hierarchy> object in the statefile next to each locked path,
+unless they are already locked by another process.  Between its lock
+phase and its run phase, the C<statefile> is written to disk (with the
+new C<lock> entries) and the giant lock is dropped.  After the run
+phase, SVK acquires the giant lock again, reads in the C<statefile>,
+copies all entries from the paths that it has locked into the version
+it just read, clears the lock entries from the hierarchy, writes the
+C<statefile> to disk, and drops the giant lock.  Any changes to the
+hierarchy other than in the locked paths will be ignored.
+
+In the third case, SVK just drops the giant lock after the lock phase
+and never tries to read or write the C<statefile> again.
 
 =item statefile
 
@@ -180,6 +214,10 @@ giant is unlocked.
 
 sub _store_config {
     my ($self, $hash) = @_;
+
+    $self->{giantlock_handle} or
+        die "Internal error: trying to save config without a lock!\n";
+
     local $SIG{INT} = sub { warn loc("Please hold on a moment. SVK is writing out a critical configuration file.\n")};
 
     my $file = $self->{statefile};
@@ -219,10 +257,15 @@ sub store {
     $self->{updated} = 1;
     return unless $self->{statefile};
     local $@;
-    if ($self->{giantlocked}) {
+    if ($self->{giantlock_handle}) {
+        # We never gave up the giant lock, so nobody should have written to
+        # the state file, so we can go ahead and write it out.
 	$self->_store_config ($self);
     }
     elsif ($self->{modified}) {
+        # We don't have the giant lock, but we do have something to
+        # change, so get the lock, read in the current state, merge in
+        # the changes from the paths we locked, and write it out.
 	$self->giant_lock ();
 	my $info = LoadFile ($self->{statefile});
 	$info->{checkout} = $info->{checkout}->to_absolute($self->{floating})
@@ -238,8 +281,7 @@ sub store {
 =item lock
 
 Lock the given checkout path, store the state with the lock info to
-prevent other instances from modifying locked paths. The giant lock is
-released afterward.
+prevent other instances from modifying locked paths.
 
 =cut
 
@@ -250,13 +292,11 @@ sub lock {
     }
     $self->{checkout}->store ($path, {lock => $$});
     $self->{modified} = 1;
-    $self->_store_config($self) if $self->{statefile};
-    $self->giant_unlock ();
 }
 
 =item unlock
 
-Unlock All the checkout paths that was locked by this instance.
+Unlock all the checkout paths that were locked by this instance.
 
 =cut
 
@@ -269,7 +309,7 @@ sub unlock {
 
 =item giant_lock
 
-Lock the statefile globally. No other instances need to wait for the
+Lock the statefile globally. All other instances need to wait for the
 lock before they can do anything.
 
 =cut
@@ -277,10 +317,20 @@ lock before they can do anything.
 sub giant_lock {
     my ($self) = @_;
     return unless $self->{giantlock};
+    my $lock_handle;
+
+    my $DIE = sub { my $verb = shift; die "can't $verb giant lock ($self->{giantlock}): $!\n" };
 
     LOCKED: {
         for (1..5) {
-            -e $self->{giantlock} or last LOCKED;
+            open($lock_handle, '>>', $self->{giantlock}) or $DIE->('open');
+
+            # Try to get an exclusive lock; don't block
+            my $success = flock $lock_handle, LOCK_EX | LOCK_NB;
+            last LOCKED if $success;
+
+            # Somebody else has it locked; try again in a second.
+            close($lock_handle);
             sleep 1;
         }
 
@@ -288,11 +338,13 @@ sub giant_lock {
         die loc("Another svk might be running; remove %1 if not.\n", $self->{giantlock});
     }
 
-    open my ($lock), '>', $self->{giantlock}
-	or die loc("Cannot acquire giant lock %1:%2.\n", $self->{giantlock}, $!);
-    print $lock $$;
-    close $lock;
-    $self->{giantlocked} = 1;
+    # We've got the lock. For diagnostic purposes, write out our PID.
+    seek($lock_handle, 0, 0) or $DIE->('rewind');
+    truncate($lock_handle, 0) or $DIE->('truncate');
+    $lock_handle->autoflush(1);
+    (print $lock_handle $$) or $DIE->('write');
+
+    $self->{giantlock_handle} = $lock_handle;
 }
 
 =item giant_unlock
@@ -305,9 +357,11 @@ Release the giant lock.
 
 sub giant_unlock {
     my ($self) = @_;
-    return unless $self->{giantlock};
+    return unless $self->{giantlock} and $self->{giantlock_handle};
+
+    close $self->{giantlock_handle};
     unlink ($self->{giantlock});
-    delete $self->{giantlocked};
+    delete $self->{giantlock_handle};
 }
 
 =head2 Depot and path translation
@@ -333,6 +387,7 @@ repository to be opened.
 
 =cut
 
+# DEPRECATED
 sub find_repos {
     my ($self, $depotpath, $open) = @_;
     die loc("no depot spec") unless $depotpath;
@@ -343,6 +398,25 @@ sub find_repos {
     my $repospath = $self->{depotmap}{$depot} or die loc("No such depot: %1.\n", $depot);
 
     return ($repospath, $path, $open && _open_repos ($repospath));
+}
+
+sub find_depotpath {
+    my ($self, $depotpath) = @_;
+    die loc("no depot spec") unless $depotpath;
+    my ($depotname, $path) = $depotpath =~ m|^/([^/]*)(/.*?)/?$|
+	or die loc("%1 is not a depot path.\n", $depotpath);
+    $path = Path::Class::foreign_dir('Unix', $path)->stringify;
+
+    return ( $self->find_depot($depotname), $path );
+}
+
+sub find_depot {
+    my ($self, $depotname) = @_;
+    my $repospath = $self->{depotmap}{$depotname} or die loc("No such depot: %1.\n", $depotname);
+
+    return SVK::Depot->new( { depotname => $depotname,
+                              repospath => $repospath,
+                              repos => _open_repos($repospath) } );
 }
 
 =item find_repos_from_co
@@ -480,7 +554,6 @@ sub create_path_object {
     if (my $depotpath = delete $arg{depotpath}) {
 	($arg{depotname}) = $depotpath =~ m!^/([^/]*)!;
     }
-    $arg{mirror} ||= $self->mirror($arg{repos});
 
     if (defined (my $copath = delete $arg{copath_anchor})) {
 	require SVK::Path::Checkout;
@@ -493,9 +566,15 @@ sub create_path_object {
     }
 
     my $path;
+    unless ($arg{depot}) {
+        my $depotname = delete $arg{depotname};
+        my $repospath = delete $arg{repospath};
+        my $repos     = delete $arg{repos};
+        $arg{depot} = SVK::Depot->new({ depotname => $depotname, repos => $repos, repospath => $repospath });
+    }
     if (defined (my $view = delete $arg{view})) {
 	require SVK::Path::View;
-	$path = SVK::Path::View->real_new
+        $path = SVK::Path::View->real_new
 	    ({ source => $self->create_path_object(%arg),
 	       view => $view,
 	       %arg });
@@ -581,7 +660,7 @@ sub _load_svn_autoprop {
     $self->{svnautoprop} = {};
     local $@;
     eval {
-	$self->{svnconfig}{config}->
+        SVK::Config->svnconfig->{config}->
 	    enumerate ('auto-props',
 		       sub { $self->{svnautoprop}{compile_apr_fnmatch($_[0])} = $_[1]; 1} );
     };
@@ -604,7 +683,7 @@ sub auto_prop {
     }
 
     # svn auto-prop
-    if ($self->{svnconfig} && $self->{svnconfig}{config}->get_bool ('miscellany', 'enable-auto-props', 0)) {
+    if (SVK::Config->svnconfig && SVK::Config->svnconfig->{config}->get_bool ('miscellany', 'enable-auto-props', 0)) {
 	$self->_load_svn_autoprop unless $self->{svnautoprop};
 	my (undef, undef, $filename) = splitpath ($copath);
 	while (my ($pattern, $value) = each %{$self->{svnautoprop}}) {
@@ -839,8 +918,8 @@ sub ignore {
     my $more_ignores = shift;
 
     no warnings;
-    my $ignore = $self->{svnconfig} ?
-	           $self->{svnconfig}{config}->
+    my $ignore = SVK::Config->svnconfig ?
+	           SVK::Config->svnconfig->{config}->
 		   get ('miscellany', 'global-ignores', '') : '';
     my @ignore = split / /,
 	($ignore || "*.o *.lo *.la #*# .*.rej *.rej .*~ *~ .#* .DS_Store");
@@ -1437,7 +1516,7 @@ sub checkout_delta {
     my $cb_resolve_rev = $arg{cb_resolve_rev} ||= sub { $_[1] };
     # XXX: translate $repospath to use '/'
     $arg{cb_copyfrom} ||= $arg{expand_copy} ? sub { (undef, -1) }
-	: sub { ("file://$repospath$_[0]", $_[1]) };
+	: sub { my $path = $_[0]; $path =~ s/%/%25/g; ("file://$repospath$path", $_[1]) };
     my ($entry) = $self->get_entry($arg{copath});
     my $rev = $arg{cb_resolve_rev}->($arg{path}, $entry->{revision});
     local $SIG{INT} = sub {
@@ -1699,20 +1778,6 @@ sub patch_file {
     my ($self, $name) = @_;
     return '-' if $name eq '-';
     return catdir ($self->patch_directory, "$name.patch");
-}
-
-sub _mirror {
-    my ($self, $repos) = @_;
-    return SVK::Mirror->new
-	( { repos => $repos,
-	    config => $self->{svnconfig},
-	    revprop => ['svk:signature'] });
-}
-
-sub mirror {
-    my ($self, $repos) = @_;
-    return $repos ? $self->_mirror($repos) :
-	map { $self->_mirror($_) } values %{$self->{depotmap}};
 }
 
 sub DESTROY {

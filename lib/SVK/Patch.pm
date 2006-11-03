@@ -57,10 +57,9 @@ sub new {
     my $self = bless { name   => $name,
 		       level  => 0,
 		       _xd    => $xd,
-		       _depot => $depotname,
 		       _source => $src,
 		       _target => $dst }, $class;
-    (undef, undef, $self->{_repos}) = $self->{_xd}->find_repos ("/$self->{_depot}/", 1);
+    $self->{_depot} = $self->{_xd}->find_depot($depotname);
     $self->{source} = $self->{_source}->universal if $self->{_source};
     $self->{target} = $self->{_target}->universal;
     return $self;
@@ -97,13 +96,13 @@ sub load {
 
     my ($self) = thaw (uncompress (decode_base64 ( $content ) ) );
     $self->{_xd} = $xd;
-    $self->{_depot} = $depot;
+    $self->{_depot} = $self->{_xd}->find_depot($depot);
 
     my $not_applicable;
 
     for (qw/source target/) {
 	next unless $self->{$_};
-	my $tmp = $self->{"_$_"} = $self->{$_}->local ($xd, $depot) or next;
+	my $tmp = $self->{"_$_"} = $self->{$_}->local($self->{_depot}) or next;
 	$tmp = $tmp->new->refresh_revision;
 	if (wantarray) {
 	    eval { $tmp->normalize };
@@ -115,7 +114,6 @@ sub load {
 	$self->{"_${_}_updated"} = 1
 	    if $tmp->{revision} > $self->{"_$_"}->revision;
     }
-    (undef, undef, $self->{_repos}) = $self->{_xd}->find_repos ("/$self->{_depot}/", 1);
     return wantarray ? ($self, $not_applicable) : $self;
 }
 
@@ -160,28 +158,28 @@ sub editor {
 sub _path_attribute_text {
     my ($self, $type, $no_label) = @_;
     # XXX: check if source / target is updated
-    my ($local, $mirrored, $updated);
+    my ($local, $m, $updated);
     if (my $target = $self->{"_$type"}) {
 	if ($target->repos->fs->get_uuid eq $self->{$type}{uuid}) {
 	    ++$local;
 	}
 	else {
-	    $mirrored = $target->is_mirrored or die;
+	    $m= $target->is_mirrored or die;
 	}
     }
     my $label = $no_label ? '' : join(
 	' ', '',
 	($local ? '[local]' : ()),
-	($mirrored ? '[mirrored]' : ()),
+	($m? '[mirrored]' : ()),
 	($self->{"_${type}_updated"} ? '[updated]' : ())
     );
-    $label .= "\n        ($mirrored->{source})" if $mirrored;
+    $label .= "\n        (".$m->url.")" if $m;
     return $label;
 }
 
 sub view {
     my ($self, $output) = @_;
-    my $fs = $self->{_repos}->fs;
+    my $fs = $self->{_depot}->repos->fs;
 
     die loc("Target not local nor mirrored, unable to view patch.\n")
 	unless $self->{_target};
@@ -284,7 +282,7 @@ sub regen {
     }
     my $source = $self->{_source}->new->refresh_revision;
     $source->normalize;
-    my $merge = SVK::Merge->auto (repos => $self->{_repos}, xd => $self->{_xd},
+    my $merge = SVK::Merge->auto (repos => $self->{_depot}->repos, xd => $self->{_xd},
 				  src => $source, dst => $target);
     my $conflict;
     my $patch = SVK::Editor::Patch->new;

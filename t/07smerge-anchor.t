@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
-BEGIN { require 't/tree.pl' };
-plan_svm tests => 5;
+use SVK::Test;
+plan tests => 5;
 our $output;
 
 # build another tree to be mirrored ourself
@@ -14,7 +14,8 @@ my ($copath, $corpath) = get_copath ('smerge-anchor');
 my ($scopath, $scorpath) = get_copath ('smerge-anchor-source');
 
 my ($srepospath, $spath, $srepos) = $xd->find_repos ('/test/', 1);
-my ($repospath, undef, $repos) = $xd->find_repos ('//', 1);
+my $depot = $xd->find_depot('');
+my $repos = $depot->repos;
 
 $svk->mirror ('//m', uri($srepospath).($spath eq '/' ? '' : $spath));
 $svk->sync ('//m');
@@ -54,7 +55,7 @@ is_output_like ($svk, 'smerge', ['-m', 'simple smerge from local', '//l', '//m/A
 		qr|base /m/A:8|);
 
 is_deeply ((SVK::Path->real_new
-			     ({ repos => $repos,
+			     ({ depot => $depot,
 			       path => '/m/A',
 			       revision => $repos->fs->youngest_rev,
 			      })->root->node_proplist('/m/A')),

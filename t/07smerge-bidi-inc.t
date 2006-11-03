@@ -4,8 +4,8 @@ use Test::More;
 use Cwd;
 use File::Path;
 
-BEGIN { require 't/tree.pl' };
-plan_svm tests => 6;
+use SVK::Test;
+plan tests => 6;
 
 # These tests actually use push and pull, in the hope that I'll get less
 # confused. This should be okay, because other tests demonstrate that

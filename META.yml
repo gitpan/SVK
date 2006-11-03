@@ -1,7 +1,10 @@
 abstract: A decentralized version control system
 author: Chia-liang Kao <clkao@clkao.org>
+build_requires: 
+  Clone: 0
+  Test::More: 0.42
 distribution_type: module
-generated_by: Module::Install version 0.63
+generated_by: Module::Install version 0.640
 license: perl
 name: SVK
 no_index: 
@@ -11,27 +14,27 @@ no_index:
 provides: 
   SVK: 
     file: lib/SVK.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Accessor: 
     file: lib/SVK/Accessor.pm
   SVK::Command: 
     file: lib/SVK/Command.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Add: 
     file: lib/SVK/Command/Add.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Admin: 
     file: lib/SVK/Command/Admin.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Annotate: 
     file: lib/SVK/Command/Annotate.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Cat: 
     file: lib/SVK/Command/Cat.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Checkout: 
     file: lib/SVK/Command/Checkout.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Checkout::detach: 
     file: lib/SVK/Command/Checkout.pm
   SVK::Command::Checkout::list: 
@@ -42,22 +45,22 @@ provides:
     file: lib/SVK/Command/Checkout.pm
   SVK::Command::Cleanup: 
     file: lib/SVK/Command/Cleanup.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Cmerge: 
     file: lib/SVK/Command/Cmerge.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Commit: 
     file: lib/SVK/Command/Commit.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Copy: 
     file: lib/SVK/Command/Copy.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Delete: 
     file: lib/SVK/Command/Delete.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Depotmap: 
     file: lib/SVK/Command/Depotmap.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Depotmap::add: 
     file: lib/SVK/Command/Depotmap.pm
   SVK::Command::Depotmap::detach: 
@@ -68,34 +71,34 @@ provides:
     file: lib/SVK/Command/Depotmap.pm
   SVK::Command::Describe: 
     file: lib/SVK/Command/Describe.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Diff: 
     file: lib/SVK/Command/Diff.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Help: 
     file: lib/SVK/Command/Help.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Ignore: 
     file: lib/SVK/Command/Ignore.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Import: 
     file: lib/SVK/Command/Import.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Info: 
     file: lib/SVK/Command/Info.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::List: 
     file: lib/SVK/Command/List.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Log: 
     file: lib/SVK/Command/Log.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Merge: 
     file: lib/SVK/Command/Merge.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Mirror: 
     file: lib/SVK/Command/Mirror.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Mirror::detach: 
     file: lib/SVK/Command/Mirror.pm
   SVK::Command::Mirror::list: 
@@ -110,13 +113,13 @@ provides:
     file: lib/SVK/Command/Mirror.pm
   SVK::Command::Mkdir: 
     file: lib/SVK/Command/Mkdir.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Move: 
     file: lib/SVK/Command/Move.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Patch: 
     file: lib/SVK/Command/Patch.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Patch::FileRequired: 
     file: lib/SVK/Command/Patch.pm
   SVK::Command::Patch::apply: 
@@ -137,80 +140,91 @@ provides:
     file: lib/SVK/Command/Patch.pm
   SVK::Command::Propdel: 
     file: lib/SVK/Command/Propdel.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Propedit: 
     file: lib/SVK/Command/Propedit.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Propget: 
     file: lib/SVK/Command/Propget.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Proplist: 
     file: lib/SVK/Command/Proplist.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Propset: 
     file: lib/SVK/Command/Propset.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Pull: 
     file: lib/SVK/Command/Pull.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Push: 
     file: lib/SVK/Command/Push.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Resolved: 
     file: lib/SVK/Command/Resolved.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Revert: 
     file: lib/SVK/Command/Revert.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Smerge: 
     file: lib/SVK/Command/Smerge.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Status: 
     file: lib/SVK/Command/Status.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Switch: 
     file: lib/SVK/Command/Switch.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Sync: 
     file: lib/SVK/Command/Sync.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Update: 
     file: lib/SVK/Command/Update.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Command::Verify: 
     file: lib/SVK/Command/Verify.pm
-    version: 1.99_01
+    version: 1.99_02
+  SVK::Config: 
+    file: lib/SVK/Config.pm
+    version: 1.99_02
+  SVK::Depot: 
+    file: lib/SVK/Depot.pm
+    version: 1.99_02
   SVK::Editor: 
     file: lib/SVK/Editor.pm
   SVK::Editor::ByPass: 
     file: lib/SVK/Editor/ByPass.pm
   SVK::Editor::Checkout: 
     file: lib/SVK/Editor/Checkout.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::Combine: 
     file: lib/SVK/Editor/Combine.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::Combiner: 
     file: lib/SVK/Editor/Combiner.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::Composite: 
     file: lib/SVK/Editor/Composite.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::Copy: 
     file: lib/SVK/Editor/Copy.pm
-    version: 1.99_01
+    version: 1.99_02
+  SVK::Editor::CopyHandler: 
+    file: lib/SVK/Editor/CopyHandler.pm
+    version: 1.99_02
   SVK::Editor::Delay: 
     file: lib/SVK/Editor/Delay.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::Diff: 
     file: lib/SVK/Editor/Diff.pm
-    version: 1.99_01
+    version: 1.99_02
+  SVK::Editor::Dynamic: 
+    file: lib/SVK/Editor/Dynamic.pm
   SVK::Editor::InteractiveCommitter: 
     file: lib/SVK/Editor/InteractiveCommitter.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::InteractiveStatus: 
     file: lib/SVK/Editor/InteractiveStatus.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::InteractiveStatus::Action: 
     file: lib/SVK/Editor/InteractiveStatus.pm
   SVK::Editor::InteractiveStatus::AddDirectoryAction: 
@@ -233,27 +247,33 @@ provides:
     file: lib/SVK/Editor/InteractiveStatus.pm
   SVK::Editor::Merge: 
     file: lib/SVK/Editor/Merge.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::Patch: 
     file: lib/SVK/Editor/Patch.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::Rename: 
     file: lib/SVK/Editor/Rename.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::Sign: 
     file: lib/SVK/Editor/Sign.pm
   SVK::Editor::Status: 
     file: lib/SVK/Editor/Status.pm
-    version: 1.99_01
+    version: 1.99_02
+  SVK::Editor::SubTree: 
+    file: lib/SVK/Editor/SubTree.pm
+    version: 1.99_02
   SVK::Editor::Translate: 
     file: lib/SVK/Editor/Translate.pm
-    version: 1.99_01
+    version: 1.99_02
+  SVK::Editor::TxnCleanup: 
+    file: lib/SVK/Editor/TxnCleanup.pm
+    version: 1.99_02
   SVK::Editor::View: 
     file: lib/SVK/Editor/View.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Editor::XD: 
     file: lib/SVK/Editor/XD.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::I18N: 
     file: lib/SVK/I18N.pm
   SVK::Inspector: 
@@ -300,28 +320,32 @@ provides:
     file: lib/SVK/MimeDetect/Internal.pm
   SVK::Mirror: 
     file: lib/SVK/Mirror.pm
-  SVK::Mirror::Entry: 
-    file: lib/SVK/Mirror.pm
+  SVK::Mirror::Backend::SVNRa: 
+    file: lib/SVK/Mirror/Backend/SVNRa.pm
+  SVK::Mirror::Backend::SVNSync: 
+    file: lib/SVK/Mirror/Backend/SVNSync.pm
+  SVK::MirrorCatalog: 
+    file: lib/SVK/MirrorCatalog.pm
   SVK::Notify: 
     file: lib/SVK/Notify.pm
   SVK::Patch: 
     file: lib/SVK/Patch.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Patch::CommitEditor: 
     file: lib/SVK/Patch.pm
   SVK::Patchset: 
     file: lib/SVK/Patchset.pm
   SVK::Path: 
     file: lib/SVK/Path.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Path::Checkout: 
     file: lib/SVK/Path/Checkout.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Path::Txn: 
     file: lib/SVK/Path/Txn.pm
   SVK::Path::View: 
     file: lib/SVK/Path/View.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::Resolve: 
     file: lib/SVK/Resolve.pm
   SVK::Resolve::AraxisMerge: 
@@ -362,31 +386,36 @@ provides:
     file: lib/SVK/Root/View.pm
   SVK::Target::Universal: 
     file: lib/SVK/Target/Universal.pm
-    version: 1.99_01
+    version: 1.99_02
+  SVK::Test: 
+    file: lib/SVK/Test.pm
+    version: 1.99_02
   SVK::Util: 
     file: lib/SVK/Util.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::VerifyEditor: 
     file: lib/SVK/Command/Verify.pm
   SVK::View: 
     file: lib/SVK/View.pm
   SVK::XD: 
     file: lib/SVK/XD.pm
-    version: 1.99_01
+    version: 1.99_02
   SVK::XD::Root: 
     file: lib/SVK/XD.pm
   SVK::XD::Signature: 
     file: lib/SVK/XD.pm
+  Tie::StdScalar::Tee: 
+    file: lib/SVK/Test.pm
 requires: 
   Algorithm::Annotate: 0
-  Algorithm::Diff: 0
+  Algorithm::Diff: 1.1901
   App::CLI: 0
   Class::Accessor::Fast: 0
   Class::Autouse: 1.15
   Class::Data::Inheritable: 0
   Data::Hierarchy: 0.30
   Encode: 2.10
-  File::Spec: 3.14
+  File::Spec: 3.19
   File::Temp: 0.14
   Getopt::Long: 2.35
   IO::Digest: 0
@@ -397,9 +426,10 @@ requires:
   PerlIO::via::symlink: 0.02
   Pod::Escapes: 0
   Pod::Simple: 0
-  SVN::Mirror: 0.69_2
+  SVN::Mirror: 0.71
   SVN::Simple::Edit: 0.27
+  UNIVERSAL::require: 0
   URI: 0
   YAML::Syck: 0.60
 tests: t/*.t t/*/*.t
-version: 1.99_01
+version: 1.99_03

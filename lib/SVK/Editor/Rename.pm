@@ -148,6 +148,10 @@ sub adjust_anchor {
     @$entry = [];
 }
 
+sub adjust_last_anchor {
+    $_[0]->adjust_anchor($_[0]{edit_tree}[0][-1]);
+}
+
 sub _insert_entry {
     my ($self, $anchor, $entry) = @_;
     # move the call to a proper place.
@@ -169,6 +173,14 @@ sub close_edit {
     # XXX: addition phase here to trim useless opens.
     $self->drive ($self->{editor});
 #SVN::Delta::Editor->new (_debug => 1, _editor => [$self->{editor}]));
+}
+
+# Make sure driven editor aborts too.
+sub abort_edit {
+    my $self = shift;
+    $self->SUPER::abort_edit (@_);
+    my $r = $self->{editor}->abort_edit(@_);
+    return $r;
 }
 
 =head1 AUTHORS

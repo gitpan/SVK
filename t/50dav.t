@@ -11,7 +11,7 @@ require lib;
 use SVK::Util qw(can_run);
 
 BEGIN {
-    require 't/tree.pl';
+use SVK::Test;
     plan (skip_all => "Test does not run under root") if $> == 0;
     eval { require Apache2 };
     eval { require Apache::Test;
@@ -48,7 +48,7 @@ unless ($cfg->can('find_and_load_module') and
     plan skip_all => "Can't find mod_dav_svn";
 }
 
-plan_svm tests => 11;
+plan tests => 13;
 
 my $utf8 = SVK::Util::get_encoding;
 
@@ -137,3 +137,16 @@ is_output ($svk, 'commit', [],
 	    qr'Commit message saved in (.*)\.']);
 ($filename) = $output =~ m/saved in (.*)\./s;
 is_file_content ($filename, "from editor\n");
+
+$uri = "file://$srepospath/A";
+is_output ($svk, 'mi', ['--relocate', $uri, '//remote'],
+	   ['Mirror relocated.']);
+
+is_output ($svk, 'commit', [-m => 'go'],
+	   ['Commit into mirrored path: merging back directly.',
+	    "Merging back to mirror source $uri.",
+	    'Merge back committed as revision 6.',
+	    'Syncing '.$uri,
+	    'Retrieving log information from 5 to 6',
+	    'Committed revision 10 from revision 5.',
+	    'Committed revision 11 from revision 6.']);

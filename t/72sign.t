@@ -1,14 +1,14 @@
 #!/usr/bin/perl -w
 use strict;
 use SVK::Util qw( is_executable );
-BEGIN { require 't/tree.pl' };
+use SVK::Test;
 {
     local $SIG{__WARN__} = sub { 1 };
     plan skip_all => 'gnupg not found'
         unless (`gpg --version` || '') =~ /GnuPG/;
     plan (skip_all => "Test does not work with BDB") if $ENV{SVNFSTYPE} eq 'bdb';
 }
-plan_svm tests => 9;
+plan tests => 9;
 our $output;
 
 mkpath ["t/checkout/sign-gnupg"], 0, 0700 unless -d "t/checkout/sign-gnupg";

@@ -5,7 +5,7 @@ use SVK::Version;  our $VERSION = $SVK::VERSION;
 use Getopt::Long qw(:config no_ignore_case bundling);
 
 use SVK::Util qw( get_prompt abs2rel abs_path is_uri catdir bsd_glob from_native
-		  find_svm_source $SEP IS_WIN32 HAS_SVN_MIRROR catdepot traverse_history);
+		  find_svm_source $SEP IS_WIN32 catdepot traverse_history);
 use SVK::I18N;
 use Encode;
 use constant subcommands => '*';
@@ -109,7 +109,7 @@ sub invoke {
 
     local *ARGV = [$cmd, @args];
     $ofh = select $output if $output;
-    $ret = eval {$pkg->dispatch ($xd ? (xd => $xd, svnconfig => $xd->{svnconfig}) : (),
+    $ret = eval {$pkg->dispatch ($xd ? (xd => $xd) : (),
 				 output => $output) };
 
     $ofh = select STDERR unless $output;
@@ -172,7 +172,7 @@ sub run_command {
 	else {
 	    $self->msg_handler ($SVN::Error::FS_NO_SUCH_REVISION);
 	    eval { $self->lock (@args);
-		   $self->{xd}->giant_unlock if $self->{xd} && !$self->{hold_giant};
+		   $self->{xd}->store if $self->{xd} && !$self->{hold_giant};
 		   $ret = $self->run (@args) };
 	    $self->{xd}->unlock if $self->{xd};
 	    die $@ if $@;
@@ -343,25 +343,22 @@ sub arg_uri_maybe {
     my ($self, $arg, $no_new_mirror) = @_;
 
     is_uri($arg) or return $self->arg_depotpath($arg);
-    HAS_SVN_MIRROR or die loc("cannot load SVN::Mirror");
 
     $arg =~ s{/?$}{/}; # add a trailing slash at the end
 
     require URI;
     my $uri = URI->new($arg)->canonical or die loc("%1 is not a valid URI.\n", $arg);
     my $map = $self->{xd}{depotmap};
-    foreach my $depot (sort keys %$map) {
-        my $repos = eval { ($self->{xd}->find_repos ("/$depot/", 1))[2] } or next;
-	my %mirrors = $self->{xd}->mirror($repos)->entries;
-	foreach my $path (sort keys %mirrors) {
-	    my $m = $mirrors{$path}->mirror;
-
-            my $rel_uri = $uri->rel(URI->new("$m->{source}/")->canonical) or next;
+    foreach my $depotname (sort keys %$map) {
+        my $depot = eval { $self->{xd}->find_depot($depotname) } or next;
+	foreach my $path ($depot->mirror->entries) {
+	    my $m = $depot->mirror->get($path);
+            my $rel_uri = $uri->rel(URI->new($m->url."/")->canonical) or next;
             next if $rel_uri->eq($uri);
             next if $rel_uri =~ /^\.\./;
 
-            my $depotpath = catdepot($depot, $path, $rel_uri);
-            $depotpath = "/$depotpath" if !length($depot);
+            my $depotpath = catdepot($depot->depotname, $path, $rel_uri);
+            $depotpath = "/$depotpath" if !length($depot->depotname);
             return $self->arg_depotpath($depotpath);
 	}
     }
@@ -433,7 +430,7 @@ usually good enough.
     my ($m, $answer);
     $m = $target->is_mirrored;
     # If the user is mirroring from svn
-    if (UNIVERSAL::isa($m,'SVN::Mirror::Ra'))  {
+    if ($m) {
         print loc("
 svk needs to mirror the remote repository so you can work locally.
 If you're mirroring a single branch, it's safe to use any of the options
@@ -504,7 +501,6 @@ sub arg_co_maybe {
 	( repos => $repos,
 	  repospath => $repospath,
 	  depotpath => $cinfo->{depotpath} || $arg,
-	  mirror => $self->{xd}->mirror($repos),
 	  path => $path,
 	  view => $view,
 	  revision => $rev,
@@ -542,7 +538,6 @@ sub arg_copath {
 	   source => $self->{xd}->create_path_object
 	   ( repos => $repos,
 	     repospath => $repospath,
-	     mirror => $self->{xd}->mirror($repos),
 	     path => $path,
 	     view => $view,
 	     revision => $cinfo->{revision}, # make this sane!
@@ -561,9 +556,8 @@ sub _resolve_anchor {
     $anchor = Path::Class::Dir->new_foreign('Unix', $anchor);
     $anchor =~ s/^\&\:// or return $anchor;
     $anchor = Path::Class::Dir->new_foreign('Unix', $anchor);
-    my ($uuid, $path) = find_svm_source($repos, $base);
+    my ($uuid, $path) = find_svm_source($repos, "$base");
     return $anchor->relative($path)->absolute($base);
-
 }
 
 sub create_view {
@@ -578,7 +572,7 @@ sub create_view {
 	   revision => $rev, pool => SVN::Pool->new });
     $viewobj->pool(SVN::Pool->new);
     my $root = $fs->revision_root($rev);
-    my $content = $root->node_prop ($viewbase, "svk:view:$viewname");
+    my $content = $root->node_prop("$viewbase", "svk:view:$viewname");
     die loc("Unable to create view '%1' from on %2 for revision %3.\n",
 	    $viewname, $viewbase, $rev)
 	unless defined $content;
@@ -589,7 +583,7 @@ sub create_view {
 	unless $root->check_path("$anchor");
     $viewobj->anchor($anchor);
 
-    $root->dir_entries($anchor); # XXX: for some reasons fsfs needs refresh
+    $root->dir_entries("$anchor"); # XXX: for some reasons fsfs needs refresh
 
     for (@content) {
 	my ($del, $path, $target) = m/\s*(-)?(\S+)\s*(\S+)?\s*$/ or die "can't parse $_";
@@ -619,20 +613,18 @@ sub arg_depotpath {
     my ($self, $arg) = @_;
     my $root;
     my $rev = $arg =~ s/\@(\d+)$// ? $1 : undef;
-    my ($repospath, $path, $repos) = $self->{xd}->find_repos ($arg, 1);
+    my ($depot, $path) = $self->{xd}->find_depotpath($arg);
     my $view;
     from_native ($path, 'path', $self->{encoding});
     if (($view) = $path =~ m{^/\^([\w\-_/]+)$}) {
-	($path, $view) = $self->create_view($repos, $view, $rev);
+	($path, $view) = $self->create_view($depot->repos, $view, $rev);
     }
 
     return $self->{xd}->create_path_object
-	( repos => $repos,
-	  repospath => $repospath,
+	( depot => $depot,
 	  path => $path,
 	  report => $arg,
 	  revision => $rev,
-	  depotpath => $arg,
 	  view => $view,
 	);
 }
@@ -1028,11 +1020,15 @@ sub resolve_chgspec {
     return @revlist;
 }
 
+# Looks in revspec or change (not in chgspec, which is more complicated)
+
 sub resolve_revspec {
     my ($self,$target) = @_;
     my $fs = $target->repos->fs;
     my $yrev = $fs->youngest_rev;
     my ($r1,$r2);
+    die loc("Can't assign --revision and --change at the same time.\n")
+      if defined $self->{revspec} and defined $self->{change};
     if (my $revspec = $self->{revspec}) {
         if ($#{$revspec} > 1) {
             die loc ("Invalid -r.\n");
@@ -1041,6 +1037,19 @@ sub resolve_revspec {
             ($r1, $r2) = map {
                 $self->resolve_revision($target,$_);
             } @$revspec;
+        }
+    } elsif (defined(my $change = $self->{change})) {
+        my $flip;
+        $flip = 1 if $change =~ s/^-//;
+
+        my $r = $self->resolve_revision($target, $change);
+
+        if ($r == 0) {
+            die loc("There is no change 0.\n");
+        } elsif ($flip) {
+            ($r1, $r2) = ($r, $r-1);
+        } else {
+            ($r1, $r2) = ($r-1, $r);
         }
     }
     return($r1,$r2);
@@ -1059,7 +1068,7 @@ sub resolve_revision {
     } elsif ($revstr =~ /\{(\d\d\d\d-\d\d-\d\d)\}/) { 
         my $date = $1; $date =~ s/-//g;
         $rev = $self->find_date_rev($target,$date);
-    } elsif (HAS_SVN_MIRROR && (my ($rrev) = $revstr =~ m'^(\d+)@$')) {
+    } elsif ((my ($rrev) = $revstr =~ m'^(\d+)@$')) {
 	if (my $m = $target->is_mirrored) {
 	    $rev = $m->find_local_rev ($rrev);
 	}
@@ -1081,7 +1090,7 @@ sub find_date_rev {
     my $fs = $target->repos->fs;
     my $yrev = $fs->youngest_rev;
 
-    my ($rev,$last);
+    my $rev = 0;
     traverse_history (
         root        => $fs->revision_root($yrev),
         path        => $target->path,
@@ -1090,14 +1099,13 @@ sub find_date_rev {
             my $revdate = $props->{'svn:date'};
             $revdate =~ s/T.*$//; $revdate =~ s/-//g;
             if($date > $revdate) {
-                $rev = ($last || $_[1]);
+                $rev = $_[1];
                 return 0;
             }
-            $last = $_[1];
             return 1;
         },
     );
-    return $rev || $last;
+    return $rev;
 }
 
 

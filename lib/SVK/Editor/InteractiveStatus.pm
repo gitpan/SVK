@@ -354,7 +354,7 @@ sub AUTOLOAD {
         add_file open_file add_directory open_directory apply_textdelta
         change_file_prop close_file change_dir_prop close_directory);
 
-    my $pos = SVK::Editor::Patch->baton_at($name);
+    my $pos = SVK::Editor->baton_at($name);
     if ($pos >= 0) {
         *$AUTOLOAD = sub {
             my ($action, $editor, @args) = @_;
@@ -541,7 +541,17 @@ sub on_apply_textdelta {
     
     my $fh1 = $editor->{inspector}->localmod($path, '', $pool)->[0];
 
-    $self->{old_content} = [<$fh1>];
+    {
+        # XXX: some swig build doesn't like like mg $/ used in
+        # SVN::Stream::readline, so we have to deal with the complicated last newline
+        local $/;
+        my $buf = <$fh1>;
+        if (length $buf) {
+            $self->{old_content} = [map { "$_\n" } $buf =~ m/^.*$/mg ];
+            substr($self->{old_content}[-1], -1, 1, '')
+                if substr($buf, -1, 1) ne "\n";
+        }
+    }
     $self->{new_content} = '';
     open my $fh2, '>', \$self->{new_content};
 

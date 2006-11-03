@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use Test::More tests => 2;
 use strict;
-BEGIN { require 't/tree.pl' };
+use SVK::Test;
 our $output;
 my ($xd, $svk) = build_test();
 my ($copath, $corpath) = get_copath ('add-mime');
@@ -20,6 +20,7 @@ SKIP: {
     my $libmagic_version = File::LibMagic->VERSION();
     skip "File::LibMagic 0.84 required ($libmagic_version installed)", 2
         if $libmagic_version < 0.84;
+    diag "File::LibMagic version $libmagic_version";
 
     local $ENV{SVKMIME} = 'File::LibMagic';
     is_output ($svk, 'add', ['mime'],

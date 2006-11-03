@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
-BEGIN { require 't/tree.pl' };
-plan_svm tests => 14;
+use SVK::Test;
+plan tests => 14;
 
 our $output;
 my ($xd, $svk) = build_test('test');
@@ -38,7 +38,9 @@ is_output_like($svk,'log',['-r','BASE'],qr|cp and ps|);
 
 my ($y,$m,$d) = (localtime(time))[5,4,3];
 my $date = sprintf('%04d-%02d-%02d',$y+1900,$m,$d );
-is_output_like($svk,'log',['-r',"{$date}"],qr|cp and ps|);
+# Today's date means "the latest thing at midnight at the beginning of
+# today", so empty.
+is_output_like($svk,'log',['-r',"{$date}"],qr|^$|);
 is_output_like($svk,'log',['-r',"LLASKDJF"],qr|is not a number|);
 
 # This date should always in the future to refer to the latest revision

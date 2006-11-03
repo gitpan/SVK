@@ -1,9 +1,10 @@
 #!/usr/bin/perl -w
 use strict;
-BEGIN { require 't/tree.pl' };
+use SVK::Test;
+use Time::HiRes 'sleep';
 plan (skip_all => "Test does not work with BDB") if $ENV{SVNFSTYPE} eq 'bdb';
 plan skip_all => "Doesn't work on win32" if $^O eq 'MSWin32';
-plan_svm tests => 3;
+plan tests => 3;
 
 our ($output, $answer);
 my ($xd, $svk) = build_test('svm-lock');
@@ -26,11 +27,11 @@ if (($pid =fork) == 0) {
     exit;
 }
 while ($repos->fs->youngest_rev < 23 ) {
-    sleep 1;
+    sleep 0.2;
 }
 waste_rev ($svk, '/svm-lock/trunk/more-hate') for (1..20);
 is_output_like ($svk, 'sync', ['-a'],
-		qr"Waiting for (sync|mirror) lock on //remote: .*:$pid.*Retrieving log information from 222 to 261"s);
+		qr"Waiting for lock on /?/remote: .*:$pid.*Retrieving log information from 222 to 261"s);
 
 wait;
 
@@ -40,7 +41,6 @@ if (($pid =fork) == 0) {
     exit;
 }
 waste_rev ($svk, '/svm-lock/trunk/more-hate') for (1..20);
-sleep 2;
 kill (15, $pid);
 wait;
 

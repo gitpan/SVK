@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
-BEGIN { require 't/tree.pl' };
-plan_svm tests => 49;
+use SVK::Test;
+plan tests => 49;
 
 use File::Copy qw( copy );
 our $output;

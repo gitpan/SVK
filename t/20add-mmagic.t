@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use Test::More tests => 2;
 use strict;
-BEGIN { require 't/tree.pl' };
+use SVK::Test;
 our $output;
 my ($xd, $svk) = build_test();
 my ($copath, $corpath) = get_copath ('add-mime');
@@ -17,6 +17,7 @@ create_mime_samples('mime');
 SKIP: {
     eval { require File::MMagic };
     skip 'File::MMagic is not installed', 2 if $@;
+    diag 'File::MMagic version ' . File::MMagic->VERSION;
 
     local $ENV{SVKMIME} = 'File::MMagic';
     is_output ($svk, 'add', ['mime'],

@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
-BEGIN { require 't/tree.pl' };
-plan_svm tests => 18;
+use SVK::Test;
+plan tests => 20;
 
 our $output;
 my ($xd, $svk) = build_test('test');
@@ -71,6 +71,8 @@ is_output_like ($svk, 'desc', [2],
 		qr|r2.*cp and ps.*Property changes on: A/foo.*--- foo-cp\t\(revision 1\)|s);
 is_output_like ($svk, 'desc', ['r2'],
 		qr|r2.*cp and ps.*Property changes on: A/foo.*--- foo-cp\t\(revision 1\)|s);
+is_output_like ($svk, 'desc', ['r2@', '/test/A'],
+		qr|r3 \(orig r2\).*cp and ps.*Property changes on: A/foo|s);
 $svk->mv (-m => 'mv', '//foo-cp', '//foo-mv');
 $svk->rm (-m => 'rm', '//bar-cp');
 $svk->cp (-m => 'cp', '//bar-cp@4', '//bar-notmv');
@@ -93,3 +95,8 @@ is_output ($svk, 'log', ['//bar-notmv', '--cross'],
 $svk->up('-r1');
 is_output_like ($svk, 'desc', ['r2'],
 		qr|r2.*cp and ps.*Property changes on: A/foo.*--- foo-cp\t\(revision 1\)|s);
+
+is_output($svk, 'desc', ['r7'],
+          [
+           "Depot // has no revision 7",
+          ]);

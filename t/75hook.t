@@ -1,8 +1,8 @@
 #!/usr/bin/perl -w
 use strict;
 use SVK::Util qw( is_executable );
-BEGIN { require 't/tree.pl' };
-plan_svm tests => 2;
+use SVK::Test;
+plan tests => 2;
 our $output;
 
 mkpath ["t/checkout/repos-hook"], 0, 0700 unless -d "t/checkout/repos-hook";

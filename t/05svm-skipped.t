@@ -1,8 +1,8 @@
 #!usr/bin/perl -w
 use strict;
 use Test::More;
-BEGIN { require 't/tree.pl' };
-plan_svm tests => 3;
+use SVK::Test;
+plan tests => 3;
 our ($output, $answer);
 # build another tree to be mirrored ourself
 my ($xd, $svk) = build_test('test');
@@ -31,7 +31,6 @@ $svk->copy (-pm => 'here', '/test/trunk/foo' => '/test/trunk/bar');
 
 
 $svk->mirror ('//m-main', "$uri/trunk");
-
 $svk->sync('-a');
 
 is_ancestor($svk, '//m-main/bar', '/m-main/foo', 2);

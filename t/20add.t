@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use Test::More tests => 35;
 use strict;
-BEGIN { require 't/tree.pl' };
+use SVK::Test;
 our $output;
 my ($xd, $svk) = build_test();
 my ($copath, $corpath) = get_copath ('add');
@@ -157,14 +157,14 @@ enable-auto-props = yes
 
 EOF
 
-$xd->{svnconfig} = SVN::Core::config_get_config ($dir);
+SVK::Config->_svnconfig( SVN::Core::config_get_config($dir) );
 mkdir ('A/autoprop');
 overwrite_file ("A/autoprop/foo.pl", "#!/usr/bin/perl\n");
 overwrite_file ("A/autoprop/foo.txt", "Text file\n");
 overwrite_file ("A/autoprop/foo.bar", "this is just a test\n");
 
 # test enumerator
-eval { $xd->{svnconfig}{config}->enumerate ('auto-props', sub {}) };
+eval { SVK::Config->svnconfig->{config}->enumerate('auto-props', sub {}) };
 
 SKIP: {
 

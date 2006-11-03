@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 my $required_svn = '1.2.0';
-my $required_svm = '0.69_2';
+my $required_svm = '0.71';
 
 use strict;
 use inc::Module::Install;
@@ -15,7 +15,7 @@ clean_files	('t/checkout', 't/apache_svn');
 requires(
     # 'SVN::Core'                => $required_svn,
     'Algorithm::Annotate'      => '0',
-    'Algorithm::Diff'          => '0',
+    'Algorithm::Diff'          => '1.1901',
     'YAML::Syck'               => '0.60',
     'Data::Hierarchy'          => '0.30',
     'PerlIO::via::dynamic'     => '0.11',
@@ -30,18 +30,23 @@ requires(
     'Class::Accessor::Fast'    => '0',
     'Class::Data::Inheritable' => '0',
     'Path::Class'              => '0.15',
+    'UNIVERSAL::require'       => '0',
     'File::Temp'               => '0.14',    # in core since 5.8.1
     'Encode'                   => '2.10',    # in core since 5.8.7
     'Getopt::Long'             => '2.35',    # in core since 5.8.8
     'Pod::Escapes'             => '0',       # in core since 5.9.3
     'Pod::Simple'              => '0',       # in core since 5.9.3
-    'File::Spec'               => '3.14',    # in core since 5.9.3
+    'File::Spec'               => '3.19',    # in core since 5.9.3
+);
+build_requires(
+    'Test::More'               => '0.42',
+    'Clone'                    => 0,
 );
 features(
     'Localized messages' => [
 	-default => 1,
-        'Locale::Maketext::Lexicon' => '0.42',
-        'Locale::Maketext::Simple'  => '0.12',
+        'Locale::Maketext::Lexicon' => '0.62',
+        'Locale::Maketext::Simple'  => '0.16',
     ],
     'Message display through a pager' => [
         -default => 1,

@@ -1,6 +1,6 @@
 package SVK::Merge;
 use strict;
-use SVK::Util qw(HAS_SVN_MIRROR find_svm_source find_local_mirror is_executable traverse_history);
+use SVK::Util qw(traverse_history);
 use SVK::I18N;
 use SVK::Editor::Merge;
 use SVK::Editor::Rename;
@@ -280,7 +280,7 @@ sub find_merge_sources {
     $info->add_target ($target, $self->{xd}) unless $noself;
 
     return $info->verbatim if $verbatim || !$target->root->check_path($target->path);
-    my $minfo = $info->resolve ($self->{xd}, $target->depotname, $target->repos);
+    my $minfo = $info->resolve($target->depot);
 
     my $myuuid = $target->repos->fs->get_uuid ();
 
@@ -354,10 +354,13 @@ Return a string about how the merge is done.
 
 sub info {
     my $self = shift;
-    return loc("Auto-merging (%1, %2) %3 to %4 (base %7%5:%6).\n",
+    return loc("Auto-merging (%1, %2) %3 to %4 (base %5%6:%7).\n",
 	       $self->{fromrev}, $self->{src}->revision, $self->{src}->path,
-	       $self->{dst}->path, $self->{base}->path, $self->{base}->revision,
-	       $self->{base}->isa('SVK::Path::Txn') ? '*' : '' );
+	       $self->{dst}->path,
+	       $self->{base}->isa('SVK::Path::Txn') ? '*' : '',
+           $self->{base}->path,
+           $self->{base}->revision,
+    );
 }
 
 sub _collect_renamed {
@@ -597,9 +600,9 @@ sub resolve_copy {
 	my $udst = $self->{dst}->universal;
 	my $dstkey = join(':', $udst->{uuid}, $udst->{path});
 	return $srcinfo->{$dstkey}{rev} ?
-	    ($path, $srcinfo->{$dstkey}->local($self->{dst}->repos)->revision) : ();
+	    ($path, $srcinfo->{$dstkey}->local($self->{dst}->depot)->revision) : ();
     }
-    if ($dstinfo->{$srckey}->local($self->{dst}->repos)->revision < $cp_rev) {
+    if ($dstinfo->{$srckey}->local($self->{dst}->depot)->revision < $cp_rev) {
 	# same as re-base in editor::copy
 	my $rev = $self->{src}->merged_from
 	    ($self->{base}, $self, $self->{base}->path_anchor);
@@ -688,9 +691,9 @@ sub union {
 }
 
 sub resolve {
-    my ($self, $xd, $depotname, $repos) = @_;
-    my $uuid = $repos->fs->get_uuid;
-    return { map { my $local = $self->{$_}->local($xd, $depotname);
+    my ($self, $depot) = @_;
+    my $uuid = $depot->repos->fs->get_uuid;
+    return { map { my $local = $self->{$_}->local($depot);
 		   $local ? ("$uuid:".$local->path_anchor => $local->revision) : ()
 	       } keys %$self };
 }

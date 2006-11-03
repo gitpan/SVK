@@ -4,8 +4,8 @@ use Test::More;
 use Cwd;
 use File::Path;
 
-BEGIN { require 't/tree.pl' };
-plan_svm tests => 15;
+use SVK::Test;
+plan tests => 15;
 
 my $initial_cwd = getcwd;
 

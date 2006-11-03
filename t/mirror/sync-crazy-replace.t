@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
 use Test::More;
-BEGIN { require 't/tree.pl' };
+use SVK::Test;
 eval { require SVN::Mirror; 1 } or plan skip_all => 'require SVN::Mirror';
 plan tests => 21;
 
@@ -50,7 +50,7 @@ my ($srepospath, $spath, $srepos) = $xd->find_repos ('/test/', 1);
 my $uri = uri($srepospath.($spath eq '/' ? '' : $spath));
 
 is_output($svk, mirror => ['//m', $uri],
-          ["Committed revision 1."]);
+          ["Mirror initialized.  Run svk sync //m to start mirroring."]);
 
 is_output($svk, 'sync', ['//m'],
 	  ["Syncing $uri",

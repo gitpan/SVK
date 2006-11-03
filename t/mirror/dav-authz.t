@@ -11,7 +11,7 @@ require lib;
 use SVK::Util qw(can_run);
 
 BEGIN {
-    require 't/tree.pl';
+use SVK::Test;
     plan (skip_all => "Test does not run under root") if $> == 0;
     eval { require Apache2 };
     eval { require Apache::Test;
@@ -49,7 +49,7 @@ unless ($cfg->can('find_and_load_module') and
     plan skip_all => "Can't find mod_dav_svn and mod_authz_svn";
 }
 
-plan_svm tests => 2;
+plan tests => 2;
 
 my $utf8 = SVK::Util::get_encoding;
 
