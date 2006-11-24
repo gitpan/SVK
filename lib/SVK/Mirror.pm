@@ -1,8 +1,59 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Mirror;
 use strict;
 use warnings;
 
 use SVN::Core;
+use SVK::Logger;
 
 use Sys::Hostname;
 use SVK::I18N;
@@ -215,6 +266,7 @@ LOCKED:
     {
         while (1) {
             my $who = $fs->revision_prop( 0, $token ) or last LOCKED;
+	    last if $who eq $content;
 	    $lock_message->($self, $who);
             sleep 1;
         }
@@ -322,12 +374,12 @@ sub run {
     my ($self, $torev) = @_;
     return $self->run_svnmirror_sync({ torev => $torev }) unless $self->_backend->has_replay;
 
-    print loc("Syncing %1", $self->url).($self->_backend->_relayed ? loc(" via %1\n", $self->server_url) : "\n");
+    $logger->info(loc("Syncing %1", $self->url).($self->_backend->_relayed ? loc(" via %1", $self->server_url) : ""));
 
     $self->mirror_changesets($torev,
         sub {
             my ( $changeset, $rev ) = @_;
-            print "Committed revision $rev from revision $changeset.\n";
+            $logger->info("Committed revision $rev from revision $changeset.");
         }
     );
     die $@ if $@;
@@ -335,7 +387,7 @@ sub run {
 
 sub sync_snapshot {
     my ($self, $snapshot) = @_;
-    print loc("
+    $logger->warn(loc("
 svk is now taking a snapshot of the repository at:
   %1
 
@@ -343,7 +395,7 @@ This is essentially making a checkout of the url, and is bad if the
 url contains directories like trunk and branches.  If this isn't what
 you mean, please hit ^C.
 
-", $self->url);
+", $self->url));
 
     $self->run_svnmirror_sync( { skip_to => $snapshot });
 }
@@ -354,9 +406,9 @@ sub _lock_message {
     my $i = 0;
     sub {
 	my ($mirror, $who) = @_;
-	print loc("Waiting for lock on %1: %2.\n", $target->depotpath, $who);
+	$logger->warn(loc("Waiting for lock on %1: %2.", $target->depotpath, $who));
 	if (++$i % 3 == 0) {
-	    print loc ("
+	    $logger->error(loc ("
 The mirror is currently locked. This might be because the mirror is
 in the middle of a sensitive operation or because a process holding
 the lock hung or died.  To check if the mirror lock is stalled,  see
@@ -364,7 +416,7 @@ if $who is a running, valid process
 
 If the mirror lock is stalled, please interrupt this process and run:
     svk mirror --unlock %1
-", $target->depotpath);
+", $target->depotpath));
 	}
     }
 }

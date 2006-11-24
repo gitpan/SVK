@@ -1,15 +1,64 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Mirror::Backend::SVNRa;
 use strict;
 use warnings;
 
 use SVN::Core;
 use SVN::Ra;
-use SVN::Client ();
 use SVK::I18N;
 use SVK::Editor;
-use Class::Autouse qw(SVK::Editor::SubTree SVK::Editor::CopyHandler);
+use SVK::Mirror::Backend::SVNRaPipe;
 
-use constant OK => $SVN::_Core::SVN_NO_ERROR;
+use Class::Autouse qw(SVK::Editor::SubTree SVK::Editor::CopyHandler);
 
 ## class SVK::Mirror::Backend::SVNRa;
 ## has $.mirror is weak;
@@ -22,7 +71,7 @@ use base 'Class::Accessor::Fast';
 
 # for this: things without _'s will probably move to base
 # SVK::Mirror::Backend
-__PACKAGE__->mk_accessors(qw(mirror _config _auth_baton _auth_ref _auth_baton source_root source_path fromrev _has_replay _cached_ra));
+__PACKAGE__->mk_accessors(qw(mirror _config _auth_baton _auth_ref _auth_baton source_root source_path fromrev _has_replay _cached_ra use_pipeline));
 
 =head1 NAME
 
@@ -54,7 +103,7 @@ sub refresh {
 
 sub load {
     my ($class, $mirror) = @_;
-    my $self = $class->SUPER::new( { mirror => $mirror } );
+    my $self = $class->SUPER::new( { mirror => $mirror, use_pipeline => 1 } );
     my $t = $mirror->get_svkpath;
     die loc( "%1 is not a mirrored path.\n", $t->depotpath )
         unless $t->root->check_path( $mirror->path );
@@ -63,7 +112,7 @@ sub load {
     my $ruuid = $t->root->node_prop($t->path, 'svm:ruuid') || $uuid;
     die loc("%1 is not a mirrored path.\n", $t->path) unless $uuid;
     my ( $root, $path ) = split('!',  $t->root->node_prop($t->path, 'svm:source'));
-
+    $path = '' unless defined $path;
     $self->source_root( $root );
     $self->source_path( $path );
 
@@ -85,7 +134,7 @@ sub load {
 sub create {
     my ($class, $mirror, $backend, $args, $txn, $editor) = @_;
 
-    my $self = $class->SUPER::new({ mirror => $mirror });
+    my $self = $class->SUPER::new({ mirror => $mirror, use_pipeline => 1 });
 
     my $ra = $self->_new_ra;
 
@@ -174,6 +223,15 @@ sub relocate {
     my $mirror = $self->mirror;
     die loc("Mirror source UUIDs differ.\n")
 	unless $ra_uuid eq $mirror->server_uuid;
+    my $source_root = $ra->get_repos_root;
+    my $source_path = $source;
+    die "source url not under source root"
+	if substr($source_path, 0, length($source_root), '') ne $source_root;
+
+    die loc( "Can't relocate: mirror subdirectory changed from %1 to %2.\n",
+        $self->source_path, $source_path )
+        unless $self->source_path eq $source_path;
+
     $self->source_root( $ra->get_repos_root );
     $mirror->url($source);
 
@@ -235,6 +293,7 @@ sub has_replay {
         }
     }
     $self->_ra_finished($ra);
+    # FIXME: if we do ^c here $err would be empty. do something else.
     return $self->_has_replay(0)
       if $err->apr_err == $SVN::Error::RA_NOT_IMPLEMENTED      # ra_svn
       || $err->apr_err == $SVN::Error::UNSUPPORTED_FEATURE;    # ra_dav
@@ -255,6 +314,12 @@ sub _new_ra {
 sub _ra_finished {
     my ($self, $ra) = @_;
     return if $self->_cached_ra;
+    return if ref($ra) eq 'SVK::Mirror::Backend::SVNRaPipe';
+    if ($ra->{url} ne $self->mirror->url) {
+	return unless _p_svn_ra_session_t->can('reparent');
+	$ra->reparent($self->mirror->url);
+    }
+
     $self->_cached_ra( $ra );
 }
 
@@ -274,138 +339,10 @@ sub _initialize_auth {
     my $auth_pool = SVN::Pool::create (${ $self->mirror->pool });
     $auth_pool->default;
 
-    my ($baton, $ref) = SVN::Core::auth_open_helper([
-        SVN::Client::get_simple_provider (),
-        SVN::Client::get_ssl_server_trust_file_provider (),
-        SVN::Client::get_username_provider (),
-        SVN::Client::get_simple_prompt_provider( $self->can('_simple_prompt'), 2),
-        SVN::Client::get_ssl_server_trust_prompt_provider( $self->can('_ssl_server_trust_prompt') ),
-        SVN::Client::get_ssl_client_cert_prompt_provider( $self->can('_ssl_client_cert_prompt'), 2 ),
-        SVN::Client::get_ssl_client_cert_pw_prompt_provider( $self->can('_ssl_client_cert_pw_prompt'), 2 ),
-        SVN::Client::get_username_prompt_provider( $self->can('_username_prompt'), 2),
-    ]);
+    my ($baton, $ref) = SVN::Core::auth_open_helper(SVK::Config->get_auth_providers);
 
     $self->_auth_baton($baton);
     $self->_auth_ref($ref);
-}
-
-# Implement auth callbacks
-sub _simple_prompt {
-    my ($cred, $realm, $default_username, $may_save, $pool) = @_;
-
-    if (defined $default_username and length $default_username) {
-        print "Authentication realm: $realm\n" if defined $realm and length $realm;
-        $cred->username($default_username);
-    }
-    else {
-        _username_prompt($cred, $realm, $may_save, $pool);
-    }
-
-    $cred->password(_read_password("Password for '" . $cred->username . "': "));
-    $cred->may_save($may_save);
-
-    return OK;
-}
-
-sub _ssl_server_trust_prompt {
-    my ($cred, $realm, $failures, $cert_info, $may_save, $pool) = @_;
-
-    print "Error validating server certificate for '$realm':\n";
-
-    print " - The certificate is not issued by a trusted authority. Use the\n",
-          "   fingerprint to validate the certificate manually!\n"
-      if ($failures & $SVN::Auth::SSL::UNKNOWNCA);
-
-    print " - The certificate hostname does not match.\n"
-      if ($failures & $SVN::Auth::SSL::CNMISMATCH);
-
-    print " - The certificate is not yet valid.\n"
-      if ($failures & $SVN::Auth::SSL::NOTYETVALID);
-
-    print " - The certificate has expired.\n"
-      if ($failures & $SVN::Auth::SSL::EXPIRED);
-
-    print " - The certificate has an unknown error.\n"
-      if ($failures & $SVN::Auth::SSL::OTHER);
-
-    printf(
-        "Certificate information:\n".
-        " - Hostname: %s\n".
-        " - Valid: from %s until %s\n".
-        " - Issuer: %s\n".
-        " - Fingerprint: %s\n",
-        map $cert_info->$_, qw(hostname valid_from valid_until issuer_dname fingerprint)
-    );
-
-    print(
-        $may_save
-            ? "(R)eject, accept (t)emporarily or accept (p)ermanently? "
-            : "(R)eject or accept (t)emporarily? "
-    );
-
-    my $choice = lc(substr(<STDIN> || 'R', 0, 1));
-
-    if ($choice eq 't') {
-        $cred->may_save(0);
-        $cred->accepted_failures($failures);
-    }
-    elsif ($may_save and $choice eq 'p') {
-        $cred->may_save(1);
-        $cred->accepted_failures($failures);
-    }
-
-    return OK;
-}
-
-sub _ssl_client_cert_prompt {
-    my ($cred, $realm, $may_save, $pool) = @_;
-
-    print "Client certificate filename: ";
-    chomp(my $filename = <STDIN>);
-    $cred->cert_file($filename);
-
-    return OK;
-}
-
-sub _ssl_client_cert_pw_prompt {
-    my ($cred, $realm, $may_save, $pool) = @_;
-
-    $cred->password(_read_password("Passphrase for '%s': "));
-
-    return OK;
-}
-
-sub _username_prompt {
-    my ($cred, $realm, $may_save, $pool) = @_;
-
-    print "Authentication realm: $realm\n" if defined $realm and length $realm;
-    print "Username: ";
-    chomp(my $username = <STDIN>);
-    $username = '' unless defined $username;
-
-    $cred->username($username);
-
-    return OK;
-}
-
-sub _read_password {
-    my ($prompt) = @_;
-
-    print $prompt;
-
-    require Term::ReadKey;
-    Term::ReadKey::ReadMode('noecho');
-
-    my $password = '';
-    while (defined(my $key = Term::ReadKey::ReadKey(0))) {
-        last if $key =~ /[\012\015]/;
-        $password .= $key;
-    }
-
-    Term::ReadKey::ReadMode('restore');
-    print "\n";
-
-    return $password;
 }
 
 =back
@@ -456,8 +393,12 @@ sub traverse_new_changesets {
     die $@ if $@;
 }
 
+=item sync_changeset($changeset, $metadata, $ra, $extra_prop, $callback )
+
+=cut
+
 sub sync_changeset {
-    my ($self, $changeset, $metadata, $callback) = @_;
+    my ( $self, $changeset, $metadata, $ra, $extra_prop, $callback ) = @_;
     my $t = $self->mirror->get_svkpath;
     my ( $editor, undef, %opt ) = $t->get_editor(
         ignore_mirror => 1,
@@ -470,18 +411,41 @@ sub sync_changeset {
             $callback->( $changeset, $_[0] ) if $callback;
         }
     );
-    # XXX: sync relayed revmap as well
-    $opt{txn}->change_prop('svm:headrev', $self->mirror->server_uuid.":$changeset\n");
 
-    my $ra = $self->_new_ra;
-    if ( my $revprop = $self->mirror->depot->mirror->revprop ) {
-        my $prop = $ra->rev_proplist($changeset);
-        for (@$revprop) {
-            $opt{txn}->change_prop( $_, $prop->{$_} )
-                if exists $prop->{$_};
+    for (keys %$extra_prop) {
+	$opt{txn}->change_prop( $_, $extra_prop->{$_} );
+    }
+    $self->_revmap_prop( $opt{txn}, $changeset );
+
+    $editor = $self->_get_sync_editor($editor, $t);
+    $ra->replay( $changeset, 0, 1, $editor );
+    $self->_after_replay($ra, $editor);
+
+    return;
+
+}
+
+sub _after_replay {
+    my ($self, $ra, $editor) = @_;
+    if ( $editor->isa('SVK::Editor::SubTree') ) {
+	my $baton = $editor->anchor_baton;
+        if ( $editor->needs_touch ) {
+            $editor->change_dir_prop( $baton, 'svk:mirror' => undef );
         }
+	if (!$editor->changes) {
+	    $editor->abort_edit;
+	    return;
+	}
+        $editor->close_directory($baton);
     }
 
+    $editor->close_edit;
+    return;
+
+}
+
+sub _get_sync_editor {
+    my ($self, $editor, $target) = @_;
     $editor = SVK::Editor::CopyHandler->new(
         _editor => $editor,
         cb_copy => sub {
@@ -489,7 +453,7 @@ sub sync_changeset {
             return ( $path, $rev ) if $rev == -1;
             my $source_path = $self->source_path;
             $path =~ s/^\Q$self->{source_path}//;
-            return $t->as_url(
+            return $target->as_url(
                 1,
                 $self->mirror->path . $path,
                 $self->find_rev_from_changeset($rev)
@@ -500,7 +464,6 @@ sub sync_changeset {
     # ra->replay gives us editor calls based on repos root not
     # base uri, so we need to get the correct subtree.
     my $baton;
-    my $pool = SVN::Pool->new_default;
     if ( length $self->source_path ) {
         my $anchor = substr( $self->source_path, 1 );
         $baton  = $editor->open_root(-1);      # XXX: should use $t->revision
@@ -511,22 +474,14 @@ sub sync_changeset {
             }
         );
     }
-    $ra->replay( $changeset, 0, 1, $editor );
-    $self->_ra_finished($ra);
-    if ( length $self->source_path ) {
-        $editor->close_directory($baton);
-        if ( $editor->needs_touch ) {
-            $editor->change_dir_prop( $baton, 'svk:mirror' => undef );
-        }
-    }
-    if ( $editor->isa('SVK::Editor::SubTree') && !$editor->changes ) {
-        $editor->abort_edit;
-    } else {
-        $editor->close_edit;
-    }
-    return;
-
+    return $editor;
 }
+
+sub _revmap_prop {
+    my ($self, $txn, $changeset) = @_;
+    $txn->change_prop('svm:headrev', $self->mirror->server_uuid.":$changeset\n");
+}
+
 
 =item mirror_changesets
 
@@ -534,11 +489,40 @@ sub sync_changeset {
 
 sub mirror_changesets {
     my ( $self, $torev, $callback ) = @_;
-
     $self->mirror->with_lock( 'mirror',
         sub {
-            $self->traverse_new_changesets(
-                sub { $self->sync_changeset( @_, $callback ) }, $torev );
+	    $self->refresh;
+	    my @revs;
+            $self->traverse_new_changesets( sub { push @revs, [@_] }, $torev );
+	    # prepare generator for pipelined ra
+	    my @gen;
+	    my $revprop = $self->mirror->depot->mirror->revprop; # XXX: this is so wrong
+	    return unless @revs;
+	    my $ra = $self->_new_ra;
+	    if ($self->use_pipeline) {
+		for (@revs) {
+		    push @gen, ['rev_proplist', $_->[0]] if $revprop;
+		    push @gen, ['replay', $_->[0], 0, 1, 'EDITOR'];
+		}
+		$ra = SVK::Mirror::Backend::SVNRaPipe->new($ra, sub { shift @gen });
+	    }
+	    my $pool = SVN::Pool->new_default;
+	    for (@revs) {
+		$pool->clear;
+		my ($changeset, $metadata) = @$_;
+		my $extra_prop = {};
+		if ( $revprop ) {
+		    my $prop = $ra->rev_proplist($changeset);
+		    for (@$revprop) {
+			$extra_prop->{$_}= $prop->{$_}
+			    if exists $prop->{$_};
+		    }
+		}
+		$self->sync_changeset( $changeset, $metadata, $ra,
+				       $extra_prop,
+				       $callback );
+	    }
+	    $self->_ra_finished($ra);
         }
     );
 }
@@ -558,16 +542,15 @@ sub get_commit_editor {
     die loc("relayed merge back not supported yet.\n") if $self->_relayed;
     $self->{commit_ra} = $self->_new_ra( url => $self->mirror->url.$path );
 
-    my @lock = $SVN::Core::VERSION ge '1.2.0' ? (undef, 0) : ();
     # XXX: add error check for get_commit_editor here, auth error happens here
     return SVN::Delta::Editor->new(
         $self->{commit_ra}->get_commit_editor(
             $msg,
             sub {
+		# only recycle the ra if we are committing from root
 		$self->_ra_finished($self->{commit_ra});
                 $committed->(@_);
-            },
-            @lock ) );
+            }, undef, 0 ) );
 }
 
 sub change_rev_prop {

@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Command::Diff;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
@@ -31,7 +81,7 @@ sub run {
     my $yrev = $fs->youngest_rev;
     my ($cb_llabel, $report);
     my ($r1, $r2) = $self->resolve_revspec($target,$target2);
-
+    my $oldroot;
     # translate to target and target2
     if ($target2) {
 	if ($target->isa('SVK::Path::Checkout')) {
@@ -56,6 +106,8 @@ sub run {
 	    $target = $target->as_depotpath;
 	    $target = $target->seek_to($r1) if $r1;
 	    $target2 = $target->as_depotpath->seek_to($r2) if $r2;
+	    # if no revision is specified, use the xdroot as target1's root
+	    $oldroot = $target2->create_xd_root unless $r1 || $r2;
 	    $cb_llabel =
 		sub { my ($rpath) = @_;
 		      'revision '.($self->{xd}{checkout}->get ($target2->copath ($rpath))->{revision}) } unless $r1;
@@ -85,7 +137,7 @@ sub run {
 	  base_target => $target, base_root => $target->root,
 	);
 
-    my $oldroot = $target->root;
+    $oldroot ||= $target->root;
     my $kind = $oldroot->check_path($target->path_anchor);
     if ($target2->isa('SVK::Path::Checkout')) {
 	if ($kind != $SVN::Node::dir) {
@@ -186,17 +238,3 @@ SVK::Command::Diff - Display diff between revisions or checkout copies
 
  See also SVKDIFF in svk help environment.
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut

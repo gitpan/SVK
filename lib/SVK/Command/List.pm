@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Command::List;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
@@ -25,65 +75,62 @@ sub run {
     my ($self, @arg) = @_;
     my $exception = '';
 
-    while (my $arg = shift @arg) {
-	$arg = $arg->as_depotpath;
-        eval { _do_list($self, 0, $self->apply_revision($arg));
-	       print "\n" if @arg };
-        $exception .= "$@" if $@;
+    my $enc = get_encoder;
+    if ( $self->{recursive} ) {
+        $self->{depth}++ if $self->{depth};
+    } else {
+        $self->{recursive}++;
+        $self->{depth} = 1;
     }
+    my $errs = [];
+    $self->run_command_recursively(
+        $self->apply_revision($_),
+        sub {
+            my ( $target, $kind, $level ) = @_;
+            if ( $level == -1 ) {
+                return if $kind == $SVN::Node::dir;
+                die loc( "Path %1 is not versioned.\n", $target->path_anchor )
+                    unless $kind == $SVN::Node::file;
+            }
+            $self->_print_item( $target, $kind, $level, $enc );
+        }, $errs, $#arg
+    ) for map { $_->as_depotpath } @arg;
 
-    die($exception) if($exception);
+    return scalar @$errs;
 }
 
-sub _do_list {
-    my ($self, $level, $target) = @_;
-    my $pool = SVN::Pool->new_default;
+sub _print_item {
+    my ( $self, $target, $kind, $level, $enc ) = @_;
     my $root = $target->root;
-    unless ((my $kind = $root->check_path ($target->path_anchor)) == $SVN::Node::dir) {
-       die loc("Path %1 is not a versioned directory\n", $target->path_anchor)
-           unless $kind == $SVN::Node::file;
-       return;
+    if ( $self->{verbose} ) {
+        my $rev = $root->node_created_rev( $target->path );
+        my $fs  = $target->repos->fs;
+
+        my $svn_date = $fs->revision_prop( $rev, 'svn:date' );
+
+        # The author name may be undef
+        no warnings 'uninitialized';
+
+        # Additional fields for verbose: revision author size datetime
+        printf "%7ld %-8.8s %10s %12s ", $rev,
+            $fs->revision_prop( $rev, 'svn:author' ),
+            ($kind == $SVN::Node::dir) ? "" : $root->file_length( $target->path ),
+            reformat_svn_date( "%b %d %H:%M", $svn_date );
     }
 
-    my $entries = $root->dir_entries ($target->path_anchor);
-    my $enc = get_encoder;
-    for (sort keys %$entries) {
-	my $isdir = ($entries->{$_}->kind == $SVN::Node::dir);
-
-        if ($self->{verbose}) {
-	    my $rev = $root->node_created_rev ($target->path."/$_");
-            my $fs = $target->repos->fs;
-
-            my $svn_date =
-                $fs->revision_prop ($rev, 'svn:date');
-
-	    # The author name may be undef
-            no warnings 'uninitialized';
-
-	    # Additional fields for verbose: revision author size datetime
-            printf "%7ld %-8.8s %10s %12s ", $rev,
-                $fs->revision_prop ($rev, 'svn:author'),
-                ($isdir) ? "" : $root->file_length ($target->path."/$_"),
-                reformat_svn_date("%b %d %H:%M", $svn_date);
-        }
-
-        if ($self->{'fullpath'}) {
-	    my $dpath = $target->path_anchor;
-	    to_native ($dpath, 'path', $enc);
-	    $dpath .= '/' unless $dpath eq '/';
-            print '/'.$target->depotname.$dpath;
-        } else {
-            print " " x ($level);
-        }
-	my $path = $_;
-	to_native ($path, 'path', $enc);
-        print $path.($isdir ? '/' : '')."\n";
-
-	if ($isdir && ($self->{recursive}) &&
-	    (!$self->{'depth'} ||( $level < $self->{'depth'} ))) {
-	    _do_list($self, $level+1, $target->new->descend($_));
-	}
+    my $output_path;
+    if ( $self->{'fullpath'} ) {
+        $output_path = $target->report;
     }
+    else {
+        print " " x ($level-1);
+        $output_path = Path::Class::File->new_foreign( 'Unix', $target->path )
+            ->basename;
+    }
+    to_native( $output_path, 'path', $enc );
+    print $output_path;
+    print( ( $kind == $SVN::Node::dir ? '/' : '' ) . "\n" );
+
 }
 
 1;
@@ -106,17 +153,3 @@ SVK::Command::List - List entries in a directory from depot
  -f [--full-path]       : show pathname for each entry, instead of a tree
  -v [--verbose]         : print extra information
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut

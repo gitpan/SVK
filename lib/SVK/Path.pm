@@ -1,12 +1,63 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Path;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
 use SVK::I18N;
 use autouse 'SVK::Util' => qw( get_anchor catfile abs2rel
-			       IS_WIN32 find_prev_copy get_depot_anchor );
+			       IS_WIN32 get_depot_anchor );
 use Class::Autouse qw(SVK::Editor::Dynamic SVK::Editor::TxnCleanup);
 use SVN::Delta;
 
+use SVK::Logger;
 use SVK::Depot;
 use base 'SVK::Accessor';
 
@@ -99,7 +150,7 @@ sub same_source {
     for (@other) {
 	my $m = $_->is_mirrored;
 	return 0 if $m xor $mself;
-	return 0 if $m && $m->path ne $m->path;
+	return 0 if $m && $mself->path ne $m->path;
     }
     return 1;
 }
@@ -200,7 +251,7 @@ sub get_editor {
 
 	my ($base_rev, $editor) = $m->get_merge_back_editor
 	    ($mpath, $arg{message}, $mcallback);
-	$editor->{_debug}++ if $main::DEBUG;
+	$editor->{_debug}++ if $logger->is_debug();
 	return ($editor, $inspector,
 		mirror => $m,
 		post_handler => \$post_handler,
@@ -320,7 +371,7 @@ Makes target descend into C<$entry>
 
 sub descend {
     my ($self, $entry) = @_;
-    $self->{path} .= "/$entry";
+    $self->{path} .= $self->{path} eq '/' ? $entry : "/$entry";
     return $self;
 }
 
@@ -371,12 +422,12 @@ sub depotpath {
     return '/'.$self->depotname.$self->{path};
 }
 
-# depotpath only for now
-# cache revprop:
-# svk:copy_cache
+=head2 copy_ancestors
 
-# svk:copy_cache_prev points to the revision in the depot that the
-# previous copy happens.
+Returns a list of C<(path, rev)> pairs, which are ancestors of the
+current node.
+
+=cut
 
 sub copy_ancestors {
     my $self = shift;
@@ -410,11 +461,7 @@ path.
 
 =cut
 
-use SVN::Fs;
-*nearest_copy = SVN::Fs->can('closest_copy')
-  ? *_nearest_copy_svn : *_nearest_copy_svk;
-
-sub _nearest_copy_svn {
+sub nearest_copy {
     my ($root, $path, $ppool) = @_;
     if (ref($root) =~ m/^SVK::Path/) {
         ($root, $path) = ($root->root, $root->path);
@@ -435,61 +482,6 @@ sub _nearest_copy_svn {
 	unless $copyfrom_root->revision_root_revision == $copyfrom_rev;
 
     return ($toroot, $root->fs->revision_root($copyfrom_rev, $ppool), $path);
-}
-
-sub _nearest_copy_svk {
-    my ($root, $path, $ppool) = @_;
-    if (ref($root) =~ m/^SVK::Path/) {
-        ($root, $path) = ($root->root, $root->path);
-    }
-    my $fs = $root->fs;
-    my $spool = SVN::Pool->new_default;
-    my ($old_pool, $new_pool) = (SVN::Pool->new, SVN::Pool->new);
-
-    # XXX: this is duplicated as svk::util, maybe we should use
-    # traverse_history directly
-    if ($root->can('txn') && $root->txn) {
-	($root, $path) = $root->get_revision_root
-	    ($path, $root->txn->base_revision );
-    }
-    # normalize
-    my $hist = $root->node_history ($path)->prev(0);
-    my $rev = ($hist->location)[1];
-    $root = $fs->revision_root ($rev, $ppool);
-
-    while ($hist = $hist->prev(1, $new_pool)) {
-	# Find history_prev revision, if the path is different, bingo.
-	my ($hppath, $hprev) = $hist->location;
-	if ($hppath ne $path) {
-	    $hist = $root->node_history ($path, $new_pool)->prev(0);
-	    $root = $fs->revision_root (($hist->location($new_pool))[1],
-					$ppool);
-	    return ($root, $fs->revision_root ($hprev, $ppool), $hppath);
-	}
-
-	# Find nearest copy of the current revision (up to but *not*
-	# including the revision itself). If the copy contains us, bingo.
-	my $copy;
-	($root, $copy) = find_prev_copy ($fs, $hprev, $new_pool) or last; # no more copies
-	$rev = $root->revision_root_revision;
-	if (my ($fromrev, $frompath) = _copies_contain_path ($copy, $path)) {
-	    # there were copy, but the descendent might not exist there
-	    my $proot = $fs->revision_root ($fromrev, $ppool);
-	    last unless $proot->check_path ($frompath, $old_pool);
-	    return ($fs->revision_root($root->revision_root_revision, $ppool),
-		    $proot, $frompath);
-	}
-
-	if ($rev < $hprev) {
-	    # Reset the hprev root to this earlier revision to avoid infinite looping
-	    local $@;
-	    $hist = eval { $root->node_history ($path, $new_pool)->prev(0, $new_pool) } or last;
-	}
-        $old_pool->clear;
-	$spool->clear;
-        ($old_pool, $new_pool) = ($new_pool, $old_pool);
-    }
-    return;
 }
 
 sub _copies_contain_path {
@@ -620,7 +612,7 @@ sub merged_from {
     $self = $self->new->as_depotpath;
     my $usrc = $src->universal;
     my $srckey = join(':', $usrc->{uuid}, $usrc->{path});
-    warn "trying to look for the revision on $self->{path} that was merged from $srckey\@$src->{revision} at $path" if $main::DEBUG;
+    $logger->debug("trying to look for the revision on $self->{path} that was merged from $srckey\@$src->{revision} at $path");
 
     my %copies = map { join(':', $_->{uuid}, $_->{path}) => $_ }
 	reverse $merge->copy_ancestors($self);
@@ -628,7 +620,7 @@ sub merged_from {
     $self->search_revision
 	( cmp => sub {
 	      my $rev = shift;
-	      warn "==> look at $rev" if $main::DEBUG;
+	      $logger->debug("==> look at $rev");
 	      my $search = $self->new(revision => $rev);
 	      my $minfo = { %copies,
 			    %{$merge->merge_info($search)} };
@@ -658,7 +650,7 @@ sub merged_from {
 	      }
 
 	      # see if prev got different merge info about srckey.
-	      warn "==> to compare with $prev" if $main::DEBUG;
+	      $logger->debug("==> to compare with $prev");
 	      my $uret = $merge->merge_info_with_copy
 		  ($self->new(revision => $prev))->{$srckey}
 		      or return 0;
@@ -739,19 +731,6 @@ sub as_url {
 =head1 SEE ALSO
 
 L<SVK::Path::Checkout>
-
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
 
 =cut
 

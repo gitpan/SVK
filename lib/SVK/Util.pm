@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Util;
 use strict;
 require Exporter;
@@ -10,7 +60,6 @@ our @EXPORT_OK = qw(
     get_encoding get_encoder from_native to_native
 
     find_svm_source traverse_history
-    find_prev_copy
 
     read_file write_file slurp_fh md5_fh bsd_glob mimetype mimetype_is_text
     is_binary_file
@@ -19,7 +68,7 @@ our @EXPORT_OK = qw(
     move_path make_path splitpath splitdir tmpdir tmpfile get_depot_anchor
     catdepot abs_path_noexist 
 
-    is_symlink is_executable is_uri can_run
+    is_symlink is_executable is_uri can_run is_path_inside
 
     str2time time2str reformat_svn_date
 
@@ -29,6 +78,7 @@ use SVK::Version;  our $VERSION = $SVK::VERSION;
 
 
 use Config ();
+use SVK::Logger;
 use SVK::I18N;
 use SVN::Core;
 use autouse 'Encode'            => qw(resolve_alias($) decode encode);
@@ -36,6 +86,7 @@ use File::Glob qw(bsd_glob);
 use autouse 'File::Basename' 	=> qw(dirname);
 use autouse 'File::Spec::Functions' => 
                                qw(catdir catpath splitpath splitdir tmpdir);
+use autouse 'List::Util'        => qw( max(@) );
 
 
 =head1 NAME
@@ -202,7 +253,7 @@ sub edit_file {
 			: DEFAULT_EDITOR; # fall back to something
     my @editor = split (/ /, $editor);
 
-    print loc("Waiting for editor...\n");
+    $logger->info(loc("Waiting for editor..."));
 
     # XXX: check $?
     system {$editor[0]} (@editor, $file) and die loc("Aborted: %1\n", $!);
@@ -773,10 +824,10 @@ sub move_path {
         File::Copy::move ($source => $target) and return;
     }
 
-    print loc(
-        "Cannot rename %1 to %2; please move it manually.\n",
+    $logger->error(loc(
+        "Cannot rename %1 to %2; please move it manually.",
         catfile($source), catfile($target),
-    );
+    ));
 }
 
 =head3 traverse_history (root => $fs_root, path => $path,
@@ -784,8 +835,9 @@ sub move_path {
 
 Traverse the history of $path in $fs_root backwards until the first
 copy, unless $cross is true.  We do cross renames regardless of the
-value of $cross.  We invoke $cb for each $path, $revision we
-encounter.  If cb returns a nonzero value we stop traversing as well.
+value of $cross being non-zero, but not -1.  We invoke $cb for each
+$path, $revision we encounter.  If cb returns a nonzero value we stop
+traversing as well.
 
 =cut
 
@@ -811,7 +863,7 @@ sub traverse_history {
 
     while (1) {
         my $ohist = $hist;
-        $hist = $hist->prev(($args{cross} || 0), $new_pool);
+        $hist = $hist->prev(max(0, $args{cross} || 0), $new_pool);
         if (!$hist) {
             last if $args{cross};
             last unless $hist = $ohist->prev((1), $new_pool);
@@ -854,57 +906,6 @@ sub traverse_history {
     }
 
     return $rv;
-}
-
-=head3 find_prev_copy ($fs, $rev)
-
-Find the revision of the nearest copy in a repository that is less or
-equal to C<$rev>.  Returns the found revision number, and a hash of
-arrayref that contains copied paths and its source found in that
-revision.
-
-=cut
-
-sub _copies_in_root {
-    my ($root) = @_;
-    my $copies;
-    my $changed = $root->paths_changed;
-    my $pool = SVN::Pool->new_default;
-    for (keys %$changed) {
-	$pool->clear;
-	next if $changed->{$_}->change_kind == $SVN::Fs::PathChange::delete;
-	my ($copyfrom_rev, $copyfrom_path) = $root->copied_from ($_);
-	$copies->{$_} = [$copyfrom_rev, $copyfrom_path]
-	    if defined $copyfrom_path;
-    }
-    return $copies;
-}
-
-sub find_prev_copy {
-    my ($fs, $endrev, $ppool) = @_;
-    my $pool = SVN::Pool->new_default;
-    # hold this resulting root in the subpool of ppool.
-    my $spool = $ppool ? SVN::Pool::create ($$ppool) : $pool;
-    my ($rev, $startrev) = ($endrev, $endrev);
-    my ($root, $copy);
-    while ($rev > 0) {
-	$pool->clear;
-	SVN::Pool::apr_pool_clear ($spool) if $ppool;
-	if (defined (my $cache = $fs->revision_prop ($rev, 'svk:copy_cache_prev'))) {
-	    $startrev = $rev + 1;
-	    $rev = $cache;
-	    last if $rev == 0;
-	}
-	$root = $fs->revision_root ($rev, $spool);
-	if ($copy = _copies_in_root ($root)) {
-	    last;
-	}
-	--$rev; --$startrev;
-    }
-    $fs->change_rev_prop ($_, 'svk:copy_cache_prev', $rev), $pool->clear
-	for $startrev..$endrev;
-    return unless $rev;
-    return ($root, $copy);
 }
 
 sub reformat_svn_date {
@@ -975,21 +976,20 @@ sub find_dotsvk {
     return
 }
 
+=head3 is_path_inside($path, $parent)
+
+Returns true if unix path C<$path> is inside C<$parent>.
+If they are the same, return true as well.
+
+=cut
+
+sub is_path_inside {
+    my ($path, $parent) = @_;
+    return 1 if $path eq $parent;
+    return substr ($path, 0, length ($parent)+1) eq "$parent/";
+}
+
 1;
 
 __END__
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut

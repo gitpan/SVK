@@ -1,14 +1,65 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Command::Copy;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
 use base qw( SVK::Command::Mkdir );
-use SVK::Util qw( get_anchor get_prompt abs2rel splitdir is_uri make_path );
+use SVK::Util qw( get_anchor get_prompt abs2rel splitdir is_uri make_path is_path_inside);
 use SVK::I18N;
+use SVK::Logger;
 
 sub options {
     ($_[0]->SUPER::options,
      'q|quiet'         => 'quiet',
-     'r|revision=i' => 'rev');
+     'r|revision=s' => 'rev');
 }
 
 sub parse_arg {
@@ -74,7 +125,7 @@ sub handle_co_item {
     my ($copath, $report) = ($dst->copath, $dst->report);
     die loc ("Path %1 already exists.\n", $copath)
 	if -e $copath;
-    my ($entry, $schedule) = $self->{xd}->get_entry($copath);
+    my ($entry, $schedule) = $self->{xd}->get_entry($copath, 1);
     $src->normalize; $src->anchorify;
     $self->ensure_parent($dst);
     $dst->anchorify;
@@ -140,8 +191,8 @@ sub _unmodified {
 sub check_src {
     my ($self, @src) = @_;
     for my $src (@src) {
-	# XXX: respect copath rev
-	$src->revision($self->{rev}) if defined $self->{rev};
+	$src->revision($self->resolve_revision($src, $self->{rev})) if defined $self->{rev};
+	$self->apply_revision($src);
 	next unless $src->isa('SVK::Path::Checkout');
 	$self->_unmodified ($src->new);
     }
@@ -151,10 +202,15 @@ sub run {
     my ($self, @src) = @_;
     my $dst = pop @src;
 
-    return loc("Different depots.\n") unless $dst->same_repos (@src);
-    my $m = $self->under_mirror ($dst);
-    return loc("Different sources.\n")
-	if $m && !$dst->same_source (@src);
+    return loc("Different depots.\n") unless $dst->same_repos(@src);
+    my $m = $self->under_mirror($dst);
+    if ( $m && !$dst->same_source(@src) ) {
+        $logger->error(loc("You are trying to copy across different mirrors."));
+        die loc( "Create an empty directory %1, and run smerge --baseless %2 %3.\n",
+            $dst->report, $src[0]->report, $dst->report )
+          if $#src == 0 && $dst->isa('SVK::Path');
+        return 1;
+    }
     $self->check_src (@src);
     # XXX: check dst to see if the copy is obstructured or missing parent
     my $fs = $dst->repos->fs;
@@ -169,13 +225,12 @@ sub run {
 	    my $cpdst = $dst->new;
 	    # implicit target for "cp x y z dir/"
 	    if (-d $cpdst->copath) {
-		# XXX: _path_inside should be refactored in to SVK::Util
-		if ( substr($cpdst->path_anchor, 0, length($_->path_anchor)+1) eq $_->path_anchor."/") {
-		    die loc("Invalid argument: copying directory %1 into itself.\n", $_->report);
-		}
 		if ($_->path_anchor eq $cpdst->path_anchor) {
-		    print loc("Ignoring %1 as source.\n", $_->report);
+		    $logger->warn(loc("Ignoring %1 as source.", $_->report));
 		    next;
+		}
+		if ( is_path_inside($cpdst->path_anchor, $_->path_anchor) ) {
+		    die loc("Invalid argument: copying directory %1 into itself.\n", $_->report);
 		}
 		$cpdst->descend ($_->path_anchor =~ m|/([^/]+)/?$|)
 	    }
@@ -247,17 +302,3 @@ SVK::Command::Copy - Make a versioned copy
  -C [--check-only]      : try operation but make no changes
  --direct               : commit directly even if the path is mirrored
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut

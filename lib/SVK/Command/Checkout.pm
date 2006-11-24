@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Command::Checkout;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
@@ -52,8 +102,7 @@ sub run {
 
     if (-e $report) {
 	my $copath = abs_path($report);
-	my ($entry, @where) = $self->{xd}{checkout}->get($copath);
-
+	my ($entry, @where) = $self->{xd}{checkout}->get($copath, 1);
         return $self->SUPER::run
 	    ( SVK::Path::Checkout->real_new
 	      ({ source => $target->mclone(revision => $entry->{revision}),
@@ -77,7 +126,7 @@ sub run {
 
     # abs_path doesn't work until the parent is created.
     my $copath = abs_path ($report);
-    my ($entry, @where) = $self->{xd}{checkout}->get ($copath);
+    my ($entry, @where) = $self->{xd}{checkout}->get ($copath, 1);
     die loc("Overlapping checkout path is not supported (%1); use 'svk checkout --detach' to remove it first.\n", $where[0])
 	if exists $entry->{depotpath} && $#where > 0;
 
@@ -96,7 +145,7 @@ sub run {
 			     depotmap => { $depotname => $depotpath },
 			     floating => $copath,
 			   );
-
+	$xd->giant_lock;
 	my $magic = catfile($svkpath, 'floating');
 	open my $magic_fh, '>', $magic or die $!;
 	print $magic_fh "This is an SVK floating checkout.";
@@ -206,19 +255,25 @@ sub run {
     }
 
     # Manually relocate all paths
-    my $map = $self->{xd}{checkout}{hash};
+    my $hmap = $self->{xd}{checkout}{hash};
 
     my $abs_path = abs_path($path);
-    if ($map->{$abs_path} and -d $abs_path) {
+    if ($hmap->{$abs_path} and -d $abs_path) {
         move_path($path => $report);
         $target = abs_path ($report);
     }
 
     my $prefix = $copath[0].$SEP;
     my $length = length($copath[0]);
-    foreach my $key (sort grep { index("$_$SEP", $prefix) == 0 } keys %$map) {
-        $map->{$target . substr($key, $length)} = delete $map->{$key};
-    }
+    my $relocate = sub {
+        my $map = shift;
+        for my $key ( sort grep { index( "$_$SEP", $prefix ) == 0 }
+            keys %$map ) {
+            $map->{ $target . substr( $key, $length ) } = delete $map->{$key};
+        }
+    };
+    $relocate->($hmap);
+    $relocate->($self->{xd}{checkout}{sticky});
 
     print loc("Checkout '%1' relocated to '%2'.\n", $path, $target);
 
@@ -320,17 +375,3 @@ SVK::Command::Checkout - Checkout the depotpath
  --relocate             : relocate the checkout to another path
  --purge                : detach checkout directories which no longer exist
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut

@@ -1,7 +1,58 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Editor::Copy;
 use strict;
 use warnings;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
+use SVK::Logger;
 
 require SVN::Delta;
 use base 'SVK::Editor::ByPass';
@@ -85,7 +136,7 @@ sub find_copy {
 	$pool->clear;
 	my ($toroot, $fromroot, $src_frompath) =
 	    SVK::Path::nearest_copy($cur_root, $cur_path, $ppool);
-	warn "===> $cur_path => $src_frompath" if $main::DEBUG;
+	$logger->debug("===> $cur_path => ".($src_frompath||''));
 	return unless defined $src_frompath;
 
 	# don't use the same copy twice
@@ -148,13 +199,12 @@ sub find_copy {
 	}
 
 	# GRR! cleanup this!
-	warn "==> $path(:$to) is copied from $src_frompath:$src_from" if $main::DEBUG;
+	$logger->debug("==> $path(:$to) is copied from $src_frompath:$src_from");
 	if (my ($frompath, $from) = $self->{cb_resolve_copy}->($path, $replace, $src_frompath, $src_from)) {
 	    push @{$self->{incopy}}, { path => $path,
 				       fromrev => $src_from,
 				       frompath => $src_frompath };
-	    warn "==> resolved to $frompath:$from"
-		if $main::DEBUG;
+	    $logger->debug("==> resolved to $frompath:$from");
 	    return $self->copy_source($src_frompath, $src_from);
 	}
 	else {
@@ -212,7 +262,7 @@ sub open_directory {
     my ($self, $path, $pbaton, @arg) = @_;
     return $self->{ignore_baton} if $self->should_ignore($path, $pbaton);
     if (my @ret = $self->find_copy($path, 1)) {
-	warn "==> turn $path into replace: ".join(',',@ret) if $main::DEBUG;
+	$logger->debug("==> turn $path into replace: ".join(',',@ret));
 	$self->SUPER::delete_entry($path, $arg[0], $pbaton, $arg[1]);
 	return $self->replay_add_history('directory', $path, $pbaton, @ret, $arg[1])
     }
@@ -224,7 +274,7 @@ sub open_file {
     my ($self, $path, $pbaton, @arg) = @_;
     return $self->{ignore_baton} if $self->should_ignore($path, $pbaton);
     if (my @ret = $self->find_copy($path, 1)) {
-	warn "==> turn file $path into replace" if $main::DEBUG;
+	$logger->debug("==> turn file $path into replace");
 	$self->SUPER::delete_entry($path, $arg[0], $pbaton, $arg[1]);
 	return $self->replay_add_history('file', $path, $pbaton, @ret, $arg[1])
     }
@@ -307,8 +357,8 @@ sub replay_add_history {
 	 translate => sub { $_[0] =~ s/^\Q$src_target/$target/ })
 	    if $type eq 'file';
 
-    warn "****==> to delta $src_anchor / $src_target @ $self->{incopy}[-1]{fromrev} vs $self->{src}{path} / $path" if $main::DEBUG;;
-    warn "==> sample" if $main::DEBUG;
+    $logger->debug("****==> to delta $src_anchor / $src_target @ $self->{incopy}[-1]{fromrev} vs $self->{src}{path} / $path");
+    $logger->debug("==> sample");
     require SVK::Editor::Delay;
     SVK::XD->depot_delta
 	    ( oldroot => $self->{copyboundry_root}->fs->
@@ -316,8 +366,8 @@ sub replay_add_history {
 	      newroot => $self->{src}->root,
 	      oldpath => [$src_anchor, $src_target],
 	      newpath => File::Spec::Unix->catdir($self->{src}->path_anchor, $path),
-	      editor => SVN::Delta::Editor->new(_debug => 1)) if $main::DEBUG;
-    warn "==> done sample" if $main::DEBUG;
+	      editor => SVN::Delta::Editor->new(_debug => 1)) if $logger->is_debug();
+    $logger->debug("==> done sample");
     SVK::XD->depot_delta
 	    ( oldroot => $self->{copyboundry_root}->fs->
 	      revision_root($self->{incopy}[-1]{fromrev}),
@@ -325,7 +375,7 @@ sub replay_add_history {
 	      oldpath => [$src_anchor, $src_target],
 	      newpath => File::Spec::Unix->catdir($self->{src}->path_anchor, $path),
 	      editor => SVK::Editor::Delay->new(_editor => [$editor]) );
-    warn "***=>done delta" if $main::DEBUG;
+    $logger->debug("***=>done delta");
     # close file is done by the delta;
     return bless { path => $path,
 		   baton => $baton,
@@ -334,19 +384,5 @@ sub replay_add_history {
     $self->{ignore_baton};
 }
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut
 
 1;

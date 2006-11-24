@@ -1,9 +1,60 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Command;
 use strict;
 use base qw(App::CLI App::CLI::Command);
 use SVK::Version;  our $VERSION = $SVK::VERSION;
 use Getopt::Long qw(:config no_ignore_case bundling);
 
+use SVK::Logger;
 use SVK::Util qw( get_prompt abs2rel abs_path is_uri catdir bsd_glob from_native
 		  find_svm_source $SEP IS_WIN32 catdepot traverse_history);
 use SVK::I18N;
@@ -115,13 +166,7 @@ sub invoke {
     $ofh = select STDERR unless $output;
     print $ret if $ret && $ret !~ /^\d+$/;
     unless (ref($@)) {
-	if ($SVN::Core::VERSION gt '1.2.2') {
-	    print $@ if $@;
-	}
-	else {
-	    # if an error handler terminates editor call, there will be stack trace
-	    print $@ if $@ && $@ !~ m/\n.+\n.+\n/
-	}
+	print $@ if $@;
     }
     $ret = 1 if ($ret ? $ret !~ /^\d+$/ : $@);
 
@@ -366,7 +411,10 @@ sub arg_uri_maybe {
     die loc ("URI not allowed here: %1.\n", $no_new_mirror)
 	if $no_new_mirror;
 
-    print loc("New URI encountered: %1\n", $uri);
+    # this is going to take a while, release giant lock
+    $self->{xd}->giant_unlock;
+
+    $logger->info(loc("New URI encountered: %1\n", $uri));
 
     my $depots = join('|', map quotemeta, sort keys %$map);
     my ($base_uri, $rel_uri);
@@ -458,6 +506,8 @@ break history-sensitive merging within the mirrored path.
         $answer = 'a';
     }
 
+    eval {
+
     $self->command(
         sync => {
             skip_to => (
@@ -469,7 +519,16 @@ break history-sensitive merging within the mirrored path.
         }
     )->run ($target);
 
+    $self->{xd}->giant_lock;
+
+    };
+
     my $depotpath = length ($rel_uri) ? $target->depotpath."/$rel_uri" : $target->depotpath;
+    if (my $err = $@) {
+	print loc("Unable to complete initial sync: %1", $err);
+	die loc("Run svk sync %1, and run the %2 command again.\n", $depotpath, lc((ref($self) =~ m/::([^:]*)$/)[0]));
+    }
+
     return $self->arg_depotpath($depotpath);
 }
 
@@ -739,7 +798,7 @@ sub lock_coroot {
     return unless @tgt;
     my %roots;
     for (@tgt) {
-	my (undef, $coroot) = $self->{xd}{checkout}->get($_);
+	my (undef, $coroot) = $self->{xd}{checkout}->get($_, 1);
 	$roots{$coroot}++;
     }
     $self->{xd}->lock($_)
@@ -988,11 +1047,59 @@ svk use the default.
 
 	my $target = $self->arg_depotpath ($path);
 	last if $allow_exist or $target->root->check_path ($target->path) == $SVN::Node::none;
-	print loc ("Path %1 already exists.\n", $path);
+	$logger->warn(loc ("Path %1 already exists.", $path));
     }
 
     return $path;
 }
+
+
+=head3 run_command_recursively($target, $code)
+
+Traverse C<$target> and and invoke C<$code> with each node.
+
+=cut
+
+sub _run_code {
+    my ($self, $target, $code, $level, $errs, $kind) = @_;
+    eval { $code->( $target, $kind, $level ) };
+    if ($@) {
+	print $@;
+	push @$errs, "$@";
+    }
+}
+
+sub run_command_recursively {
+    my ( $self, $target, $code, $errs, $newline, $level ) = @_;
+    my $root = $target->root;
+    my $kind = $root->check_path( $target->path_anchor );
+    $self->_run_code($target, $code, -1, $errs, $kind);
+    $self->_descend_with( $target, $code, $errs, 1 )
+        if $kind == $SVN::Node::dir
+        && $self->{recursive}
+        && ( !$self->{depth} || 0 < $self->{depth} );
+    print "\n" if $newline;
+}
+
+sub _descend_with {
+    my ($self, $target, $code, $errs, $level) = @_;
+    my $root = $target->root;
+    my $entries = $root->dir_entries ($target->path_anchor);
+    my $pool = SVN::Pool->new_default;
+    for (sort keys %$entries) {
+	$pool->clear;
+	my $kind = $entries->{$_}->kind;
+	next if $kind == $SVN::Node::unknown;
+	my $child = $target->new->descend($_);
+
+        $self->_run_code($child, $code, $level, $errs, $kind);
+	my $isdir = ($kind == $SVN::Node::dir);
+	if ($isdir && $self->{recursive} && (!$self->{'depth'} || ( $level  < $self->{'depth'}))) {
+	    $self->_descend_with($child, $code, $errs, $level+1);
+	}
+    }
+}
+
 
 ## Resolve the correct revision numbers given by "-c"
 sub resolve_chgspec {
@@ -1012,7 +1119,13 @@ sub resolve_chgspec {
 	    else {
 		eval { $torev = $self->resolve_revision($target,$_); };
 		die loc("Change spec %1 not recognized.\n", $_) if($@);
-		$fromrev = $torev - 1;
+		if ($torev < 0) {
+		    $fromrev = -$torev;
+		    $torev = $fromrev - 1;
+		}
+		else {
+		    $fromrev = $torev - 1;
+		}
 	    }
 	    push @revlist , [$fromrev, $torev];
 	}
@@ -1068,12 +1181,13 @@ sub resolve_revision {
     } elsif ($revstr =~ /\{(\d\d\d\d-\d\d-\d\d)\}/) { 
         my $date = $1; $date =~ s/-//g;
         $rev = $self->find_date_rev($target,$date);
-    } elsif ((my ($rrev) = $revstr =~ m'^(\d+)@$')) {
+    } elsif ((my ($minus, $rrev) = $revstr =~ m'^(-)?(\d+)@$')) {
 	if (my $m = $target->is_mirrored) {
-	    $rev = $m->find_local_rev ($rrev);
+	    $rev = $m->find_local_rev($rrev);
 	}
 	die loc ("Can't find local revision for %1 on %2.\n", $rrev, $target->path)
 	    unless defined $rev;
+	$rev *= $minus ? -1 : 1;
     } elsif ($revstr =~ /^-\d+$/) {
         $rev = $self->find_head_rev($target) + $revstr;
     } elsif ($revstr =~ /\D/) {
@@ -1143,17 +1257,3 @@ __DATA__
 
 L<SVK>, L<SVK::XD>, C<SVK::Command::*>
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut

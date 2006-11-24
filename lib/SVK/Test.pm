@@ -1,7 +1,64 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Test;
 use strict;
+
+# When running tests, don't let the user's .subversion/config
+# affect results.
+BEGIN { $ENV{SVKNOSVNCONFIG} = 1; }
+
 use SVK::Version;  our $VERSION = $SVK::VERSION;
 use base 'Exporter';
+
+use SVK::Logger;
 
 our @EXPORT = qw(plan_svm new_repos build_test build_floating_test
 		 get_copath append_file overwrite_file
@@ -44,7 +101,6 @@ use File::Temp;
 use SVK::Util qw( dirname catdir tmpdir can_run abs_path $SEP $EOL IS_WIN32 HAS_SVN_MIRROR );
 require Storable;
 use SVK::Path::Checkout;
-use Clone;
 
 # Fake standard input
 our $answer = [];
@@ -59,11 +115,11 @@ BEGIN {
     *SVK::Util::get_prompt = *SVK::XD::get_prompt = sub {
 	local $| = 1;
 	print "$_[0]\n" if $show_prompt;
-	print STDOUT "$_[0]\n" if $main::DEBUG;
+	$logger->debug("$_[0]");
 	return $answer unless ref($answer); # compat
 	die "expecting input" unless @$answer;
 	my $ans = shift @$answer;
-	print STDOUT "-> $answer->[0]\n" if $main::DEBUG;
+	$logger->debug("-> ".($answer->[0]||''));
 	return $ans unless ref($ans);
 	
 	if (ref($ans->[0]) eq 'Regexp') {
@@ -109,8 +165,6 @@ $ENV{USER} ||= (
     (defined &Win32::LoginName) ? Win32::LoginName() : ''
 ) || $ENV{USERNAME} || (getpwuid($<))[0];
 
-$ENV{SVNFSTYPE} ||= (($SVN::Core::VERSION =~ /^1\.0/) ? 'bdb' : 'fsfs');
-
 # Make "prove -l" happy; abs_path() returns "undef" if the path 
 # does not exist. This makes perl very unhappy.
 @INC = grep defined, map abs_path($_), @INC;
@@ -137,7 +191,7 @@ sub new_repos {
     }
     my $pool = SVN::Pool->new_default;
     $repos = SVN::Repos::create("$repospath", undef, undef, undef,
-				{'fs-type' => $ENV{SVNFSTYPE}})
+				{'fs-type' => $ENV{SVNFSTYPE} || 'fsfs'})
 	or die "failed to create repository at $repospath";
     return $repospath;
 }
@@ -158,6 +212,7 @@ sub build_floating_test {
 
     my $svkpath = File::Spec->catfile($directory, '.svk');
     my $xd = SVK::XD->new (statefile => File::Spec->catfile($svkpath, 'config'),
+			   giantlock => File::Spec->catfile($svkpath, 'lock'),
 			   svkpath => $svkpath,
 			   floating => $directory);
     $xd->load;

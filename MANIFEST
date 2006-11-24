@@ -1,3 +1,4 @@
+ARTISTIC
 bin/svk
 CHANGES
 COMMITTERS
@@ -5,6 +6,7 @@ contrib/bench-mime-detect.pl
 contrib/svk-completion.pl
 contrib/svkopendiff
 contrib/update-copyright.pl
+COPYING
 inc/ExtUtils/AutoInstall.pm
 inc/Module/AutoInstall.pm
 inc/Module/Install.pm
@@ -78,6 +80,7 @@ lib/SVK/Editor/InteractiveStatus.pm
 lib/SVK/Editor/Merge.pm
 lib/SVK/Editor/Patch.pm
 lib/SVK/Editor/Rename.pm
+lib/SVK/Editor/Serialize.pm
 lib/SVK/Editor/Sign.pm
 lib/SVK/Editor/Status.pm
 lib/SVK/Editor/SubTree.pm
@@ -109,6 +112,7 @@ lib/SVK/Log/Filter/Selection.pm
 lib/SVK/Log/Filter/Std.pm
 lib/SVK/Log/Filter/XML.pm
 lib/SVK/Log/FilterPipeline.pm
+lib/SVK/Logger.pm
 lib/SVK/Merge.pm
 lib/SVK/MimeDetect.pm
 lib/SVK/MimeDetect/FileLibMagic.pm
@@ -117,6 +121,7 @@ lib/SVK/MimeDetect/FileType.pm
 lib/SVK/MimeDetect/Internal.pm
 lib/SVK/Mirror.pm
 lib/SVK/Mirror/Backend/SVNRa.pm
+lib/SVK/Mirror/Backend/SVNRaPipe.pm
 lib/SVK/Mirror/Backend/SVNSync.pm
 lib/SVK/MirrorCatalog.pm
 lib/SVK/Notify.pm
@@ -189,6 +194,7 @@ t/07smerge-anchor-replace.t
 t/07smerge-anchor.t
 t/07smerge-baseless.t
 t/07smerge-bidi-inc.t
+t/07smerge-branch-renamed.t
 t/07smerge-copy-co.t
 t/07smerge-copy.t
 t/07smerge-delete.t
@@ -227,6 +233,7 @@ t/23commit-inter-nav.t
 t/23commit-inter-output.t
 t/23commit-mirror.t
 t/23commit-multi.t
+t/23commit-subdir.t
 t/23commit.t
 t/24diff.t
 t/25log-filter.t
@@ -259,10 +266,13 @@ t/74view-mirror.t
 t/74view.t
 t/75hook.t
 t/76ignore.t
+t/77floating.t
 t/api/mirror.t
 t/copy-escape.t
 t/copy-replace.t
+t/diff/mixed-checkout.t
 t/mirror/dav-authz.t
+t/mirror/relocate.t
 t/mirror/sync-crazy-replace.t
 t/mirror/sync-empty.t
 t/mirror/sync-escape.t
@@ -274,5 +284,7 @@ t/svk-sec.gpg
 t/svk.gpg
 utils/extract-docs
 utils/extract-message-catalog
+utils/license_tag
 utils/pullyu
 utils/svk-ediff.el
+utils/verify-mirror

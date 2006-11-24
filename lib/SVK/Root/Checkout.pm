@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Root::Checkout;
 use strict;
 use SVK::Util qw(abs2rel md5_fh is_symlink);
@@ -26,7 +76,7 @@ sub check_path {
     return $SVN::Node::none unless -e _;
 
     return (is_symlink || -f _) ? $SVN::Node::file : $SVN::Node::dir
-	if $self->path->xd->{checkout}->get($copath)->{'.schedule'} or
+	if $self->path->xd->{checkout}->get($copath, 1)->{'.schedule'} or
 	    $root->check_path($path, $pool);
     return $SVN::Node::unknown;
 }
@@ -53,7 +103,7 @@ sub node_created_rev {
 sub closest_copy {
     my ($self, $path, $pool) = @_;
     my ($copath, $root) = $self->_get_copath($path, $pool);
-    my $entry = $self->path->xd->{checkout}->get($copath);
+    my $entry = $self->path->xd->{checkout}->get($copath, 1);
     my $kind = $entry->{'.schedule'} || '';
 
     return $root->closest_copy($path, $pool) unless $kind eq 'add';
@@ -64,18 +114,18 @@ sub closest_copy {
 sub copied_from {
     my ($self, $path, $pool) = @_;
     my ($copath, $root) = $self->_get_copath($path, $pool);
-    my $entry = $self->path->xd->{checkout}->get($copath);
+    my $entry = $self->path->xd->{checkout}->get($copath, 1);
     my $kind = $entry->{'.schedule'};
 
     return $root->copied_from($path, $pool) unless $kind eq 'add';
-    my ($source_path, $source_rev) = SVK::XD::_copy_source($entry, $copath);
+    my ($source_path, $source_rev) = $self->path->xd->_copy_source($entry, $copath);
     return ($source_rev, $source_path);
 }
 
 sub node_history {
     my ($self, $path, $pool) = @_;
     my ($copath, $root) = $self->_get_copath($path, $pool);
-    my $entry = $self->path->xd->{checkout}->get($copath);
+    my $entry = $self->path->xd->{checkout}->get($copath, 1);
     my $kind = $entry->{'.schedule'} || '';
 
     return $root->node_history($path, $pool) unless $kind eq 'add';
@@ -106,7 +156,7 @@ sub dir_entries {
 	else {
 	    # Do we know about the node?
 	    $coentries->{$_} = SVK::Root::Checkout::Entry->new
-		({ kind => $self->path->xd->{checkout}->get($copath)->{'.schedule'} ?
+		({ kind => $self->path->xd->{checkout}->get("$copath/$_", 1)->{'.schedule'} ?
 		   $kind : $SVN::Node::unknown });
 	}
     }
@@ -133,7 +183,7 @@ sub _get_copath {
     my $copath = abs2rel($path, $self->path->path_anchor => $self->path->copath);
     my $root;
     ($root, $_[1]) = $self->path->source->root->get_revision_root
-	($path, $self->path->xd->{checkout}->get($copath)->{revision}, $pool);
+	($path, $self->path->xd->{checkout}->get($copath, 1)->{revision}, $pool);
     return ($copath, $root);
 }
 

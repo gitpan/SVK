@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Command::Delete;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
@@ -26,9 +76,6 @@ sub parse_arg {
 	return $self->{xd}->target_condensed(@arg);
     }
 
-    die loc("Delete for more than one depotpath is not supported yet.\n")
-	if scalar @arg > 1;
-
     return @arg;
 }
 
@@ -38,22 +85,28 @@ sub lock {
 }
 
 sub do_delete_direct {
-    my ($self, $target) = @_;
-    my $m = $self->under_mirror ($target);
-    if ($m && $m->path eq $target->path) {
-	$m->detach;
-	$target->refresh_revision;
-	undef $m;
+    my ( $self, @args ) = @_;
+    my $target = $args[0];
+    my $m      = $self->under_mirror($target);
+    if ( $m && $m->path eq $target->path ) {
+        $m->detach;
+        $target->refresh_revision;
+        undef $m;
     }
 
-    $self->get_commit_message ();
+    $self->get_commit_message;
     $target->normalize;
-    my ($anchor, $editor) = $self->get_dynamic_editor ($target);
-    my $rev = $target->revision;
-    $rev = $m->find_remote_rev ($rev) if $m;
-    $editor->delete_entry (abs2rel ($target->path, $anchor => undef, '/'), $rev, 0);
-    $self->adjust_anchor ($editor);
-    $self->finalize_dynamic_editor ($editor);
+    my ( $anchor, $editor ) = $self->get_dynamic_editor($target);
+    for (@args) {
+        my $rev = $target->revision;
+        $rev = $m->find_remote_rev($rev)
+          if
+          $m; # XXX: why do we need this? path->get_editor shuold do translation
+        $editor->delete_entry( abs2rel( $_->path, $anchor => undef, '/' ),
+            $rev, 0 );
+        $self->adjust_anchor($editor);
+    }
+    $self->finalize_dynamic_editor($editor);
 }
 
 sub _ensure_mirror {
@@ -69,16 +122,20 @@ sub _ensure_mirror {
 }
 
 sub run {
-    my ($self, $target) = @_;
+    my ($self, @args) = @_;
 
-    $self->_ensure_mirror($target);
 
-    if ($target->isa('SVK::Path::Checkout')) {
+    if ($args[0]->isa('SVK::Path::Checkout')) {
+	my $target = $args[0]; # already condensed
+	$self->_ensure_mirror($target);
 	$self->{xd}->do_delete( $target, no_rm => $self->{keep}, 
 		'force_delete' => $self->{force} );
     }
     else {
-	$self->do_delete_direct ( $target );
+	$self->_ensure_mirror($_) for @args;
+	die loc("Different source.\n") unless
+	    $args[0]->same_source(@args);
+	$self->do_delete_direct( @args );
     }
 
     return;
@@ -110,17 +167,3 @@ SVK::Command::Delete - Remove versioned item
  --direct               : commit directly even if the path is mirrored
  --force                : delete the file/directory even if modified
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut

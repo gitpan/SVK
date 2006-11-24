@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Command::Propset;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
@@ -6,6 +56,7 @@ use constant opt_recursive => 0;
 use SVK::Util qw ( abs2rel );
 use SVK::XD;
 use SVK::I18N;
+use SVK::Logger;
 
 sub options {
     ($_[0]->SUPER::options,
@@ -38,11 +89,11 @@ sub do_propset_direct {
         $fs->change_rev_prop ($rev, $propname => $propvalue);
 	unless ($self->{quiet}) {
 	    if (defined $propvalue) {
-		print loc("Property '%1' set on repository revision %2.\n",
-		    $propname, $rev);
+		$logger->info(loc("Property '%1' set on repository revision %2.",
+		    $propname, $rev));
 	    } else {
-		print loc("Property '%1' deleted from repository revision %2.\n",
-		    $propname, $rev);
+		$logger->info(loc("Property '%1' deleted from repository revision %2.",
+		    $propname, $rev));
 	    }
 	}
         return;
@@ -105,7 +156,7 @@ sub do_propset {
 	}
 
 	$self->{xd}->do_propset
-	    ( $target->for_checkout_delta,
+	    ( $target,
 	      propname => $pname,
 	      propvalue => $pvalue,
 	      quiet => $self->{quiet},
@@ -153,17 +204,3 @@ SVK::Command::Propset - Set a property on path
  -q [--quiet]           : print as little as possible
  --direct               : commit directly even if the path is mirrored
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut

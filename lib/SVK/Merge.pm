@@ -1,11 +1,62 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Merge;
 use strict;
-use SVK::Util qw(traverse_history);
+use SVK::Util qw(traverse_history is_path_inside);
 use SVK::I18N;
 use SVK::Editor::Merge;
 use SVK::Editor::Rename;
 use SVK::Editor::Translate;
 use SVK::Editor::Delay;
+use SVK::Logger;
 use List::Util qw(min);
 
 =head1 NAME
@@ -275,7 +326,7 @@ sub find_merge_sources {
     my $pool = SVN::Pool->new_default;
     my $info = $self->merge_info ($target->new);
 
-    $target = $target->new->as_depotpath ($self->{xd}{checkout}->get ($target->copath)->{revision})
+    $target = $target->new->as_depotpath ($self->{xd}{checkout}->get ($target->copath. 1)->{revision})
 	if $target->isa('SVK::Path::Checkout');
     $info->add_target ($target, $self->{xd}) unless $noself;
 
@@ -301,7 +352,7 @@ sub get_new_ticket {
     my $newinfo = $dstinfo->union ($srcinfo)->del_target ($self->{dst});
     unless ($self->{quiet}) {
 	for (sort keys %$newinfo) {
-	    print loc("New merge ticket: %1:%2\n", $_, $newinfo->{$_}{rev})
+	    $logger->info(loc("New merge ticket: %1:%2", $_, $newinfo->{$_}{rev}))
 		if !$dstinfo->{$_} || $newinfo->{$_}{rev} > $dstinfo->{$_}{rev};
 	}
     }
@@ -375,7 +426,7 @@ sub _collect_renamed {
 	$entries->{$_} = [$action , $action eq 'D' ? (-1) : $root->copied_from ($_)];
 	# anchor is copied
 	if ($action eq 'A' && $entries->{$_}[1] != -1 &&
-	    ($path eq $_ || "$_/" eq substr ($path, 0, length($_)+1))) {
+	    (is_path_inside($path, $_))) {
 	    $path =~ s/^\Q$_\E/$entries->{$_}[2]/;
 	    $$pathref = $path;
 	}
@@ -518,8 +569,7 @@ sub run {
 		      }) or die loc("Can't find the first revision of %1.\n", $src->path);
 	    }
 	}
-	warn "==> got $boundry_rev as copyboundry, add $self->{fromrev} as boundry as well"
-	    if $main::DEBUG;
+	$logger->debug("==> got $boundry_rev as copyboundry, add $self->{fromrev} as boundry as well");
 
 	if (defined $boundry_rev) {
 	  require SVK::Editor::Copy;
@@ -563,10 +613,10 @@ sub run {
 	      no_recurse => $self->{no_recurse}, editor => $editor,
 	    );
     unless ($self->{quiet}) {
-	print loc("%*(%1,conflict) found.\n", $meditor->{conflicts})
+	$logger->warn(loc("%*(%1,conflict) found.", $meditor->{conflicts}))
 	    if $meditor->{conflicts};
-	print loc("%*(%1,file) skipped, you might want to rerun merge with --track-rename.\n",
-		  $meditor->{skipped}) if $meditor->{skipped} && !$self->{track_rename} && !$self->{auto};
+	$logger->warn(loc("%*(%1,file) skipped, you might want to rerun merge with --track-rename.",
+		  $meditor->{skipped})) if $meditor->{skipped} && !$self->{track_rename} && !$self->{auto};
     }
 
     return $meditor->{conflicts};
@@ -575,7 +625,7 @@ sub run {
  # translate to (path, rev) for dst
 sub resolve_copy {
     my ($self, $srcinfo, $dstinfo, $cp_path, $cp_rev) = @_;
-    warn "==> to resolve $cp_path $cp_rev" if $main::DEBUG;
+    $logger->debug("==> to resolve $cp_path $cp_rev");
     my $path = $cp_path;
     my $src = $self->{src};
     my $srcpath = $src->path;
@@ -715,19 +765,6 @@ Document the merge and ticket tracking mechanism.
 =head1 SEE ALSO
 
 L<SVK::Editor::Merge>, L<SVK::Command::Merge>, Star-merge from GNU Arch
-
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
 
 =cut
 

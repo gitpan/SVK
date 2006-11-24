@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Command::Commit;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
@@ -5,6 +55,7 @@ use base qw( SVK::Command );
 use constant opt_recursive => 1;
 use SVK::XD;
 use SVK::I18N;
+use SVK::Logger;
 use SVK::Editor::Status;
 use SVK::Editor::Sign;
 use SVK::Editor::Dynamic;
@@ -13,7 +64,7 @@ use SVK::Editor::InteractiveCommitter;
 use SVK::Editor::InteractiveStatus;
 
 use SVK::Util qw( get_buffer_from_editor slurp_fh read_file
-		  tmpfile abs2rel find_prev_copy from_native to_native
+		  tmpfile abs2rel from_native to_native
 		  get_encoder get_anchor );
 
 use Class::Autouse qw( SVK::Editor::Rename SVK::Editor::Merge );
@@ -83,7 +134,7 @@ sub get_commit_message {
 	$self->{message} = get_buffer_from_editor
 	    (loc('log message'), $self->message_prompt,
 	     join ("\n", $self->{message} || '', $self->message_prompt, ''), 'commit');
-	++$self->{save_message};
+	$self->{save_message} = $$;
     }
     $self->decode_commit_message;
 }
@@ -122,10 +173,11 @@ sub adjust_anchor {
 sub save_message {
     my $self = shift;
     return unless $self->{save_message};
+    return unless $self->{save_message} == $$;
     local $@;
     my ($fh, $file) = tmpfile ('commit', DIR => '', TEXT => 1, UNLINK => 0);
     print $fh $self->{message};
-    print loc ("Commit message saved in %1.\n", $file);
+    $logger->warn(loc ("Commit message saved in %1.", $file));
 }
 
 # Return the editor according to copath, path, and is_mirror (path)
@@ -135,7 +187,7 @@ sub _editor_for_patch {
     require SVK::Patch;
     my ($m);
     if (($m) = $target->is_mirrored) {
-	print loc("Patching locally against mirror source %1.\n", $m->url);
+	$logger->info(loc("Patching locally against mirror source %1.", $m->url));
     }
     die loc ("Illegal patch name: %1.\n", $self->{patch})
 	if $self->{patch} =~ m!/!;
@@ -164,7 +216,7 @@ sub _commit_callback {
     my ($self, $callback) = @_;
 
     return sub {
-	print loc("Committed revision %1.\n", $_[0]);
+	$logger->info(loc("Committed revision %1.", $_[0]));
 	$callback->(@_) if $callback,
     }
 }
@@ -179,13 +231,13 @@ sub get_editor {
         && !$self->{direct}
         && ( my $m = $target->is_mirrored ) ) {
         if ( $self->{check_only} ) {
-            print loc( "Checking locally against mirror source %1.\n", $m->url )
+            $logger->info(loc( "Checking locally against mirror source %1.", $m->url ))
 		unless $self->{incremental};
         }
         else {
-            print loc("Commit into mirrored path: merging back directly.\n")
+            $logger->warn(loc("Commit into mirrored path: merging back directly."))
                 if ref($self) eq __PACKAGE__;    # XXX: output compat
-            print loc( "Merging back to mirror source %1.\n", $m->url );
+            $logger->info(loc( "Merging back to mirror source %1.", $m->url ));
         }
     }
     else {
@@ -360,7 +412,7 @@ sub get_committable {
 	    get_buffer_from_editor (loc('log message'), $self->target_prompt,
 				    undef, $file, $target->copath, $target->source->{targets});
 	die loc("No targets to commit.\n") if $#{$targets} < 0;
-	++$self->{save_message};
+	$self->{save_message} = $$;
 	unlink $file;
     }
 
@@ -403,12 +455,12 @@ sub committed_commit {
     my $fs = $target->repos->fs;
     sub {
 	my $rev = shift;
-	my ($entry, $dataroot) = $self->{xd}{checkout}->get($target->copath($target->{copath_target}));
+	my ($entry, $dataroot) = $self->{xd}{checkout}->get($target->copath($target->{copath_target}), 1);
 	my (undef, $coanchor) = $self->{xd}->find_repos ($entry->{depotpath});
 	my $oldroot = $fs->revision_root ($rev-1);
 	# optimize checkout map
 	for my $copath ($self->{xd}{checkout}->find ($dataroot, {revision => qr/.*/})) {
-	    my $coinfo = $self->{xd}{checkout}->get ($copath);
+	    my $coinfo = $self->{xd}{checkout}->get ($copath, 1);
 	    next if $coinfo->{'.deleted'};
 	    my $orev = eval { $oldroot->node_created_rev (abs2rel ($copath, $dataroot => $coanchor, '/')) };
 	    defined $orev or next;
@@ -422,7 +474,7 @@ sub committed_commit {
 	    $self->{xd}{checkout}->store ($path,
                                           { $self->_schedule_empty },
                                           {override_sticky_descendents => $self->{recursive}});
-            if (($action eq 'D') and $self->{xd}{checkout}->get ($path)->{revision} == $rev ) {
+            if (($action eq 'D') and $self->{xd}{checkout}->get ($path, 1)->{revision} == $rev ) {
                 # Fully merged, remove the special node
                 $self->{xd}{checkout}->store (
                     $path, { revision => undef, $self->_schedule_empty }
@@ -551,14 +603,14 @@ sub run_delta {
     $self->{xd}->checkout_delta
 	( $target->for_checkout_delta,
 	  depth => $self->{recursive} ? undef : 0,
-	  debug => $main::DEBUG,
+	  debug => $logger->is_debug(),
 	  xdroot => $xdroot,
 	  editor => $editor,
 	  send_delta => !$cb{send_fulltext},
 	  nodelay => $cb{send_fulltext},
 	  $self->exclude_mirror ($target),
-	  cb_exclude => sub { print loc ("%1 is a mirrored path, please commit separately.\n",
-					 abs2rel ($_[1], $target->copath => $target->report)) },
+	  cb_exclude => sub { $logger->error(loc ("%1 is a mirrored path, please commit separately.",
+					 abs2rel ($_[1], $target->copath => $target->report))) },
 	  $self->{import} ?
 	  ( auto_add => 1,
 	    obstruct_as_replace => 1,
@@ -609,17 +661,3 @@ SVK::Command::Commit - Commit changes to depot
  --set-revprop P=V      : set revision property on the commit
  --direct               : commit directly even if the path is mirrored
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2006 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut

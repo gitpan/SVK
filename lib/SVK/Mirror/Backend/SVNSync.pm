@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::Mirror::Backend::SVNSync;
 use strict;
 use base 'SVK::Mirror::Backend::SVNRa';
@@ -10,7 +60,7 @@ sub _do_load_fromrev {
 
 sub load {
     my ( $class, $mirror ) = @_;
-    my $self = $class->SUPER::new( { mirror => $mirror } );
+    my $self = $class->SUPER::new( { mirror => $mirror, use_pipeline => 1 } );
     my $fs = $mirror->depot->repos->fs;
     $mirror->url( $fs->revision_prop( 0,         'svn:svnsync:from-url' ) );
     $mirror->server_uuid( $fs->revision_prop( 0, 'svn:svnsync:from-uuid' ) );
@@ -49,50 +99,26 @@ sub _do_relocate {
     $self->mirror->depot->reposfs->change_rev_prop( 0, 'svn:svnsync:from-url',  $self->mirror->url );
 }
 
-sub find_rev_from_changeset {
-    return $_[0];
-}
+sub find_rev_from_changeset { $_[0] }
 
-sub sync_changeset {
-    my ( $self, $changeset, $metadata, $callback ) = @_;
-    my $t = $self->mirror->get_svkpath('/');
-    my ( $editor, undef, %opt ) = $t->get_editor(
-        ignore_mirror => 1,
-        message       => $metadata->{message},
-        author        => $metadata->{author},
-        callback      => sub {
-            $t->repos->fs->change_rev_prop( $_[0], 'svn:date',
-                $metadata->{date} );
-            $self->fromrev( $_[0] );
-            $callback->( $changeset, $_[0] ) if $callback;
-        }
-    );
+sub _revmap_prop { }
 
-    my $ra = $self->_new_ra;
-    my $pool = SVN::Pool->new_default;
-    if ( my $revprop = $self->mirror->depot->mirror->revprop ) {
-        my $prop = $ra->rev_proplist($changeset);
-        for (@$revprop) {
-            $opt{txn}->change_prop( $_, $prop->{$_} )
-                if exists $prop->{$_};
-        }
-    }
-
-    $editor = SVK::Editor::CopyHandler->new(
+sub _get_sync_editor {
+    my ($self, $editor, $target) = @_;
+    return SVK::Editor::CopyHandler->new(
         _editor => $editor,
         cb_copy => sub {
             my ( $editor, $path, $rev ) = @_;
             return ( $path, $rev ) if $rev == -1;
             $path =~ s{^\Q/}{};
-            return $t->as_url( 1, $path, $rev );
+            return $target->as_url( 1, $path, $rev );
         }
-    );
+    )
+}
 
-    $ra->replay( $changeset, 0, 1, $editor );
-    $self->_ra_finished($ra);
+sub _after_replay {
+    my ($self, $ra, $editor) = @_;
     $editor->close_edit;
-    return;
-
 }
 
 sub _relayed { }

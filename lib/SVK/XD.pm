@@ -1,3 +1,53 @@
+# BEGIN BPS TAGGED BLOCK {{{
+# COPYRIGHT:
+# 
+# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+#                                          <clkao@bestpractical.com>
+# 
+# (Except where explicitly superseded by other copyright notices)
+# 
+# 
+# LICENSE:
+# 
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of either:
+# 
+#   a) Version 2 of the GNU General Public License.  You should have
+#      received a copy of the GNU General Public License along with this
+#      program.  If not, write to the Free Software Foundation, Inc., 51
+#      Franklin Street, Fifth Floor, Boston, MA 02110-1301 or visit
+#      their web page on the internet at
+#      http://www.gnu.org/copyleft/gpl.html.
+# 
+#   b) Version 1 of Perl's "Artistic License".  You should have received
+#      a copy of the Artistic License with this package, in the file
+#      named "ARTISTIC".  The license is also available at
+#      http://opensource.org/licenses/artistic-license.php.
+# 
+# This work is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+# 
+# CONTRIBUTION SUBMISSION POLICY:
+# 
+# (The following paragraph is not intended to limit the rights granted
+# to you to modify and distribute this software under the terms of the
+# GNU General Public License and is only of importance to you if you
+# choose to contribute your changes and enhancements to the community
+# by submitting them to Best Practical Solutions, LLC.)
+# 
+# By intentionally submitting any modifications, corrections or
+# derivatives to this work, or any other work intended for use with SVK,
+# to Best Practical Solutions, LLC, you confirm that you are the
+# copyright holder for those contributions and you grant Best Practical
+# Solutions, LLC a nonexclusive, worldwide, irrevocable, royalty-free,
+# perpetual, license to use, copy, create derivative works based on
+# those contributions, and sublicense and distribute those contributions
+# and any derivatives thereof.
+# 
+# END BPS TAGGED BLOCK }}}
 package SVK::XD;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
@@ -22,6 +72,8 @@ use Class::Autouse qw( Path::Class SVK::Editor::Delay );
 use Fcntl qw(:flock);
 use SVK::Depot;
 use SVK::Config;
+
+use SVK::Logger;
 
 =head1 NAME
 
@@ -157,8 +209,8 @@ sub load {
 	$info = eval {LoadFile ($self->{statefile})};
 	if ($@) {
 	    rename ($self->{statefile}, "$self->{statefile}.backup");
-	    print loc ("Can't load statefile, old statefile saved as %1\n",
-		     "$self->{statefile}.backup");
+	    $logger->warn(loc ("Can't load statefile, old statefile saved as %1",
+		     "$self->{statefile}.backup"));
 	}
         elsif ($info) {
             $info->{checkout}{sep} = $SEP;
@@ -193,9 +245,8 @@ sub create_depots {
 
         make_path(dirname($path));
 
-        $ENV{SVNFSTYPE} ||= (($SVN::Core::VERSION =~ /^1\.0/) ? 'bdb' : 'fsfs');
 	SVN::Repos::create($path, undef, undef, undef,
-			   {'fs-type' => $ENV{SVNFSTYPE},
+			   {'fs-type' => $ENV{SVNFSTYPE} || 'fsfs',
 			    'bdb-txn-nosync' => '1',
 			    'bdb-log-autoremove' => '1'});
     }
@@ -218,7 +269,7 @@ sub _store_config {
     $self->{giantlock_handle} or
         die "Internal error: trying to save config without a lock!\n";
 
-    local $SIG{INT} = sub { warn loc("Please hold on a moment. SVK is writing out a critical configuration file.\n")};
+    local $SIG{INT} = sub { $logger->warn( loc("Please hold on a moment. SVK is writing out a critical configuration file."))};
 
     my $file = $self->{statefile};
     my $tmpfile = $file."-$$";
@@ -287,7 +338,7 @@ prevent other instances from modifying locked paths.
 
 sub lock {
     my ($self, $path) = @_;
-    if ($self->{checkout}->get ($path)->{lock}) {
+    if ($self->{checkout}->get ($path, 1)->{lock}) {
 	die loc("%1 already locked, use 'svk cleanup' if lock is stalled\n", $path);
     }
     $self->{checkout}->store ($path, {lock => $$});
@@ -489,13 +540,13 @@ sub target_condensed {
 	    $anchor = $path->clone;
 	    $anchor->copath_anchor(Path::Class::dir($anchor->copath_anchor));
 	}
-	my ($cinfo, $schedule) = $self->get_entry($anchor->copath_anchor);
+	my ($cinfo, $schedule) = $self->get_entry($anchor->copath_anchor, 1);
 	while ($cinfo->{scheduleanchor} || !-d $anchor->copath_anchor ||
 	       $schedule eq 'add' || $schedule eq 'delete' || $schedule eq 'replace' ||
 	       !( $anchor->copath_anchor->subsumes($path->copath_anchor)) ) {
 	    $anchor->anchorify;
 	    $anchor->copath_anchor(Path::Class::dir($anchor->copath_anchor));
-	    ($cinfo, $schedule) = $self->get_entry($anchor->copath_anchor);
+	    ($cinfo, $schedule) = $self->get_entry($anchor->copath_anchor, 1);
 	}
 	push @{$anchor->source->{targets}}, abs2rel($path->copath, $anchor->copath => undef, '/') unless $anchor->path eq $path->path;
     }
@@ -587,63 +638,6 @@ sub create_path_object {
     return $path;
 }
 
-sub xdroot {
-    SVK::XD::Root->new (create_xd_root (@_));
-}
-
-sub create_xd_root {
-    my ($self, %arg) = @_;
-    Carp::confess unless $arg{repos};
-    my ($fs, $copath) = ($arg{repos}->fs, $arg{copath});
-    $copath = File::Spec::Unix->catdir($copath, $arg{copath_target})
-	if defined $arg{copath_target};
-    my ($txn, $root);
-
-    my @paths = $self->{checkout}->find ($copath, {revision => qr'.*'});
-
-    # In the simple case - only one revision entry found, it can be
-    # for some descendents.  If so we actually need to construct
-    # txnroot.
-    my ($simple, @bases) = $self->{checkout}->get($paths[0] || $copath);
-    # XXX this isn't really right: we aren't guaranteed that $revbase
-    # actually has the revision, it might just have a lock or
-    # something
-    my $revbase = $bases[-1];
-    unshift @paths, $revbase unless $revbase eq $copath;
-    return (undef, $fs->revision_root($simple->{revision}))
-	if $#paths <= 0;
-
-    my $pool = SVN::Pool->new;
-    for (@paths) {
-	my $cinfo = $self->{checkout}->get ($_);
-	my $path = abs2rel($_, $copath => $arg{path}, '/');
-	unless ($root) {
-	    my $base_rev = $cinfo->{revision};
-	    $txn = $fs->begin_txn ($base_rev, $arg{pool});
-	    $root = $txn->root($arg{pool});
-	    if ($base_rev == 0) {
-		# for interrupted checkout, the anchor will be at rev 0
-		my @path = ();
-		for my $dir (File::Spec::Unix->splitdir($path)) {
-		    push @path, $dir;
-		    next unless length $dir;
-		    $root->make_dir(File::Spec::Unix->catdir(@path));
-		}
-	    }
-	    next;
-	}
-	my ($parent) = get_anchor(0, $path);
-	next if $cinfo->{revision} == $root->node_created_rev($parent, $pool);
-	$root->delete ($path, $pool)
-	    if eval { $root->check_path ($path, $pool) != $SVN::Node::none };
-	SVN::Fs::revision_link ($fs->revision_root ($cinfo->{revision}, $pool),
-				$root, $path, $pool)
-		unless $cinfo->{'.deleted'};
-	$pool->clear;
-    }
-    return ($txn, $root);
-}
-
 =head2 Checkout handling
 
 =over
@@ -664,7 +658,7 @@ sub _load_svn_autoprop {
 	    enumerate ('auto-props',
 		       sub { $self->{svnautoprop}{compile_apr_fnmatch($_[0])} = $_[1]; 1} );
     };
-    warn "Your svn is too old, auto-prop in svn config is not supported: $@\n" if $@;
+    $logger->warn("Your svn is too old, auto-prop in svn config is not supported: $@") if $@;
 }
 
 sub auto_prop {
@@ -752,7 +746,7 @@ sub do_delete {
 	     return if m/$ignore/;
 	     my $cpath = catdir($File::Find::dir, $_);
 	     no warnings 'uninitialized';
-	     return if $self->{checkout}->get ($cpath)->{'.schedule'}
+	     return if $self->{checkout}->get($cpath, 1)->{'.schedule'}
 		 eq 'delete';
 
 	     push @deleted, $cpath; 
@@ -785,34 +779,35 @@ sub do_delete {
 }
 
 sub do_propset {
-    my ($self, %arg) = @_;
-    my ($xdroot, %values);
-    my ($entry, $schedule) = $self->get_entry($arg{copath});
+    my ($self, $target, %arg) = @_;
+    my ($entry, $schedule) = $self->get_entry($target->copath);
     $entry->{'.newprop'} ||= {};
 
-    unless ($schedule eq 'add' || !$arg{repos}) {
-	$xdroot = $self->xdroot (%arg);
-	my ($source_path, $source_root) = $self->_copy_source ($entry, $arg{copath}, $xdroot);
-	$source_path ||= $arg{path}; $source_root ||= $xdroot;
-	die loc("%1 is not under version control.\n", $arg{report})
-	    if $xdroot->check_path ($source_path) == $SVN::Node::none;
+    unless ( $schedule eq 'add' ) {
+        my $xdroot = $target->create_xd_root;
+        my ( $source_path, $source_root )
+            = $self->_copy_source( $entry, $target->copath, $xdroot );
+        $source_path ||= $target->path_anchor;
+        $source_root ||= $xdroot;
+        die loc( "%1 is not under version control.\n", $target->report )
+            if $xdroot->check_path($source_path) == $SVN::Node::none;
     }
 
     #XXX: support working on multiple paths and recursive
-    die loc("%1 is already scheduled for delete.\n", $arg{report})
+    die loc("%1 is already scheduled for delete.\n", $target->report)
 	if $schedule eq 'delete';
-    %values = %{$entry->{'.newprop'}}
+    my %values = %{$entry->{'.newprop'}}
 	if exists $entry->{'.schedule'};
     my $pvalue = defined $arg{propvalue} ? $arg{propvalue} : \undef;
 
-    $self->{checkout}->store ($arg{copath},
+    $self->{checkout}->store ($target->copath,
 			      { '.schedule' => $schedule || 'prop',
 				'.newprop' => {%values,
 					    $arg{propname} => $pvalue
 					      }});
-    print " M  $arg{report}\n" unless $arg{quiet};
+    print " M  ".$target->report."\n" unless $arg{quiet};
 
-    $self->fix_permission ($arg{copath}, $arg{propvalue})
+    $self->fix_permission($target->copath, $arg{propvalue})
 	if $arg{propname} eq 'svn:executable';
 }
 
@@ -1040,11 +1035,11 @@ ENTRY:	for my $entry (@{$arg{targets}}) {
 		$seen{$copath} = 1;
 		lstat $copath;
 		unless (-e _) {
-		    print loc ("Unknown target: %1.\n", $copath);
+		    $logger->warn( loc ("Unknown target: %1.", $copath));
 		    next ENTRY;
 		}
 		unless (-r _) {
-		    print loc ("Warning: %1 is unreadable.\n", $copath);
+		    $logger->warn( loc ("Warning: %1 is unreadable.", $copath));
 		    next ENTRY;
 		}
 		$arg{cb_unknown}->($arg{editor}, catdir($arg{entry}, $now), $arg{baton});
@@ -1117,7 +1112,7 @@ sub _node_deleted_or_absent {
     }
     else {
 	# deleted during base_root -> xdroot
-	if ($arg{xdroot} ne $arg{base_root} && $arg{kind} == $SVN::Node::none) {
+	if (!$arg{base_root_is_xd} && $arg{kind} == $SVN::Node::none) {
 	    $self->_node_deleted (%arg);
 	    return 1;
 	}
@@ -1170,7 +1165,7 @@ sub _node_props {
     if (!$arg{base} or $arg{in_copy}) {
 	$newprops = $fullprop;
     }
-    elsif ($arg{base_root} ne $arg{xdroot} && $arg{base}) {
+    elsif (!$arg{base_root_is_xd} && $arg{base}) {
 	$newprops = _prop_delta ($arg{base_root}->node_proplist ($arg{base_path}), $fullprop)
 	    if $arg{kind} && $arg{base_kind} && _prop_changed (@arg{qw/base_root base_path xdroot path/});
     }
@@ -1182,12 +1177,12 @@ sub _node_type {
     my $st = [lstat ($copath)];
     return '' if !-e _;
     unless (-r _) {
-	print loc ("Warning: $copath is unreadable.\n");
+	$logger->warn( loc ("Warning: $copath is unreadable."));
 	return;
     }
     return ('file', $st) if -f _ or is_symlink;
     return ('directory', $st) if -d _;
-    print loc ("Warning: unsupported node type $copath.\n");
+    $logger->warn( loc ("Warning: unsupported node type $copath."));
     return ('', $st);
 }
 
@@ -1264,7 +1259,6 @@ sub _delta_file {
 
 sub _delta_dir {
     my ($self, %arg) = @_;
-    # warn "===> $arg{entry} ".join(',',(caller)[0..2]) if $ENV{SVKDEBUG};
     if ($arg{entry} && $arg{exclude} && exists $arg{exclude}{$arg{entry}}) {
 	$arg{cb_exclude}->($arg{path}, $arg{copath}) if $arg{cb_exclude};
 	return;
@@ -1329,7 +1323,7 @@ sub _delta_dir {
     if ($descend) {
 
     my $signature;
-    if ($self->{signature} && $arg{xdroot} eq $arg{base_root}) {
+    if ($self->{signature} && $arg{base_root_is_xd}) {
 	$signature = $self->{signature}->load ($arg{copath});
 	# if we are not iterating over all entries, keep the old signatures
 	$signature->{keepold} = 1 if defined $targets
@@ -1347,7 +1341,7 @@ sub _delta_dir {
 	my $kind = $entries->{$entry}->kind;
 	my $unchanged = ($kind == $SVN::Node::file && $signature && !$signature->changed ($entry));
 	$copath = SVK::Path::Checkout->copath ($arg{copath}, $copath);
-	my ($ccinfo, $ccschedule) = $self->get_entry($copath);
+	my ($ccinfo, $ccschedule) = $self->get_entry($copath, 1);
 	# a replace with history node requires handling the copy anchor in the
 	# latter direntries loop.  we should really merge the two.
 	if ($ccschedule eq 'replace' && $ccinfo->{'.copyfrom'}) {
@@ -1380,7 +1374,7 @@ sub _delta_dir {
 			base => !$obs,
 			depth => defined $arg{depth} ? defined $targets ? $arg{depth} : $arg{depth} - 1: undef,
 			entry => $newentry,
-			kind => $arg{xdroot} eq $arg{base_root} ? $kind : $arg{xdroot}->check_path ($newpath),
+			kind => $arg{base_root_is_xd} ? $kind : $arg{xdroot}->check_path ($newpath),
 			base_kind => $kind,
 			targets => $newtarget,
 			baton => $baton,
@@ -1434,9 +1428,9 @@ sub _delta_dir {
 			 path => $arg{path} eq '/' ? "/$entry" : "$arg{path}/$entry",
 			 base_path => $arg{base_path} eq '/' ? "/$entry" : "$arg{base_path}/$entry",
 			 targets => $newtarget, base_kind => $SVN::Node::none);
-	$newpaths{kind} = $arg{xdroot} eq $arg{base_root} ? $SVN::Node::none :
+	$newpaths{kind} = $arg{base_root_is_xd} ? $SVN::Node::none :
 	    $arg{xdroot}->check_path ($newpaths{path}) != $SVN::Node::none;
-	my ($ccinfo, $sche) = $self->get_entry($newpaths{copath});
+	my ($ccinfo, $sche) = $self->get_entry($newpaths{copath}, 1);
 	my $add = $sche || $arg{auto_add} || $newpaths{kind};
 	# If we are not at intermediate path, process ignore
 	# for unknowns, as well as the case of auto_add (import)
@@ -1462,7 +1456,7 @@ sub _delta_dir {
 	my ($type, $st) = _node_type ($newpaths{copath}) or next;
 	my $delta = $type eq 'directory' ? \&_delta_dir : \&_delta_file;
 	my $copyfrom = $ccinfo->{'.copyfrom'};
-	my $fromroot = $copyfrom ? $arg{repos}->fs->revision_root ($ccinfo->{'.copyfrom_rev'}) : undef;
+	my ($fromroot) = $copyfrom ? $arg{xdroot}->get_revision_root($newpaths{path}, $ccinfo->{'.copyfrom_rev'}) : undef;
 	$self->$delta ( %arg, %newpaths, add => 1, baton => $baton,
 			root => 0, base => 0, cinfo => $ccinfo,
 			type => $type,
@@ -1473,6 +1467,7 @@ sub _delta_dir {
 			  _really_in_copy => 1,
 			  in_copy => $arg{expand_copy},
 			  base_kind => $fromroot->check_path ($copyfrom),
+			  base_root_is_xd => 0,
 			  base_root => $fromroot,
 			  base_path => $copyfrom) : (),
 		      );
@@ -1485,7 +1480,7 @@ sub _delta_dir {
 	    for sort keys %$newprops;
     }
     if (defined $targets) {
-	print loc ("Unknown target: %1.\n", $_) for sort keys %$targets;
+	$logger->warn(loc ("Unknown target: %1.", $_)) for sort keys %$targets;
     }
 
     $arg{editor}->close_directory ($baton, $pool)
@@ -1504,11 +1499,12 @@ sub checkout_delta {
     $arg{encoder} = get_encoder;
     Carp::cluck unless defined $arg{base_path};
     my $kind = $arg{base_kind} = $arg{base_root}->check_path ($arg{base_path});
-    $arg{kind} = $arg{base_root} eq $arg{xdroot} ? $kind : $arg{xdroot}->check_path ($arg{path});
+    $arg{base_root_is_xd} = $arg{base_root}->same_root($arg{xdroot});
+    $arg{kind} = $arg{base_root_is_xd} ? $kind : $arg{xdroot}->check_path ($arg{path});
     die "checkout_delta called with non-dir node"
 	   unless $kind == $SVN::Node::dir;
     my ($copath, $repospath) = @arg{qw/copath repospath/};
-    $arg{editor} = SVN::Delta::Editor->new (_debug => 1, _editor => [$arg{editor}])
+    $arg{editor}{_debug}++
 	if $arg{debug};
     $arg{editor} = SVK::Editor::Delay->new ($arg{editor})
 	   unless $arg{nodelay};
@@ -1517,7 +1513,7 @@ sub checkout_delta {
     # XXX: translate $repospath to use '/'
     $arg{cb_copyfrom} ||= $arg{expand_copy} ? sub { (undef, -1) }
 	: sub { my $path = $_[0]; $path =~ s/%/%25/g; ("file://$repospath$path", $_[1]) };
-    my ($entry) = $self->get_entry($arg{copath});
+    my ($entry) = $self->get_entry($arg{copath}, 1);
     my $rev = $arg{cb_resolve_rev}->($arg{path}, $entry->{revision});
     local $SIG{INT} = sub {
 	$arg{editor}->abort_edit;
@@ -1537,17 +1533,17 @@ Returns the L<Data::Hierarchy> entry and the schedule of the entry.
 =cut
 
 sub get_entry {
-    my ($self, $copath) = @_;
-    my $entry = $self->{checkout}->get($copath);
+    my ($self, $copath, $dont_clone) = @_;
+    my $entry = $self->{checkout}->get($copath, $dont_clone);
     return ($entry, $entry->{'.schedule'} || '');
 }
 
 sub resolved_entry {
     my ($self, $entry) = @_;
-    my $val = $self->{checkout}->get ($entry);
+    my $val = $self->{checkout}->get ($entry, 1);
     return unless $val && $val->{'.conflict'};
     $self->{checkout}->store ($entry, {%$val, '.conflict' => undef});
-    print loc("%1 marked as resolved.\n", $entry);
+    $logger->warn(loc("%1 marked as resolved.", $entry));
 }
 
 sub do_resolved {
@@ -1736,7 +1732,7 @@ sub _copy_source {
     my ($self, $entry, $copath, $root) = @_;
     return unless $entry->{scheduleanchor};
     my $descendent = abs2rel($copath, $entry->{scheduleanchor}, '', '/');
-    $entry = $self->{checkout}->get ($entry->{scheduleanchor})
+    $entry = $self->{checkout}->get ($entry->{scheduleanchor}, 1)
 	if $entry->{scheduleanchor} ne $copath;
     my $from = $entry->{'.copyfrom'} or return;
     $from .= $descendent;
@@ -1747,7 +1743,7 @@ sub _copy_source {
 sub get_props {
     my ($self, $root, $path, $copath, $entry) = @_;
     my $props = {};
-    $entry ||= $self->{checkout}->get ($copath) if $copath;
+    $entry ||= $self->{checkout}->get ($copath, 1) if $copath;
     my $schedule = $entry->{'.schedule'} || '';
 
     if (my ($source_path, $source_root) = $self->_copy_source ($entry, $copath, $root)) {
@@ -1910,19 +1906,5 @@ sub new {
     return SVK::Root->new({ txn => $arg[0], root => $arg[1]});
 }
 
-=head1 AUTHORS
-
-Chia-liang Kao E<lt>clkao@clkao.orgE<gt>
-
-=head1 COPYRIGHT
-
-Copyright 2003-2005 by Chia-liang Kao E<lt>clkao@clkao.orgE<gt>.
-
-This program is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-See L<http://www.perl.com/perl/misc/Artistic.html>
-
-=cut
 
 1;
