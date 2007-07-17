@@ -463,7 +463,24 @@ sub track_rename {
     print "Collecting renames, this might take a while.\n";
     $self->_collect_rename_for($renamed, $self->{base}, $base, 0)
 	unless $self->{track_rename} eq 'dst';
-    $self->_collect_rename_for($renamed, $self->{dst}, $base, 1);
+
+    { # different base lookup logic for smerge
+	if ($self->{track_rename} eq 'dst') {
+	    my $usrc = $self->{src}->universal;
+	    my $dstkey = $self->{dst}->universal->ukey;
+	    my $srcinfo = $self->merge_info_with_copy($self->{src}->new);
+
+	    use Data::Dumper;
+	    if ($srcinfo->{$dstkey}) {
+		$base = $srcinfo->{$dstkey}->local($self->{src}->depot);
+	    }
+	    else {
+		$base = $base->mclone(revision => 0);
+	    }
+	}
+	$self->_collect_rename_for($renamed, $self->{dst}, $base, 1);
+    }
+
     return $editor unless @$renamed;
 
     my $rename_editor = SVK::Editor::Rename->new (editor => $editor, rename_map => $renamed);
@@ -504,8 +521,13 @@ sub run {
     $storage = $self->track_rename ($storage, \%cb)
 	if $self->{track_rename};
 
-    $cb{inspector} = $self->{dst}->inspector
-	unless ref($cb{inspector}) eq 'SVK::Inspector::Compat' ;
+    # XXX: this should be removed when cmerge is gone. also we should
+    # use the inspector of the txn we are working on, rather than of
+    # the (static) target
+
+    # $cb{inspector} = $self->{dst}->inspector
+    # unless ref($cb{inspector}) eq 'SVK::Inspector::Compat' ;
+
     my $meditor = SVK::Editor::Merge->new
 	( anchor => $src->path_anchor,
 	  repospath => $src->repospath, # for stupid copyfrom url
@@ -581,6 +603,10 @@ sub run {
 ),
 	      src => $src,
 	      dst => $self->{dst},
+	      cb_query_copy => sub {
+		  my ($from, $rev) = @_;
+		  return @{$meditor->{copy_info}{$from}{$rev}};
+	      },
 	      cb_resolve_copy => sub {
 		  my $path = shift;
 		  my $replace = shift;
@@ -593,14 +619,18 @@ sub run {
 		      $self->resolve_copy($srcinfo, $dstinfo, @_);
 		  return unless defined $dst_from;
 		  # ensure the dst from path exists
-		  return unless $self->{dst}->root->fs->revision_root($dst_fromrev)->check_path($dst_from);
+		  my $dst_path = SVK::Path->real_new({depot => $self->{dst}->depot, path => $dst_from, revision => $dst_fromrev});
+		  return unless $dst_path->root->check_path($dst_path->path);
+		  $dst_path->normalize;
 		  # Because the delta still need to carry the copy
 		  # information of the source, make merge editor note
 		  # the mapping so it can do the translation
+		  ($dst_from, $dst_fromrev) =
+		      ($dst_path->path, $dst_path->revision);
 		  $meditor->copy_info($src_from, $src_fromrev,
-				     $dst_from, $dst_fromrev);
+				      $dst_from, $dst_fromrev);
 
-		  return ($src_from, $src_fromrev);
+		  return ($dst_from, $dst_fromrev);
 	      } );
 	  $editor = SVK::Editor::Delay->new ($editor);
 	}
@@ -647,9 +677,9 @@ sub resolve_copy {
     # now the hard part, reoslve the revision
     my $usrc = $src->universal;
     my $srckey = join(':', $usrc->{uuid}, $usrc->{path});
+    my $udst = $self->{dst}->universal;
+    my $dstkey = join(':', $udst->{uuid}, $udst->{path});
     unless ($dstinfo->{$srckey}) {
-	my $udst = $self->{dst}->universal;
-	my $dstkey = join(':', $udst->{uuid}, $udst->{path});
 	return $srcinfo->{$dstkey}{rev} ?
 	    ($path, $srcinfo->{$dstkey}->local($self->{dst}->depot)->revision) : ();
     }
@@ -657,9 +687,15 @@ sub resolve_copy {
 	# same as re-base in editor::copy
 	my $rev = $self->{src}->merged_from
 	    ($self->{base}, $self, $self->{base}->path_anchor);
-	# XXX: compare rev and cp_rev
-	return ($path, $rev) if defined $rev;
-	return;
+
+	return unless defined $rev;
+	$rev = $self->merge_info_with_copy(
+	  $self->{src}->mclone(revision => $rev)
+        )->{$dstkey}
+         ->local($self->{dst}->depot)
+         ->revision;
+
+	return ($path, $rev);
     }
     # XXX: get rid of the merge context needed for
     # merged_from(); actually what the function needs is

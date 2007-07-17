@@ -104,7 +104,7 @@ sub run {
 	    $target2 = $target->new;
 	    $report = $target->report; # get the report before it turns to depotpath
 	    $target = $target->as_depotpath;
-	    $target = $target->seek_to($r1) if $r1;
+	    $target = $target->seek_to($r1) if defined $r1;
 	    $target2 = $target->as_depotpath->seek_to($r2) if $r2;
 	    # if no revision is specified, use the xdroot as target1's root
 	    $oldroot = $target2->create_xd_root unless $r1 || $r2;
@@ -183,7 +183,7 @@ sub run {
 	      src => $target2,
 	      dst => $target2,
 	      cb_resolve_copy => sub {
-		  my ($cp_path, $cp_rev) = @_;
+		  my (undef, undef, $cp_path, $cp_rev) = @_;
 		  return ($cp_path, $cp_rev);
 	      }) unless $self->{expand};
 
@@ -224,6 +224,7 @@ SVK::Command::Diff - Display diff between revisions or checkout copies
                           A revision argument can be one of:
 
                           "HEAD"       latest in repository
+                          {DATE}       revision at start of the date
                           NUMBER       revision number
                           NUMBER@      interpret as remote revision number
                           NUM1:NUM2    revision range

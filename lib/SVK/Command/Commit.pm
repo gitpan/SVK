@@ -70,15 +70,15 @@ use SVK::Util qw( get_buffer_from_editor slurp_fh read_file
 use Class::Autouse qw( SVK::Editor::Rename SVK::Editor::Merge );
 
 sub options {
-    ('m|message=s'  => 'message',
-     'F|file=s'     => 'message_file',
-     'C|check-only' => 'check_only',
-     'S|sign'       => 'sign',
-     'P|patch=s'    => 'patch',
-     'import'       => 'import',
-     'direct'       => 'direct',
-     'template'     => 'template',
-     'interactive'  => 'interactive',
+    ('m|message=s'    => 'message',
+     'F|file=s'       => 'message_file',
+     'C|check-only'   => 'check_only',
+     'S|sign'         => 'sign',
+     'P|patch=s'      => 'patch',
+     'import'         => 'import',
+     'direct'         => 'direct',
+     'template'       => 'template',
+     'i|interactive'  => 'interactive',
      'set-revprop=s@' => 'setrevprop',
     );
 }
@@ -208,6 +208,9 @@ sub _editor_for_patch {
     my %cb = SVK::Editor::Merge->cb_for_root
 	($target->root, $target->path_anchor,
 	 $m ? $m->fromrev : $target->revision);
+    # XXX: the insepctor's root doesn't belong to it, so we have to
+    # hold the target for now.
+    $cb{__hold_target} = $target;
     return ($patch->commit_editor ($fname),
 	    %cb, send_fulltext => 0);
 }
