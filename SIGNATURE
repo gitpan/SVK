@@ -21,7 +21,7 @@ SHA1 b5baa0b5ed5e2096b057c8cea624f9ec7d884467 COMMITTERS
 SHA1 1f199f2dcc0341653fc919334d9c26d0d2098f93 COPYING
 SHA1 d015b43d92ca3e53dc9a6244e06de4cc9b9db80c MANIFEST
 SHA1 82856c4c4192db3676f6d92b008903f31ac907d9 MANIFEST.SKIP
-SHA1 b4a21d707cd5381061bd0868ed4b33b2b41f4a73 META.yml
+SHA1 22815473024f5baca01c08e80bd464015267c58d META.yml
 SHA1 6aca2d7b34a86a18cb10389cac3cf3bc16c0db55 Makefile.PL
 SHA1 b3b17aad67c571a475ecb24acdcde98fe6e21460 README
 SHA1 1e97a4f62c7f9f75127cbab8122d2bd67b3de6db bin/svk
@@ -65,7 +65,7 @@ SHA1 a5bfb4fe4d4af3b1c51f2c51aa3ff2dfdd764b9b lib/SVK/Command/Info.pm
 SHA1 5b64ca06239a309aa8bb5b571d5e1958ecb2d0cc lib/SVK/Command/List.pm
 SHA1 d5cb523bd94cc854b63f5dde7742aef2c390d1b4 lib/SVK/Command/Log.pm
 SHA1 416d9953dcff90f3a3cb9ea1c147cfa7d2535e40 lib/SVK/Command/Merge.pm
-SHA1 645ec8d6707cc32e1821e64d27f956bde8ded7c9 lib/SVK/Command/Mirror.pm
+SHA1 b8382d6efa3d35fbbc7ae40f4adecc308d1269d3 lib/SVK/Command/Mirror.pm
 SHA1 21d5d2276996413f565b7dae49e95bc5484f420c lib/SVK/Command/Mkdir.pm
 SHA1 b548a0caeb960d8c3a7cd555c5ebfd8e5d149e76 lib/SVK/Command/Move.pm
 SHA1 e15657c4fb73a2de7b1501e0baba5a8bfbc6be59 lib/SVK/Command/Patch.pm
@@ -174,7 +174,7 @@ SHA1 c788a9b9b51437fcfe42daf4dae9319311ba9b05 lib/SVK/Root/View.pm
 SHA1 c0f24f0df6f0c5358b517d6f2398ac457c3cbcbb lib/SVK/Target/Universal.pm
 SHA1 792079e74496c4fdeba732d4929df7e487f7b11c lib/SVK/Test.pm
 SHA1 5cb8f297bf3fcfdfc24e53e7da5e242e2071d23e lib/SVK/Util.pm
-SHA1 364a433fcfd99d7766e31f2b57cf52b295dfbd3f lib/SVK/Version.pm
+SHA1 e2e1f9a3c08c4203dacc082151bf3d788aaa1a61 lib/SVK/Version.pm
 SHA1 c6106cf85fb1ca7104bffaa2db05f7ecbf9aac82 lib/SVK/View.pm
 SHA1 c6c1d36bbd60d0365da074aac3ec2cb7457e9233 lib/SVK/XD.pm
 SHA1 9a6cce9c6a308f59671c4a8edc98503663622203 pkg/maketest
@@ -329,7 +329,7 @@ SHA1 ad65cf3ac54b59d30fbc9a0b5a2e61028131f227 utils/verify-mirror
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.6 (GNU/Linux)
 
-iD8DBQFGnUSDk1XldlEkA5YRAmqBAJwKE5mcbOV5k10mnHaeN7G7n9PqoACdFP0g
-mzxqBeZ65uuNAAyaEz75vQc=
-=/VT8
+iD8DBQFGoS5/k1XldlEkA5YRAsg/AJ96ybKdzSs+4EOUMnTGFZGk0MF6vACeOO+G
+YE/scl57z1i8n9F0YugB+oo=
+=EmX8
 -----END PGP SIGNATURE-----
