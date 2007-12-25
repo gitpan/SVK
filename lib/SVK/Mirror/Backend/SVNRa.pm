@@ -59,8 +59,9 @@ use SVK::Editor;
 use SVK::Mirror::Backend::SVNRaPipe;
 use SVK::Editor::MapRev;
 use SVK::Util 'IS_WIN32';
+use SVK::Logger;
 
-use Class::Autouse qw(SVK::Editor::SubTree SVK::Editor::CopyHandler);
+use Class::Autouse qw(SVK::Editor::SubTree SVK::Editor::CopyHandler SVK::Editor::Translate);
 
 ## class SVK::Mirror::Backend::SVNRa;
 ## has $.mirror is weak;
@@ -378,6 +379,20 @@ sub _initialize_auth {
 
 sub find_rev_from_changeset {
     my ($self, $changeset, $seekback) = @_;
+    my $r = $self->_find_rev_from_changeset($changeset, $seekback);
+    return unless defined $r;
+
+    my $fs = $self->mirror->depot->repos->fs;
+
+    return -1
+	if $self->find_changeset($r) == 0
+        || $fs->revision_prop($r, 'svm:incomplete');
+
+    return $r;
+}
+
+sub _find_rev_from_changeset {
+    my ($self, $changeset, $seekback) = @_;
     my $t = $self->mirror->get_svkpath;
 
     no warnings 'uninitialized'; # $s_changeset below may be undef
@@ -406,7 +421,7 @@ sub find_rev_from_changeset {
 	      return $s_changeset <=> $changeset;
           } );
 
-    return unless $result;
+    return $t->normalize->revision unless $result;
 
     return $result->revision;
 }
@@ -440,12 +455,12 @@ sub traverse_new_changesets {
     my ($self, $code, $torev) = @_;
     $self->refresh;
     my $from = ($self->fromrev || 0)+1;
-    my $to = $torev || -1;
+    my $to = defined $torev ? $torev : -1;
 
     my $ra = $self->_new_ra;
     $to = $ra->get_latest_revnum() if $to == -1;
     return if $from > $to;
-    print "Retrieving log information from $from to $to\n";
+    $logger->info( "Retrieving log information from $from to $to");
     eval {
     $ra->get_log([''], $from, $to, 0,
 		  0, 1,
@@ -482,7 +497,7 @@ sub sync_changeset {
     }
     $self->_revmap_prop( $opt{txn}, $changeset );
 
-    $editor = $self->_get_sync_editor($editor, $t);
+    $editor = $self->_get_sync_editor($editor, $changeset);
     $ra->replay( $changeset, 0, 1, $editor );
     $self->_after_replay($ra, $editor);
 
@@ -510,28 +525,42 @@ sub _after_replay {
 }
 
 sub _get_sync_editor {
-    my ($self, $editor, $target) = @_;
-    $editor = SVK::Editor::MapRev->new(
-        {   _editor        => [$editor],
-            cb_resolve_rev => sub {
-                my ( $func, $rev ) = @_;
-                return $func =~ m/^add/ ? $rev : $target->revision;
-                }
-        }
-    );
+    my ($self, $oeditor, $changeset) = @_;
 
-    $editor = SVK::Editor::CopyHandler->new(
-        _editor => $editor,
+    my $editor = SVK::Editor::CopyHandler->new(
+        _editor => $oeditor,
         cb_copy => sub {
-            my ( $editor, $path, $rev ) = @_;
+            my ( undef, $path, $rev, $current_path, $pb ) = @_;
             return ( $path, $rev ) if $rev == -1;
             my $source_path = $self->source_path;
             $path =~ s/^\Q$self->{source_path}//;
-            return $target->as_url(
-                1,
-                $self->mirror->path . $path,
-                $self->find_rev_from_changeset($rev, 1)
-            );
+	    my $lrev = $self->find_rev_from_changeset($rev, 1);
+	    if ($lrev == -1) {
+		# vivify the copy that we don't have
+		my $cb = sub {
+		    my $editor = $oeditor;
+		    my ($method, $baton) = @_;
+		    my $ra = $self->_new_ra;
+		    if ($method eq 'add_directory') {
+			# Here we use translate instead of composite
+			# to make it not care about target_baton
+			$editor = SVK::Editor::Translate->new
+			    ( { translate => sub { $_[0] = "$current_path/$_[0]"; },
+				_editor => $editor } );
+		    }
+		    $editor =
+			SVK::Editor::SubTree->new
+			( { master_editor => $editor,
+			    anchor        => $current_path,
+			    anchor_baton  => $baton,
+			  } );
+
+		    $ra->replay($changeset, $changeset, 1, $editor);
+		    $self->_ra_finished($ra);
+		};
+		return (undef, -1, $cb);
+	    }
+            return ( $self->mirror->path . $path, $lrev );
         }
     );
 
@@ -562,17 +591,17 @@ sub _revmap_prop {
 =cut
 
 sub mirror_changesets {
-    my ( $self, $torev, $callback ) = @_;
+    my ( $self, $torev, $callback, $fake_last ) = @_;
     $self->mirror->with_lock(
         'mirror',
-        sub { $self->_mirror_changesets( $torev, $callback ) } );
+        sub { $self->_mirror_changesets( $torev, $callback, $fake_last ) } );
 }
 
 sub _mirror_changesets {
-    my ( $self, $torev, $callback ) = @_;
+    my ( $self, $torev, $callback, $fake_last ) = @_;
     $self->refresh;
     my @revs;
-    $self->traverse_new_changesets( sub { push @revs, [@_] }, $torev );
+    $self->traverse_new_changesets( sub { push @revs, [@_] unless $fake_last && $torev && $_[0] == $torev}, $torev );
     return unless @revs;
 
     # prepare generator for pipelined ra

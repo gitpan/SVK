@@ -27,6 +27,7 @@ lib/SVK/Command.pm
 lib/SVK/Command/Add.pm
 lib/SVK/Command/Admin.pm
 lib/SVK/Command/Annotate.pm
+lib/SVK/Command/Branch.pm
 lib/SVK/Command/Cat.pm
 lib/SVK/Command/Checkout.pm
 lib/SVK/Command/Cleanup.pm
@@ -86,6 +87,7 @@ lib/SVK/Editor/Serialize.pm
 lib/SVK/Editor/Sign.pm
 lib/SVK/Editor/Status.pm
 lib/SVK/Editor/SubTree.pm
+lib/SVK/Editor/Tee.pm
 lib/SVK/Editor/Translate.pm
 lib/SVK/Editor/TxnCleanup.pm
 lib/SVK/Editor/View.pm
@@ -116,6 +118,7 @@ lib/SVK/Log/Filter/XML.pm
 lib/SVK/Log/FilterPipeline.pm
 lib/SVK/Logger.pm
 lib/SVK/Merge.pm
+lib/SVK/Merge/Info.pm
 lib/SVK/MimeDetect.pm
 lib/SVK/MimeDetect/FileLibMagic.pm
 lib/SVK/MimeDetect/FileMMagic.pm
@@ -133,6 +136,7 @@ lib/SVK/Path.pm
 lib/SVK/Path/Checkout.pm
 lib/SVK/Path/Txn.pm
 lib/SVK/Path/View.pm
+lib/SVK/Project.pm
 lib/SVK/Resolve.pm
 lib/SVK/Resolve/AraxisMerge.pm
 lib/SVK/Resolve/Emacs.pm
@@ -188,6 +192,7 @@ t/03import.t
 t/04merge-rename.t
 t/04merge.t
 t/05svm-all.t
+t/05svm-branches.t
 t/05svm-copy.t
 t/05svm-empty.t
 t/05svm-head.t
@@ -207,6 +212,7 @@ t/07smerge-copy-outside.t
 t/07smerge-copy.t
 t/07smerge-copy2.t
 t/07smerge-cpdelete.t
+t/07smerge-cpreplace.t
 t/07smerge-delete.t
 t/07smerge-dir-replaced.t
 t/07smerge-external.t
@@ -242,6 +248,7 @@ t/20add-libmagic.t
 t/20add-mmagic.t
 t/20add-nomime.t
 t/20add.t
+t/21delete-co.t
 t/21delete.t
 t/22status-conflict.t
 t/22status.t
@@ -284,13 +291,28 @@ t/74view.t
 t/75hook.t
 t/76ignore.t
 t/77floating.t
+t/80memory.t
+t/81branch.t
 t/api/mirror.t
+t/api/project.t
+t/api/project_from_path.t
+t/api/root.t
+t/bm/basic.t
+t/bm/create.t
+t/bm/merge.t
+t/bm/move.t
+t/bm/prop-autoload.t
+t/bm/prop-multiproject.t
+t/bm/prop.t
+t/bm/remove.t
+t/bm/switch.t
 t/copy-escape.t
 t/copy-replace.t
 t/diff/mixed-checkout.t
 t/i18n/big5dirname.t
 t/i18n/checkout.t
 t/i18n/win32filename.t
+t/mirror/commit-copy.t
 t/mirror/dav-authz.t
 t/mirror/relocate.t
 t/mirror/sync-crazy-replace.t
@@ -301,6 +323,8 @@ t/mirror/sync-replaced-nocopy.t
 t/mirror/sync-replaced.t
 t/mirror/sync-replicate.t
 t/mirror/sync-revhole.t
+t/mirror/sync-snapshot.t
+t/smerge/copy-reuse.t
 t/svk-sec.gpg
 t/svk.gpg
 t/update-gone.t

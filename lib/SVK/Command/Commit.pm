@@ -96,6 +96,10 @@ sub target_prompt {
     loc('=== Targets to commit (you may delete items from it) ===');
 }
 
+sub unversioned_prompt {
+    loc("=== You may change '?' to 'A' to add unversioned items ===");
+}
+
 sub message_prompt {
     loc('=== Please enter your commit message above this line ===');
 }
@@ -252,7 +256,6 @@ sub get_editor {
 	  check_only => $self->{check_only},
 	  callback => $callback,
 	  message => $self->{message},
-	  notify  => sub { print @_ },
 	  author => $ENV{USER} );
 
     # Note: the case that the target is an xd is actually only used in merge.
@@ -331,11 +334,8 @@ sub get_committable {
 	($fh, $file) = tmpfile ('commit', TEXT => 1, UNLINK => 0);
     }
     
-    if ($fh) {
-	print $fh $self->{message} if $self->{template} and defined $self->{message};
-	print $fh "\n", $self->target_prompt, "\n";
-    } 
-
+    my @targets;
+    my @unversioned;
     my $targets = [];
     my $encoder = get_encoder;
     my ($status_editor, $commit_editor, $conflict_handler);
@@ -348,7 +348,7 @@ sub get_committable {
             push @$targets, [$status->[0] || ($status->[1] ? 'P' : ''),
                 $copath];
             no warnings 'uninitialized';
-            print $fh sprintf ("%1s%1s%1s \%s\n", @{$status}[0..2], $copath) if $fh;
+            push @targets, sprintf ("%1s%1s%1s \%s\n", @{$status}[0..2], $copath);
         }
     );
     
@@ -386,6 +386,10 @@ sub get_committable {
 	  absent_ignore => 1,
 	  editor => $status_editor,
 	  cb_conflict => sub { shift->conflict(@_) },
+      cb_unknown  => sub {
+          my ($self, $path) = @_;
+          push @unversioned, "?   $path\n";
+      },
 	);
 
     my $conflicts = grep {$_->[0] eq 'C'} @$targets;
@@ -406,13 +410,23 @@ sub get_committable {
     }
 
     if ($fh) {
+	print $fh $self->{message} if $self->{template} and defined $self->{message};
+
+    my $header = $self->target_prompt;
+    $header .= "\n" . $self->unversioned_prompt
+        if @unversioned;
+	print $fh "\n", $header, "\n";
+
+    print $fh @targets;
+    print $fh @unversioned;
+
 	close $fh;
 
         # get_buffer_from_editor may modify it, so it must be a ref first
         $target->source->{targets} ||= [];
 
 	($self->{message}, $targets) =
-	    get_buffer_from_editor (loc('log message'), $self->target_prompt,
+	    get_buffer_from_editor (loc('log message'), $header,
 				    undef, $file, $target->copath, $target->source->{targets});
 	die loc("No targets to commit.\n") if $#{$targets} < 0;
 	$self->{save_message} = $$;
@@ -449,6 +463,25 @@ sub get_committable {
     }
 
     $self->decode_commit_message;
+
+    my @need_to_add = map  {$target->copath($_->[1])}
+                      grep {$_->[0] eq 'A'}
+                      @$targets;
+    for (@need_to_add)
+    {
+        my $newprop;
+        my $autoprop = !-d $_;
+
+        $newprop = $self->{xd}->auto_prop($_)
+            if $autoprop;
+
+        # seems to work even if the file is already there (say the user changes
+        # an M to an A), but there really should be some kind of check
+        $self->{xd}{checkout}->store ($_,
+                    { '.schedule' => 'add',
+                        $autoprop ?
+                        ('.newprop'  => $newprop) : ()});
+    }
 
     return ($commit_editor, [sort {$a->[1] cmp $b->[1]} @$targets]);
 }
@@ -601,8 +634,7 @@ sub run {
 
 sub run_delta {
     my ($self, $target, $xdroot, $editor, %cb) = @_;
-    my $fs = $target->repos->fs;
-    my %revcache;
+
     $self->{xd}->checkout_delta
 	( $target->for_checkout_delta,
 	  depth => $self->{recursive} ? undef : 0,
@@ -619,16 +651,8 @@ sub run_delta {
 	    obstruct_as_replace => 1,
 	    absent_as_delete => 1) :
 	  ( absent_ignore => 1),
-	  cb_copyfrom => $cb{cb_copyfrom},
-	  $cb{mirror} ?
-	  (cb_resolve_rev => sub {
-	       my ($source_path, $source_rev) = @_;
-	       return $revcache{$source_rev} if exists $revcache{$source_rev};
-	       my ($rroot, $rsource_path) = $xdroot->get_revision_root($source_path, $source_rev);
-	       my $rev = ($rroot->node_history($rsource_path)->prev(0)->location)[1];
-
-	       $revcache{$source_rev} = $cb{mirror}->find_remote_rev($rev);
-	   }) : ());
+	  cb_copyfrom => $cb{cb_copyfrom}
+	);
     delete $self->{save_message};
     return;
 }

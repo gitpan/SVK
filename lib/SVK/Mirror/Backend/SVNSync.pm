@@ -71,6 +71,8 @@ sub load {
     $self->source_root( $mirror->url );
     $self->source_path('');
 
+    $self->refresh;
+
     return $self;
 }
 
@@ -106,16 +108,7 @@ sub find_changeset { $_[1] }
 sub _revmap_prop { }
 
 sub _get_sync_editor {
-    my ($self, $editor, $target) = @_;
-
-    $editor = SVK::Editor::MapRev->new(
-        {   _editor        => [$editor],
-            cb_resolve_rev => sub {
-                my ( $func, $rev ) = @_;
-                return $func =~ m/^add/ ? $rev : $target->revision;
-                }
-        }
-    );
+    my ($self, $editor, $changeset) = @_;
 
     return SVK::Editor::CopyHandler->new(
         _editor => $editor,
@@ -123,7 +116,7 @@ sub _get_sync_editor {
             my ( $editor, $path, $rev ) = @_;
             return ( $path, $rev ) if $rev == -1;
             $path =~ s{^\Q/}{};
-            return $target->as_url( 1, $path, $rev );
+            return ( $path, $rev );
         }
     )
 }

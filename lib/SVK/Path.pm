@@ -54,7 +54,8 @@ use SVK::Version;  our $VERSION = $SVK::VERSION;
 use SVK::I18N;
 use autouse 'SVK::Util' => qw( get_anchor catfile abs2rel
 			       IS_WIN32 get_depot_anchor );
-use Class::Autouse qw(SVK::Editor::Dynamic SVK::Editor::TxnCleanup);
+use Class::Autouse qw(SVK::Editor::Dynamic SVK::Editor::TxnCleanup SVK::Editor::Tee);
+
 use SVN::Delta;
 
 use SVK::Logger;
@@ -118,7 +119,6 @@ sub root {
     $self->_root(SVK::Root->new({ root => $self->repos->fs->revision_root
 				  ($self->revision, $pool) }))
 	unless $self->_root;
-
     return $self->_root;
 }
 
@@ -190,6 +190,23 @@ sub _commit_editor {
     return ($editor, \$post_handler);
 }
 
+sub _get_local_editor {
+    my ($self, $rev, $author, $message, $callback) = @_;
+    my $fs = $self->repos->fs;
+    my $txn = $self->repos->fs_begin_txn_for_commit
+	($rev, $author, $message);
+
+    $txn->change_prop('svk:commit', '*')
+	if $fs->revision_prop(0, 'svk:notify-commit');
+
+    my ($editor, $post_handler_ref) =
+	$self->_commit_editor($txn, $callback);
+
+    $editor = SVK::Editor::TxnCleanup->new(_editor => [$editor], txn => $txn);
+
+    return ($txn, $editor, $post_handler_ref);
+}
+
 sub pool {
     my $self = shift;
     $self->_pool( SVN::Pool->new )
@@ -208,22 +225,35 @@ sub inspector {
 
 sub _get_inspector {
     my $self = shift;
-    my $fs = $self->repos->fs;
     return SVK::Inspector::Root->new
-	({ root => $fs->revision_root($self->revision, $self->pool),
+	({ root => $self->repos->fs->revision_root($self->revision, $self->pool),
 	   _pool => $self->pool,
 	   anchor => $self->path_anchor });
 }
 
+sub _get_remote_editor {
+    my ($self, $m, $mpath, $message, $mcallback) = @_;
+    my ($base_rev, $editor) = $m->get_merge_back_editor
+	($mpath, $message, $mcallback);
+    $editor = SVK::Editor::MapRev->wrap_without_copy($editor, $m->fromrev);
+    $editor = SVK::Editor::CopyHandler->new(
+        _editor => $editor,
+        cb_copy => sub {
+	    my ( $editor, $path, $rev ) = @_;
+	    return ( $path, $rev ) if $rev == -1;
+	    return $self->as_url(0, $path, $rev);
+	});
+    return $editor;
+}
+
+# XXX: split the codepath for using use_tee or not.
 sub get_editor {
     my ($self, %arg) = @_;
-
     my ($m, $mpath) = $arg{ignore_mirror} ? () : $self->is_mirrored;
     my $fs = $self->repos->fs;
     my $yrev = $fs->youngest_rev;
 
     my $root_baserev = $m ? $m->fromrev : $yrev;
-
 
     if ($arg{check_only}) {
 	# XXX: use txn-based inspector as well.
@@ -234,40 +264,49 @@ sub get_editor {
 
     $arg{notify} ||= sub {};
     my $callback = $arg{callback};
+    my $meditor; my $tee_callback;
+    my $use_tee;
+    my $post_handler;
     if ($m) {
-	my $post_handler;
-	my $notify = $arg{notify};
-        my $mcallback = $arg{mcallback} ||= sub {
+	$use_tee = !$arg{notee} &&
+	    SVN::TxDelta->can('invoke_window_handler') &&
+	    $m->_backend->has_replay;
+        my $mcallback = sub {
             my $rev = shift;
-            $notify->( loc( "Merge back committed as revision %1.\n", $rev ) );
+            $logger->info( loc( "Merge back committed as revision %1.\n", $rev ) );
             if ($post_handler) {
                 return unless $post_handler->($rev);
             }
-            $m->run($rev);
+            $m->run($rev, $use_tee);
 
-            # XXX: find_local_rev can fail
+            # XXX: find_local_rev can fail (see import.t).
+	    # In case of tee, call callback as local only.
             $callback->( $m->find_local_rev($rev), @_ )
-              if $callback;
+              if $callback && !$use_tee;
+	    $tee_callback->($rev) if $use_tee;
         };
 
-	my ($base_rev, $editor) = $m->get_merge_back_editor
-	    ($mpath, $arg{message}, $mcallback);
-	$editor->{_debug}++ if $logger->is_debug();
+	$meditor = $self->_get_remote_editor($m, $mpath, $arg{message}, $mcallback);
+
 	# XXX: fix me, need local knowledge about txn as well
-	return ($editor, $self->inspector,
+	return ($meditor, $self->inspector,
 		mirror => $m,
 		post_handler => \$post_handler,
-		cb_rev => sub { $root_baserev }, #This is the inspector baserev
-		cb_copyfrom =>
-		sub { my ($path, $rev) = @_;
-                      my ($m_path, $m_url) = ($m->path, $m->url);
-		      $path =~ s|^\Q$m_path\E|$m_url|;
-		      return ($path, scalar $m->find_remote_rev($rev)); });
+		cb_rev => sub { 'x' }, #This is for editor::merge
+		cb_copyfrom => sub { @_ })
+	    unless $use_tee;
     }
 
-    warn "has $arg{txn}" if $arg{txn};
-    my $txn = $arg{txn} || $self->repos->fs_begin_txn_for_commit
-	($yrev, $arg{author}, $arg{message});
+    my $oldc = $callback;
+    my $changeset;
+    $callback = sub {
+	$logger->info("Committed revision $_[0] from revision $changeset.")
+	    if $changeset;
+	$oldc->(@_) if $oldc }
+	if $use_tee;
+
+    my ($txn, $editor, $post_handler_ref) =
+	$self->_get_local_editor($yrev, $arg{author}, $arg{message}, $callback);
 
     # for some reasons, we can't use the txn root got here in
     # inspector, the modified nodes aren't reflected.  Instead, we
@@ -277,20 +316,79 @@ sub get_editor {
 	   _pool  => $self->pool,
 	   anchor => $self->path_anchor });
 
-    $txn->change_prop('svk:commit', '*')
-	if $fs->revision_prop(0, 'svk:notify-commit');
-
-    my ($editor, $post_handler_ref) =
-	$self->_commit_editor($txn, $callback);
-    $editor = SVK::Editor::TxnCleanup->new(_editor => [$editor], txn => $txn);
+    $editor = SVK::Editor::CopyHandler->new(
+        _editor => $editor,
+        cb_copy => sub {
+	    my ( $editor, $path, $rev ) = @_;
+	    return ( $path, $rev ) if $rev == -1;
+	    return $self->as_url(1, $path, $rev);
+	});
 
     return ($editor, $inspector,
 	    send_fulltext => 1,
 	    post_handler => $post_handler_ref,
 	    txn => $txn,
-            aborts_txn => $arg{txn} ? 0 : 1,
+            aborts_txn => 1,# $arg{txn} ? 0 : 1,
 	    cb_rev => sub { $root_baserev },
-	    cb_copyfrom => sub { $self->as_url(1, @_) });
+	    cb_copyfrom => sub { @_ }) unless $meditor;
+
+
+    my $tee = SVK::Editor::Tee->new({editors => [$meditor, $editor]});
+
+    $tee_callback = sub {
+	my ($remote_rev) = @_;
+	# emulate post commit revision sync.
+	{
+	    # XXX: use an api to get proplist please
+	    my $proplist = $m->_backend->_new_ra->rev_proplist($remote_rev);
+	    for (@{$self->depot->mirror->revprop}) {
+		$txn->change_prop($_ => $proplist->{$_});
+	    }
+	}
+
+	if (!keys %{$txn->root->paths_changed}) {
+	    # XXX: This is the case for import's old behaviour importing
+	    # changeless thing.
+	    my $old_editor = pop @{$tee->{editors}};
+	    $old_editor->abort_edit;
+	    $oldc->('__na__');
+	}
+	elsif ((my $new_yrev = $fs->youngest_rev) != $txn->base_revision) {
+	    # XXX: svn's fs_merge is silly about property changes.  We need
+	    # this kludge to recreate a committable txn.
+
+	    my ($ktxn, $keditor) = $self->mclone(path_anchor => '/')->_get_local_editor($new_yrev, undef, undef, $callback);
+	    $keditor = SVK::Editor::MapRev->wrap_without_copy($keditor, $new_yrev);
+	    my $proplist = $txn->proplist;
+	    $ktxn->change_prop($_ => $proplist->{$_}) for keys %$proplist;
+
+	    $keditor = SVK::Editor::CopyHandler->new
+		( _editor => $keditor,
+		  cb_copy => sub {
+		      my ( $editor, $path, $rev ) = @_;
+		      return ( $path, $rev ) if $rev == -1;
+		      return $self->as_url(1, $path, $rev);
+		  });
+	    SVN::Repos::replay2($txn->root, '/', 0, 1, $keditor, undef);
+	    $txn = $ktxn;
+	    $tee->{editors}[1]->abort_edit;
+	    $tee->{editors}[1] = $keditor;
+	}
+
+	# for local editor's wrapped callback to fake output
+	$changeset = $_[0];
+	$m->_backend->_revmap_prop( $txn, $changeset );
+    };
+
+    return ($tee, $inspector,
+	    mirror => $m,
+	    send_fulltext => 0,
+	    post_handler => \$post_handler,
+	    txn => $txn,
+            aborts_txn => 1,
+	    cb_rev => sub { $yrev },
+	    cb_copyfrom => sub { @_ });
+
 }
 
 sub get_dynamic_editor {
@@ -507,9 +605,7 @@ sub related_to {
 
     # XXX: defer to $other->related_to if it is SVK::Path::Checkout,
     # when we need to use it.
-    return SVN::Fs::check_related
-	($self->root->node_id ($self->path),
-	 $other->root->node_id ($other->path));
+    return SVN::Fs::check_related($self->node_id, $other->node_id);
 }
 
 =head2 copied_from ($want_mirror)
@@ -559,7 +655,7 @@ sub search_revision {
     my ($self, %arg) = @_;
     my $root = $self->root;
     my @rev = ($arg{start} || 1, $self->revision);
-    my $id = $root->node_id($self->path);
+    my $id = $self->node_id;
     my $pool = SVN::Pool->new_default;
 
     while ($rev[0] <= $rev[1]) {
@@ -727,6 +823,17 @@ sub as_url {
     }
 
     return ($path, $rev);
+}
+
+=head2 node_id ()
+
+Returns the node id of this path object.
+
+=cut
+
+sub node_id {
+    my ($self) = @_;
+    $self->root->node_id($self->path);
 }
 
 =head1 SEE ALSO
