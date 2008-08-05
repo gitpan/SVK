@@ -1,7 +1,7 @@
 # BEGIN BPS TAGGED BLOCK {{{
 # COPYRIGHT:
 # 
-# This software is Copyright (c) 2007 Best Practical Solutions, LLC
+# This software is Copyright (c) 2003-2008 Best Practical Solutions, LLC
 #                                          <clkao@bestpractical.com>
 # 
 # (Except where explicitly superseded by other copyright notices)
@@ -51,6 +51,9 @@
 package SVK::Project;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
+use Path::Class;
+use SVK::Logger;
+use SVK::I18N;
 use base 'Class::Accessor::Fast';
 
 __PACKAGE__->mk_accessors(
@@ -85,6 +88,7 @@ sub branches {
 
 sub tags {
     my $self = shift;
+    return [] unless $self->tag_location;
 
     my $fs              = $self->depot->repos->fs;
     my $root            = $fs->revision_root( $fs->youngest_rev );
@@ -97,6 +101,7 @@ sub tags {
 sub _find_branches {
     my ( $self, $root, $path ) = @_;
     my $pool    = SVN::Pool->new_default;
+    return [] if $SVN::Node::none == $root->check_path($path);
     my $entries = $root->dir_entries($path);
 
     my $trunk = SVK::Path->real_new(
@@ -111,6 +116,7 @@ sub _find_branches {
     for my $entry ( sort keys %$entries ) {
         next unless $entries->{$entry}->kind == $SVN::Node::dir;
         my $b = $trunk->mclone( path => $path . '/' . $entry );
+        next if $b->path eq $trunk->path;
 
         push @branches, $b->related_to($trunk)
             ? $b->path
@@ -120,25 +126,77 @@ sub _find_branches {
 }
 
 sub create_from_prop {
-    my ($self, $pathobj) = @_;
+    my ($self, $pathobj, $pname) = @_;
 
     my $fs              = $pathobj->depot->repos->fs;
     my $root            = $fs->revision_root( $fs->youngest_rev );
-    my $allprops        = $root->node_proplist('/');
+    my @all_mirrors     = split "\n", $root->node_prop('/','svm:mirror') || '';
+    my $prop_path = '';
+    my $proj;
+
+    foreach my $m_path (@all_mirrors) {
+	if ($pathobj->path eq '/') { # in non-wc path
+	    $proj = $self->_create_from_prop($pathobj, $root, $m_path, $pname);
+	    return $proj if $proj;
+	} elsif ($pathobj->_to_pclass("/local")->subsumes($pathobj->path)) {
+	    $proj = $self->_create_from_prop($pathobj, $root, $m_path, $pname);
+	    return $proj if $proj;
+	} else {
+	    if ($pathobj->path =~ m/^$m_path/) {
+		$prop_path = $m_path;
+		last;
+	    }
+	}
+    }
+    $proj = $self->_create_from_prop($pathobj, $root, $prop_path, $pname);
+    return $proj if $proj;
+    return $self->_create_from_prop($pathobj, $root, $prop_path, $pname, 1);
+}
+
+sub _project_names {
+    my ($self, $allprops, $pname) = @_;
     my ($depotroot)     = '/';
-    my %projnames = 
-        map  { $_ => 1 }
+    return
+        map  { $_ => 1}
+	grep { (1 and !$pname) or ($_ eq $pname)  } # if specified pname, the grep it only
 	grep { $_ =~ s/^svk:project:([^:]+):.*$/$1/ }
 	grep { $allprops->{$_} =~ /$depotroot/ } sort keys %{$allprops};
+}
+
+sub _project_paths {
+    my ($self, $allprops) = @_;
+    return
+        map  { $allprops->{$_} => $_ }
+	grep { $_ =~ m/^svk:project/ } sort keys %{$allprops};
+}
+
+sub _create_from_prop {
+    my ($self, $pathobj, $root, $prop_path, $pname, $from_local) = @_;
+    my $allprops        = $root->node_proplist($from_local ? '/' : $prop_path);
+    my %projnames = $self->_project_names($allprops, $pname);
+    return unless %projnames;
     
-    for my $project_name (keys %projnames)  {
+    # Given a lists of projects: 'rt32', 'rt34', 'rt38' in lexcialorder
+    # if the suffix of prop_path matches $project_name like /mirror/rt38 matches rt38
+    # then 'rt38' should be used to try before 'rt36', 'rt32'... 
+
+    for my $project_name ( sort { $prop_path =~ m/$b$/ } keys %projnames)  {
+	$prop_path = $allprops->{'svk:project:'.$project_name.':root'}
+	    if ($allprops->{'svk:project:'.$project_name.':root'} and
+		($from_local || $prop_path eq '/'));
 	my %props = 
-	    map { $_ => '/mirror'.$allprops->{'svk:project:'.$project_name.':'.$_} }
+#	    map { $_ => '/'.$allprops->{'svk:project:'.$project_name.':'.$_} }
+	    map {
+		my $prop = $allprops->{'svk:project:'.$project_name.':'.$_};
+		$prop =~ s{/$}{};
+		$prop =~ s{^/}{};
+		$_ => $prop ? $prop_path.'/'.$prop : '' }
 		('path-trunk', 'path-branches', 'path-tags');
     
 	# only the current path matches one of the branches/trunk/tags, the project
 	# is returned
 	for my $key (keys %props) {
+	    next unless $props{$key};
 	    return SVK::Project->new(
 		{   
 		    name            => $project_name,
@@ -147,7 +205,8 @@ sub create_from_prop {
 		    branch_location => $props{'path-branches'},
 		    tag_location    => $props{'path-tags'},
 		    local_root      => "/local/${project_name}",
-		}) if $pathobj->path =~ m/^$props{$key}/;
+		}) if $pathobj->path =~ m/^$props{$key}/ or $props{$key} =~ m/^$pathobj->{'path'}/
+		      or $pathobj->path =~ m{^/local/$project_name};
 	}
     }
     return undef;
@@ -179,6 +238,25 @@ sub create_from_path {
 	});
 }
 
+sub _check_project_path {
+    my ($self, $path_obj, $trunk_path, $branch_path, $tag_path) = @_;
+
+    my $checked_result = 1;
+    # check trunk, branch, tag, these should be metadata-ed 
+    # we check if the structure of mirror is correct, otherwise go again
+    for my $_path ($trunk_path, $branch_path, $tag_path) {
+        unless ($path_obj->root->check_path($_path) == $SVN::Node::dir) {
+            if ($tag_path eq $_path) { # tags directory is optional
+                $checked_result = 2; # no tags
+            }
+            else {
+                return 0;
+            }
+        }
+    }
+    return $checked_result;
+}
+
 # this is heuristics guessing of project and should be replaced
 # eventually when we can define project meta data.
 sub _find_project_path {
@@ -186,41 +264,171 @@ sub _find_project_path {
 
     my ($mirror_path,$project_name);
     my ($trunk_path, $branch_path, $tag_path);
-    my $depotname = $path_obj->depot->depotname;
-    my ($path) = $path_obj->depotpath =~ m{^/$depotname/(.*?)(?:/(?:trunk|branches/.*?|tags/.*?))?/?$};
+    my $current_path = $path_obj->_to_pclass($path_obj->path);
 
-    if ($path =~ m{^local/([^/]+)/?}) { # guess if in local branch
+    if ($path_obj->_to_pclass("/local")->subsumes($current_path)) { # guess if in local branch
 	# should only be 1 entry
-	($path) = grep {/\/$1$/} $path_obj->depot->mirror->entries;
-	$path =~ s#^/##;
+	$current_path = ($path_obj->copy_ancestors)[0]->[0];
+	$path_obj = $path_obj->copied_from if $path_obj->copied_from;
     }
+
+    # Finding inverse layout first
+    my ($path) = $current_path =~ m{^/(.+?/(?:trunk|branches|tags)/[^/]+)};
+    if ($path) {
+        ($mirror_path, $project_name) = # always assume the last entry the projectname
+            $path =~ m{^(.*/)?(?:trunk|branches|tags)/(.+)$}; 
+        if ($project_name and $path_obj->root->check_path($mirror_path) == $SVN::Node::dir) {
+            ($trunk_path, $branch_path, $tag_path) = 
+                map { $mirror_path.$_.'/'.$project_name } ('trunk', 'branches', 'tags');
+            my $result = $self->_check_project_path ($path_obj, $trunk_path, $branch_path, $tag_path);
+	    $tag_path = '' if $result == 2;
+            return ($project_name, $trunk_path, $branch_path, $tag_path) if $result > 0;
+        }
+        $project_name = '';
+        $path = '';
+    }
+    # not found in inverse layout, else 
+    ($path) = $current_path =~ m{^(.*?)(?:/(?:trunk|branches/.*?|tags/.*?))?/?$};
 
     while (!$project_name) {
 	($mirror_path,$project_name) = # always assume the last entry the projectname
-	    $path =~ m{^(.*)/([\w\-_]+)$}; 
+	    $path =~ m{^(.*/)?([\w\-_]+)$}; 
 	return undef unless $project_name; # can' find any project_name
+	$mirror_path ||= '';
 
 	($trunk_path, $branch_path, $tag_path) = 
-	    map { $mirror_path."/".$project_name."/".$_ } ('trunk', 'branches', 'tags');
-	# check trunk, branch, tag, these should be metadata-ed 
-	# we check if the structure of mirror is correct, otherwise go again
-	for my $_path ($trunk_path, $branch_path, $tag_path) {
-            unless ($path_obj->root->check_path($_path) == $SVN::Node::dir) {
-                if ($tag_path eq $_path) { # tags directory is optional
-                    undef $tag_path;
-                }
-                else {
-                    undef $project_name;
-                }
-            }
-	}
+	    map { $mirror_path.$project_name."/".$_ } ('trunk', 'branches', 'tags');
+        return undef unless ($path_obj->root->check_path($mirror_path.$project_name) == $SVN::Node::dir);
+	my $result = $self->_check_project_path ($path_obj, $trunk_path, $branch_path, $tag_path);
 	# if not the last entry, then the mirror_path should contains
 	# trunk/branches/tags, otherwise no need to test
 	($path) = $mirror_path =~ m{^(.+(?=/(?:trunk|branches|tags)))}
-	    unless $project_name;
+	    unless $result != 0;
+	$tag_path = '' if $result == 2;
+	$project_name = '' unless $result;
 	return undef unless $path;
     }
     return ($project_name, $trunk_path, $branch_path, $tag_path);
 }
 
+sub depotpath_in_branch_or_tag {
+    my ($self, $name) = @_;
+    # return 1 for branch, 2 for tag, others => 0
+    return '/'.dir($self->depot->depotname,$self->branch_location,$name)->as_foreign('Unix')
+	if grep { $_ eq $name } @{$self->branches};
+    return '/'.dir($self->depot->depotname,$self->tag_location,$name)->as_foreign('Unix')
+	if grep { $_ eq $name } @{$self->tags};
+    return ;
+}
+
+sub branch_name {
+    my ($self, $bpath, $is_local) = @_;
+    return 'trunk' if (dir($self->trunk)->subsumes($bpath));
+    my $branch_location = $is_local ? $self->local_root : $self->branch_location;
+    $bpath =~ s{^\Q$branch_location\E/}{};
+    my $pbname;
+    ($pbname) = grep { $bpath =~ m#^$_(/|$)# } @{$self->branches};
+    return $pbname if $pbname;
+    return $bpath;
+}
+
+sub branch_path {
+    my ($self, $bname, $is_local) = @_;
+    my $branch_path = 
+        ($is_local ?
+            $self->local_root."/$bname"
+            :
+            ($bname ne 'trunk' ?
+                $self->branch_location . "/$bname" : $self->trunk)
+        );
+    $branch_path =
+	'/'.dir($self->depot->depotname)->subdir($branch_path)->as_foreign('Unix');
+    return $branch_path;
+}
+
+sub tag_name {
+    my ($self, $bpath) = @_;
+    return 'trunk' if (dir($self->trunk)->subsumes($bpath));
+    my $tag_location = $self->tag_location;
+    $bpath =~ s{^\Q$tag_location\E/}{};
+    my $pbname;
+    ($pbname) = grep { $bpath =~ m#^$_(/|$)# } @{$self->tags};
+    return $pbname if $pbname;
+    return $bpath;
+}
+
+sub tag_path {
+    my ($self, $tname) = @_;
+    my $tag_path = ($tname ne 'trunk' ?  $self->tag_location . "/$tname" : $self->trunk);
+    $tag_path =
+	'/'.dir($self->depot->depotname)->subdir($tag_path)->as_foreign('Unix');
+    return $tag_path;
+}
+
+sub info {
+    my ($self, $target, $verbose) = @_;
+
+    $logger->info ( loc("Project name: %1\n", $self->name));
+    if ($target->isa('SVK::Path::Checkout')) {
+	my $where = "online";
+	my $bname = '';
+	if (dir($self->trunk)->subsumes($target->path)) {
+	    $bname = 'trunk';
+	} elsif (dir($self->branch_location)->subsumes($target->path)) {
+	    $bname = $self->branch_name($target->path);
+	} elsif ($self->tag_location and dir($self->tag_location)->subsumes($target->path)) {
+	    $bname = $self->tag_name($target->path);
+	} elsif (dir($self->local_root)->subsumes($target->path)) {
+	    $where = 'offline';
+	    $bname = $self->branch_name($target->path,1);
+	}
+
+	if ($where) {
+	    $logger->info ( loc("Branch: %1 (%2)\n", $bname, $where ));
+	    return unless $verbose;
+	    $logger->info ( loc("Revision: %1\n", $target->revision));
+	    $logger->info ( loc("Repository path: %1\n", $target->depotpath ));
+	    if ($where ne 'trunk') { # project trunk should not have Copied info
+		for ($target->copy_ancestors) {
+		    next if $bname eq $self->branch_name($_->[0]);
+		    $logger->info( loc("Copied From: %1@%2\n", $self->branch_name($_->[0]), $_->[1]));
+		    last;
+		}
+		$self->{xd} = $target->{xd};
+		$self->{merge} = SVK::Merge->new (%$self);
+		my $minfo = $self->{merge}->find_merge_sources ($target, 0,1);
+		for (sort { $minfo->{$b} <=> $minfo->{$a} } keys %$minfo) {
+		    $logger->info( loc("Merged From: %1@%2\n",$self->branch_name((split/:/)[1]),$minfo->{$_}));
+		    last;
+		}
+	    }
+	}
+    }
+}
+
+sub in_which_project {
+    my ($self, $pathobj) = @_;
+
+    my $fs              = $pathobj->depot->repos->fs;
+    my $root            = $fs->revision_root( $fs->youngest_rev );
+    my @all_mirrors     = split "\n", $root->node_prop('/','svm:mirror') || '';
+    my $prop_path       = '/';
+    foreach my $m_path (@all_mirrors) {
+        if ($pathobj->path =~ m/^$m_path/) {
+            $prop_path = $m_path;
+            last;
+        }
+    }
+    my $from_local      = $pathobj->_to_pclass("/local")->subsumes($pathobj->path);
+    my $allprops        = $root->node_proplist($from_local ? '/' : $prop_path);
+    my %projpaths       = $self->_project_paths($allprops);
+    for my $path (sort { $b ne $a } keys %projpaths) { # reverse sort to ensure subsume
+	if ($pathobj->_to_pclass($prop_path.$path)->subsumes($pathobj->path) or
+	    $pathobj->_to_pclass($pathobj->path)->subsumes($prop_path.$path)) {
+	    my ($pname) = $projpaths{$path} =~ m/^svk:project:(.*?):path/;
+	    return $pname;
+	}
+    }
+    return;
+}
 1;

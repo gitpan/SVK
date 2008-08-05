@@ -1,7 +1,7 @@
 # BEGIN BPS TAGGED BLOCK {{{
 # COPYRIGHT:
 # 
-# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+# This software is Copyright (c) 2003-2008 Best Practical Solutions, LLC
 #                                          <clkao@bestpractical.com>
 # 
 # (Except where explicitly superseded by other copyright notices)
@@ -118,7 +118,7 @@ The editor that will receive the merged callbacks.
 
 =item allow_conflicts
 
-Close the edito instead of abort when there are conflicts.
+Close the editor instead of abort when there are conflicts.
 
 =item open_nonexist
 
@@ -145,7 +145,9 @@ Check the revision of the given path.
 
 =item cb_conflict
 
-Called when a conflict is detected.
+When a conflict is detected called with path and conflict
+type as argument. At this point type can be either 'node' or
+'prop'.
 
 =item cb_prop_merged
 
@@ -154,8 +156,8 @@ status.
 
 =item cb_merged
 
-Called right before closing the top directory with storage editor,
-root baton, and pool.
+Called right before closing the target with changes flag, node type and
+ticket.
 
 =item cb_closed
 
@@ -254,6 +256,11 @@ sub open_root {
 
 sub add_file {
     my ($self, $path, $pdir, @arg) = @_;
+    unless ( defined $pdir ) {
+        ++$self->{skipped};
+        $self->{notify}->flush ($path);
+        return undef;
+    }
     return unless defined $pdir;
     my $pool = pop @arg;
     # a replaced node shouldn't be checked with cb_exist
@@ -375,7 +382,7 @@ sub ensure_close {
 
 sub node_conflict {
     my ($self, $path) = @_;
-    $self->{cb_conflict}->($path) if $self->{cb_conflict};
+    $self->{cb_conflict}->($path, 'node') if $self->{cb_conflict};
     ++$self->{conflicts};
     $self->{notify}->node_status ($path, 'C');
 }
@@ -613,7 +620,11 @@ sub close_file {
 
 sub add_directory {
     my ($self, $path, $pdir, @arg) = @_;
-    return undef unless defined $pdir;
+    unless ( defined $pdir ) {
+        ++$self->{skipped};
+        $self->{notify}->flush ($path);
+        return undef;
+    }
     my $pool = pop @arg;
     my $touched = $self->{notify}->node_status($path);
     # This comes from R (D+A) where the D has conflict
@@ -691,7 +702,7 @@ sub open_directory {
     my $baton = $self->{storage_baton}{$path} =
 	$self->{storage}->open_directory ($path, $self->{storage_baton}{$pdir},
 					  $self->{cb_rev}->($path), @arg);
-    $self->set_ticket->($baton, 'dir', $pool)
+    $self->set_ticket($baton, 'dir', $pool)
 	if $path eq $self->{target} && $self->ticket;
 
     return $path;
@@ -945,11 +956,7 @@ sub _merge_prop_content {
     $self->prepare_fh ($fh);
 
     my ($conflict, $mfh) = $self->_merge_text_change ($fh, loc ("Property %1 of %2", $propname, $path), $pool);
-    if (!$conflict) {
-	local $/;
-	$mfh = <$mfh>;
-    }
-    return ($conflict ? 'C' : 'G', $mfh);
+    return ($conflict ? 'C' : 'G', do { local $/; <$mfh> });
 }
 
 sub _merge_prop_change {
@@ -962,7 +969,7 @@ sub _merge_prop_change {
     if ($self->{added}{$path} or
 	(!length ($path) and $self->{base_root}->is_revision_root
 	 and $self->{base_root}->revision_root_revision == 0)) {
-	$self->{notify}->prop_status ($path, 'U');
+	$self->{notify}->prop_status ($path, 'U') unless $self->{added}{$path};
 	return 1;
     }
     my $rpath = $self->{base_anchor} eq '/' ? "/$path" : "$self->{base_anchor}/$path";
@@ -982,15 +989,15 @@ sub _merge_prop_change {
 
     return if $skipped;
 
-    if ($status eq 'C') {
-	$self->{cb_conflict}->($path, $_[0]) if $self->{cb_conflict};
-	++$self->{conflicts};
-    }
-    elsif ($status eq 'g') {
+    if ($status eq 'g') {
 	$self->{cb_prop_merged}->($path, $_[0])
 	    if $self->{cb_prop_merged};
     }
     else {
+        if ($status eq 'C') {
+            $self->{cb_conflict}->($path, 'prop') if $self->{cb_conflict};
+            ++$self->{conflicts};
+        }
 	$_[1] = $merged;
     }
     $self->{notify}->prop_status ($path, $status);

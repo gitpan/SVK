@@ -1,7 +1,7 @@
 # BEGIN BPS TAGGED BLOCK {{{
 # COPYRIGHT:
 # 
-# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+# This software is Copyright (c) 2003-2008 Best Practical Solutions, LLC
 #                                          <clkao@bestpractical.com>
 # 
 # (Except where explicitly superseded by other copyright notices)
@@ -90,7 +90,10 @@ requires(
     'Pod::Escapes'             => '0',       # in core since 5.9.3
     'Pod::Simple'              => '0',       # in core since 5.9.3
     'File::Spec'               => '3.19',    # in core since 5.9.3
+    'Time::Progress'           => '0',
 );
+
+
 requires(
     'Date::Format'             => '',
 ) if ($^O eq 'MSWin32');
@@ -98,6 +101,12 @@ build_requires(
     'Test::More'               => '0.42',
 );
 features(
+    'Bootstrap support' => [
+    -default => 1,
+        'PerlIO::via::Bzip2'       => '0',
+        'PerlIO::gzip'             => '0',
+        'SVN::Dump'                => '0.04',
+    ],
     'Localized messages' => [
 	-default => 1,
         'Locale::Maketext::Lexicon' => '0.62',

@@ -1,7 +1,7 @@
 # BEGIN BPS TAGGED BLOCK {{{
 # COPYRIGHT:
 # 
-# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+# This software is Copyright (c) 2003-2008 Best Practical Solutions, LLC
 #                                          <clkao@bestpractical.com>
 # 
 # (Except where explicitly superseded by other copyright notices)
@@ -491,22 +491,24 @@ Remote repository has projects property set, do you like to use it? ");
 		map { $_ => 1 }
 		grep { $_ =~ s/^svk:project:([^:]+):.*$/$1/ } keys %prop;
 	    my @projs = keys %projects;
-	    print loc("Avaliable projects:\n");
-	    print loc("No.   Project      Path\n");
+	    $logger->info( loc("\nAvaliable projects ('0' for not choosing any project):"));
+	    $logger->info( loc("\nNo.   Project      Path"));
 	    my $index = 0;
+	    $logger->info( sprintf ("%d)    %-12s %-12s\n", $index, "(N/A)", "/") );
 	    for my $proj (@projs) {
 		$index++;
-		$projects{$proj} = '/'.$prop{'svk:project:'.$proj.':path-trunk'};
+		$projects{$proj} = $prop{'svk:project:'.$proj.':path-trunk'};
 		$projects{$proj} =~ s{/[^/]+$}{};
-		print sprintf ("%d)    %-12s %-12s\n",
-		    $index, $proj, $projects{$proj});
+		$logger->info( sprintf ("%d)    %-12s %-12s",
+		    $index, $proj, $projects{$proj}));
 	    }
 	    my $proj_answer = lc(get_prompt(
-		loc("Which project? [No.] "),
+		loc("\nWhich project? [No.] "),
 		qr(^\d+$)
 		));
 	    $proj_answer--;
-	    $path = $project_depot_root.$projects{$projs[$proj_answer]};
+	    $path = $project_depot_root.$projects{$projs[$proj_answer]} if $proj_answer >= 0;
+	    $logger->info( );
 	}
     }
 
@@ -858,7 +860,7 @@ sub brief_usage {
     local $/=undef;
     my $buf = <$podfh>;
     if($buf =~ /^=head1\s+NAME\s*SVK::Command::(\w+ - .+)$/m) {
-	$logger->info( "   ",loc(lcfirst($1)),"\n");
+	$logger->info( "   ",loc(lcfirst($1)));
     }
     close $podfh;
 }

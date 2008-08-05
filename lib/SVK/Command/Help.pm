@@ -1,7 +1,7 @@
 # BEGIN BPS TAGGED BLOCK {{{
 # COPYRIGHT:
 # 
-# This software is Copyright (c) 2003-2006 Best Practical Solutions, LLC
+# This software is Copyright (c) 2003-2008 Best Practical Solutions, LLC
 #                                          <clkao@bestpractical.com>
 # 
 # (Except where explicitly superseded by other copyright notices)
@@ -144,9 +144,10 @@ SVK::Command::Help - Show help
 
 =head1 OPTIONS
 
-Optionally svk helps can pipe through a pager, for it is easier to
-read if the output is too long. For using this feature, please
-set environment variable SVKPAGER to some pager program.
+Optionally, svk help can pipe output through a pager, which is
+easier to read if the output is long. To use this feature, set the
+environmental variable SVKPAGER to some pager program.
+
 For example:
 
     # bash, zsh users
