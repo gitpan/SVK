@@ -106,6 +106,7 @@ features(
         'PerlIO::via::Bzip2'       => '0',
         'PerlIO::gzip'             => '0',
         'SVN::Dump'                => '0.04',
+        'LWP::UserAgent'           => '0',
     ],
     'Localized messages' => [
 	-default => 1,
@@ -148,7 +149,7 @@ include('ExtUtils::AutoInstall');
 auto_install();
 
 auto_provides();
-WriteAll( sign => 0 );
+WriteAll( sign => 1 );
 
 $::VERSION = $required_svn;
 die << "." unless eval {require SVN::Core; SVN::Core->VERSION >= main->VERSION };
