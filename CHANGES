@@ -1,3 +1,7 @@
+[Changes for 2.2.1 - 10 Mar, 2010]
+
+  Subversion 1.6.x compatiblity fixes.
+
 [Changes for 2.2.1 - 22 Oct, 2008]
 
   Fix the incorrect version information in META.yml

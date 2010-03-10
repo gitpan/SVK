@@ -48,55 +48,34 @@
 # and any derivatives thereof.
 # 
 # END BPS TAGGED BLOCK }}}
-package SVK::Editor::SubTree;
+package SVK::Editor::PropEol;
 use strict;
 use SVK::Version;  our $VERSION = $SVK::VERSION;
-use Class::Autouse qw( SVK::Editor::Patch );
 
 require SVN::Delta;
-use base 'SVK::Editor';
+use base 'SVK::Editor::ByPass';
 
-__PACKAGE__->mk_accessors(qw(master_editor anchor anchor_baton changes needs_touch));
 
 =head1 NAME
 
-SVK::Editor::Translate - An editor that translates path names
+SVK::Editor::PropEol - An editor that normalizes eol for svn: properties
 
 =head1 SYNOPSIS
 
- my $editor = ...
- # stack the translate editor on
- $editor = SVK::Editor::Translated-> (_editor => [$editor], translate => sub {$_[0]})
-
 =cut
 
-sub AUTOLOAD {
-    my ($self, @arg) = @_;
-    my $func = our $AUTOLOAD;
-    $func =~ s/^.*:://;
-    return if $func =~ m/^[A-Z]+$/;
-
-    if ($func =~ m/^(?:add|open|delete)/) {
-	if ($arg[0] eq $self->anchor) {
-	    ++$self->{needs_touch} if $func eq 'add_directory';
-	    return $self->anchor_baton;
-	}
-	unless ($arg[0] =~ s{^\Q$self->{anchor}/}{}) {
-            return undef;
-            return $func =~ m/file$/ ? undef : $self->anchor_baton;
-        }
-    }
-    elsif ($func =~ m/^close_(?:file|directory)/) {
-	return unless defined $arg[0];
-	return if $arg[0] eq $self->anchor_baton;
-    }
-    elsif ($func ne 'close_edit') {
-	return unless defined $arg[0];
-    }
-
-    ++$self->{changes} unless $func eq 'set_target_revision';
-    $self->master_editor->$func(@arg);
+sub change_file_prop {
+    my ($self, $path, $name, $value) = @_;
+    $value =~ s/\r\n/\n/g
+        if defined $value && $name =~ m'^svn:';
+    $self->SUPER::change_file_prop($path, $name, $value);
 }
 
+sub change_dir_prop {
+    my ($self, $path, $name, $value) = @_;
+    $value =~ s/\r\n/\n/g
+        if defined $value && $name =~ m'^svn:';
+    $self->SUPER::change_dir_prop($path, $name, $value);
+}
 
 1;

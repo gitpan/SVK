@@ -3,9 +3,12 @@ abstract: 'A decentralized version control system'
 author:
   - 'Chia-liang Kao <clkao@clkao.org>'
 build_requires:
+  ExtUtils::MakeMaker: 6.42
   Test::More: 0.42
+configure_requires:
+  ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.77'
+generated_by: 'Module::Install version 0.94'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -294,6 +297,9 @@ provides:
   SVK::Editor::Patch:
     file: lib/SVK/Editor/Patch.pm
     version: v2.2.1
+  SVK::Editor::PropEol:
+    file: lib/SVK/Editor/PropEol.pm
+    version: v2.2.1
   SVK::Editor::Rename:
     file: lib/SVK/Editor/Rename.pm
     version: v2.2.1
@@ -492,4 +498,4 @@ requires:
   version: 0.68
 resources:
   license: http://dev.perl.org/licenses/
-version: 2.002001
+version: 2.002002
